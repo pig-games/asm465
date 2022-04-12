@@ -1,3 +1,5 @@
+// Based on the great work by Shallan at: https://github.com/smnjameson
+
 .cpu _45gs02
 
 .macro BasicUpstart65(addr) {
@@ -61,19 +63,6 @@
         lda #$70
         sta $D640
         nop
-}
-
-.macro setBasePage(addr) {
-        lda #>(addr)   // make sure the address will be a 'rounded' adress up from the label.
-        tab
-}
-
-.macro setBasePagePC() {
-    .if((* & $00ff) > 0) {
-        *= (* & $ff00) + $100
-    } else {
-        *= *    
-    }
 }
 
 .macro disableC65ROM() {
