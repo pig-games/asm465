@@ -1,0 +1,10 @@
+.cache
+build
+*.old
+*.dbg
+*.prg
+*.report
+*.sym
+*.vs
+.source.txt
+.vscode
