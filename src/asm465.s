@@ -60,9 +60,9 @@ entry:
     ora #%10001000
     sta $d031
 
-    setBasePage(zero_page) 
+    setBasePage(ZeroPage) 
 
-    sei
+    sei 
     jmp parse
     cli
     rts
@@ -560,4 +560,6 @@ tok_to_mnem:
             // !byte   $FB, <mn_plz, >mn_plz
 lookup_end:
 
-zero_page:
+setBasePagePC()
+ZeroPage:
+        .fill $ff, 0

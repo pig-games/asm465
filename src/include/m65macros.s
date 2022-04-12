@@ -64,8 +64,16 @@
 }
 
 .macro setBasePage(addr) {
-        lda #>(addr+$100)   // make sure the address will be a 'rounded' adress up from the label.
+        lda #>(addr)   // make sure the address will be a 'rounded' adress up from the label.
         tab
+}
+
+.macro setBasePagePC() {
+    .if((* & $00ff) > 0) {
+        *= (* & $ff00) + $100
+    } else {
+        *= *    
+    }
 }
 
 .macro disableC65ROM() {
