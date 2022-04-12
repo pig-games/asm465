@@ -50,6 +50,24 @@
 		eom
 }
 
+.macro disableCIAandIRQ() {
+    	lda #$7f
+        sta $DC0D 
+        sta $DD0D 
+
+        lda #$00
+        sta $D01A
+
+        lda #$70
+        sta $D640
+        nop
+}
+
+.macro setBasePage(addr) {
+        lda #>(addr+$100)   // make sure the address will be a 'rounded' adress up from the label.
+        tab
+}
+
 .macro disableC65ROM() {
 		lda #$70
 		sta $d640

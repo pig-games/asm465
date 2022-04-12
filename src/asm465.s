@@ -45,21 +45,8 @@ entry:
     enable40Mhz()
     enableVIC4Registers()
     disableC65ROM()
-
-    sei
-
-	// Disable CIA and IRQ interrupts
-	lda #$7f
-	sta $DC0D 
-	sta $DD0D 
-
-	lda #$00
-	sta $D01A
-
-    lda #$70
-	sta $D640
-    nop
-
+    disableCIAandIRQ()
+    
     // set 80x50
 	lda #80
 	sta $D058
@@ -73,16 +60,15 @@ entry:
     ora #%10001000
     sta $d031
 
-    lda #$26
-    tab
+    setBasePage(zero_page) 
 
+    sei
     jmp parse
     cli
     rts
 
-parse:
+parse: 
 // initialise binary search vars
-
 
         // init x to start pos in input
         ldx #0
@@ -572,5 +558,6 @@ tok_to_mnem:
             .byte $FA, <mn_plx, >mn_plx
             .byte $7A, <mn_ply, >mn_ply
             // !byte   $FB, <mn_plz, >mn_plz
-
 lookup_end:
+
+zero_page:
