@@ -1,5 +1,7 @@
 // Based on the great work by Shallan at: https://github.com/smnjameson
 
+#importonce
+
 .cpu _45gs02
 
 .macro BasicUpstart65(addr) {
