@@ -4,8 +4,6 @@
 #import "include/m65macros.s"
 #import "include/utils.s"
 
-.const mnemsize = (mn_end - mnemonics) / 6
-
 BasicUpstart65(entry)
 
     *=$2020
@@ -19,7 +17,7 @@ entry:
     disableC65ROM()
     disableCIAandIRQ()
     
-    // set 80x50
+    // set 80x50 character
 	lda #80
 	sta $D058
 	lda #80
@@ -36,16 +34,8 @@ entry:
 
     sei 
 
-    //TEMP set ParsePC to $0000
-    lda #0
-    sta ParsePC
-    sta ParsePC+1
-    //TEMP
-
-    lda #<inputLine
-    sta InputLinePtr
-    lda #>inputLine
-    sta InputLinePtr + 1
+    setParsePC($0000)
+    setInputLine(inputLine)
 
     jsr parseLine
 
@@ -103,7 +93,6 @@ end_expected:
 //         adc BinSearchPtr+  1    // add to ptr high byte
 //         sta BinSearchPtr+  1    // store back in ptr high byte, now we have 16 bit result of multiply by 6
 //         rts
-
 
 setBasePagePC()
 ZeroPage:

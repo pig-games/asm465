@@ -33,3 +33,18 @@
         iny
         //TODO: handle error
 }
+
+.macro setParsePC(parsePC) {
+        // set PC for line
+    lda #<parsePC   
+    sta ParseBuf+2
+    lda #>parsePC
+    sta ParseBuf+3
+}
+
+.macro setInputLine(inputLine) {
+    lda #<inputLine
+    sta InputLinePtr
+    lda #>inputLine
+    sta InputLinePtr + 1
+}

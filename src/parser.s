@@ -58,6 +58,8 @@
 .const ParsePC          = $13
 .const InputLinePtr     = $15
 
+.const mnemsize = (mn_end - mnemonics) / 6
+
 // Parse the line of code at (BasePage) InputLinePtr
 parseLine: {
         ldy #0          // init x to start pos in input
@@ -117,11 +119,7 @@ parseSymbolOrInstruction: {
     lda #'s'            // DEBUG OUTPUT
     sta $0800+10*80,y   // DEBUG OUTPUT
 
-    // set PC for line
-    lda #<ParsePC   
-    sta ParseBuf+2
-    lda #>ParsePC
-    sta ParseBuf+3
+    setParsePC(ParsePC)
 
     // store input line character column
     tya
@@ -245,13 +243,10 @@ parseComment: {
         bne notOnlyComment
 
         // we're responsibble for setting the current PC
-        lda #<ParsePC
-        sta ParseBuf+2
-        lda #>ParsePC
-        sta ParseBuf+3
+        setParsePC(ParsePC)
 
     notOnlyComment:
-        ora #%1000000
+        ora #LT_COMM
         sta ParseBuf
 
         tya
