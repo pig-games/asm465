@@ -1,14 +1,14 @@
 # asm465
 
-Asm465 is an, in-development, native editor/assembler for the Mega65.
-The number in the name is a combination of the cpu names: 45(gs02) and 65(02).
+Asm465 is an, in-development, native editor/assembler for the Commodore 64/128.
+The number in the name literally means for 65(02).
 
 This editor/assembler has some very specific design goals.
 
-1. Run natively on the Mega65.
-2. Support the full 45gs02 instruction set (including 65(ce)02) and addressing modes.
+1. Run natively on the Commodore 64/128.
+2. Support the full 6502 instruction set and addressing modes.
 3. UI/Editor
-   1. Fast native 80x50 character mode editing, specifically tailored and optimised for assember editing
+   1. Fast native editing, specifically tailored and optimised for assember editing
    2. Optional live per source line indication of: Address, Instruction cycle counts (also for scope)
    3. Syntax highlighting
    4. Auto complete
