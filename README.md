@@ -1,6 +1,6 @@
 # asm465
 
-Asm465 is an, in-development, native editor/assembler for the Commodore 64/128.
+Asm465 is an, in-development, native editor/assembler for the Commodore/Ultimate 64.
 The number in the name literally means 'for 65(02)'.
 
 This editor/assembler has some very specific design goals.
