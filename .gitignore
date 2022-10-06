@@ -8,3 +8,5 @@ build
 *.vs
 .source.txt
 .vscode
+.DS_Store
+old/
