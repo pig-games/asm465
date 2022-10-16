@@ -1,20 +1,34 @@
 
-
+;---------------------------------------
 ; Perform bin search in a block of data
 ; in:
-;   x = start column of mnemonic text
-;   bschixr = size of data (columns)
-; Sets C-flag if not found (else unset)
+;   prspos:  start column of input text
+;   bschixr: size of data (columns)
+;
 ; out:
-;   x = pos behind last char of mnem
-;   bschptr = addr of match (if c)
+;   prspos:  pos behind last chr of mnem
+;   bschptr: addr of match (if c)
+;   c:       set if not found
+;
+; internal:
+;   zptmp1:  original prspos
+;   zptmp2:  temp y backup
+;   prspos:  position in input
+;   y:       position in candidate mnem
+;   bsctos:  jsr to 16bit mnem table
+;                 offset calculation
+;---------------------------------------
 binsearch
-         ;.block
          ; set left and right index
          ; last row of table
 
-         lda #0
-         sta bschixl
+         ; back up prspos
+         lda prspos
+         sta zptmp1
+
+         ; init
+         ldy #0
+         sty bschixl
 
 bsloop   ; if new ix bschixm>=ixl: done
          lda bschixr
@@ -29,22 +43,16 @@ bsnotend
          adc bschixl ; l + (r - l) / 2
          sta bschixm ; mid = l+(r-l) / 2
 
-bsacalc  ; modify addr: #setjsraddr
+bsctos   ; modify addr: #setjsraddr
          jsr $ffff
 
 ; add start addr of mnem tab to (mid*6)
          lda bschptr ; ld l byte of ptr
          clc
-; add low byte of mnemonics table start
          adc bschdptr
-; store back to low byte of ptr
          sta bschptr
-; load high byte of ptr
          lda bschptr+1
-; add high byte of mnemonics table start
-
          adc bschdptr+1
-; store back to high byte of ptr
          sta bschptr+1
 
 ; start comp cur inp with candidate mnem
@@ -55,6 +63,9 @@ bscomploop
          lda (bschptr),y
          beq bsnotfound      ; found '@'
 
+         sty zptmp2 ; backup y
+         ldy prspos
+
          lda (bschiptr),y   ; get i char
          cmp #$ff
          beq bsnotfound; fnd end of line
@@ -63,7 +74,7 @@ bscomploop
          jmp bsfound
 nospace
          ; scan for mnemonic
-
+         ldy zptmp2 ; restore y
          cmp (bschptr),y
 
          bcc islower
@@ -73,7 +84,8 @@ ishigher               ; else is higher
          inx
          stx bschixl
 
-         ldx $09 ; reset to start pos
+         lda zptmp1 ; re-init prspos
+         sta prspos
          ldy #0
          jmp bsloop
 islower
@@ -81,7 +93,8 @@ islower
          dex
          stx bschixr
 
-         ldx $09
+         lda zptmp1 ; re-init prspos
+         sta prspos
          ldy #0
          jmp bsloop
 isequal
@@ -89,8 +102,8 @@ isequal
          cpy #3
          beq bsfound
 
-         inx ; input chr ix to next char
-         iny ; cand chr ixx to next char
+         inc prspos
+         iny ; cand chr ix to next char
 
          jmp bscomploop
 
@@ -101,20 +114,19 @@ isequal
          .bend ; compareloop
 bsfound
          .block
+         ldy prspos
          lda (bschiptr),y
          cmp #$20   ;" "
          bne nospace
-         inx
+         inc prspos
 nospace
          clc
          rts
-         .bend     ; found
+         .bend ; bsfound
 
 bsnotfound
          ; report non-found
          ; value of a is undefined
          sec
          rts
-
-  ;       .bend ; binsearch
 

@@ -26,3 +26,10 @@ prssize  = $2b
 prspc    = $2c
 prsilnptr = $2e
 
+; generic
+
+zptmp1   = $30
+zptmp2   = $31
+zptmp3   = $32
+zptmp4   = $33
+
