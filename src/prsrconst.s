@@ -19,14 +19,15 @@ amacc    = 1
 amimm    = 2
 amzp     = 3
 amzpx    = 4
-amabs    = 5
-amabx    = 6
-amaby    = 7
-amrel    = 8
-amxin    = 9
-aminy    = 10
-amind    = 11
-ambpr    = 12
+amzpy    = 5
+amabs    = 6
+amabx    = 7
+amaby    = 8
+amrel    = 9
+amxin    = 10
+aminy    = 11
+amind    = 12
+ambpr    = 13
 
 ;---------------------------------------
 ; LineType constants
