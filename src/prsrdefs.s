@@ -1,4 +1,4 @@
-mnemsize .word (mnend-mnemonics)/6
+mnemsize .byte (mnend-mnemonics)/6
 toksize  .word tokend-toktomnm
 
 mnemonics

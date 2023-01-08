@@ -1,9 +1,9 @@
-
 ;---------------------------------------
 ; Perform bin search in a block of data
 ; in:
-;   prspos:  start column of input text
-;   bschixr: size of data (columns)
+;   prspos:   start column of input text
+;   bschixr:  size of data (rows)
+;   bschiptr: ptr to input mnem
 ;
 ; out:
 ;   prspos:  pos behind last chr of mnem
@@ -46,6 +46,8 @@ bsnotend
 bsctos   ; modify addr: #setjsraddr
          jsr $ffff
 
+         #cprl 5,"after bsctos"
+
 ; add start addr of mnem tab to (mid*6)
          lda bschptr ; ld l byte of ptr
          clc
@@ -61,18 +63,23 @@ bscomploop
          .block
 
          lda (bschptr),y
-         beq bsnotfound      ; found '@'
-
+         cmp #"@"
+         bne nfndat
+         jmp bsnotfound      ; found '@'
+nfndat
+         #cprl 5,"after @ chk"
          sty zptmp2 ; backup y
          ldy prspos
 
          lda (bschiptr),y   ; get i char
          cmp #$ff
          beq bsnotfound; fnd end of line
+         #cprl 5,"after $ff chk"
          cmp #$20 ; " "
          bne nospace
          jmp bsfound
 nospace
+         #cprl 5,"after nospace"
          ; scan for mnemonic
          ldy zptmp2 ; restore y
          cmp (bschptr),y
@@ -107,7 +114,7 @@ isequal
 
          jmp bscomploop
 
-;TODO: write FF to label_buf,0 when
+;TODO: write FF to labelbuf,0 when
 ; found mnemonic instead of label
          ; jmp bsnotfound
 
