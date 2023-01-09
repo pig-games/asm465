@@ -1,8 +1,8 @@
-         .include "prsrmacros.s"
+         .include "prsrmacros.asm"
 
 ;nemsize = mnend-mnemonics/6
 
-         .include "binsearch.s"
+         .include "binsearch.asm"
 ; Parse the line of code at (ZeroPage)
 ; inlnptr
 parseline

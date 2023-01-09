@@ -2,21 +2,20 @@
 ; bschtest.s
 ;---------------------------------------
 
-         .include "setup.s"
-         .include "zeropage.s"
-         .include "assert.s"
-         .include "prsrmacros.s"
-         .include "prsrconst.s"
-
+         .include "zeropage.asm"
+         .include "assert.asm"
+         .include "prsrmacros.asm"
+         .include "prsrconst.asm"
+* = $8000
          jmp start
 
 inputln  .text "adc"
          .byte $ff
 
-         .include "io.s"
-         .include "bschutil.s"
-         .include "binsearch.s"
-         .include "prsrdefs.s"
+         .include "io.asm"
+         .include "bschutil.asm"
+         .include "binsearch.asm"
+         .include "prsrdefs.asm"
 
 start
          #cprl 5,"Unit test: binsearch"

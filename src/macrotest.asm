@@ -1,14 +1,13 @@
 ;---------------------------------------
 ; macrotest
 ;---------------------------------------
-         .include "setup.s"
 
          jmp start
 
-         .include "prsrconst.s"
-         .include "prsrmacros.s"
-         .include "io.s"
-         .include "assert.s"
+         .include "prsrconst.asm"
+         .include "prsrmacros.asm"
+         .include "io.asm"
+         .include "assert.asm"
 start
          #cprl 5,"Unit Test: macrotest"
          #nl
