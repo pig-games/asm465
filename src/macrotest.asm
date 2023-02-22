@@ -2,60 +2,65 @@
 ; macrotest
 ;---------------------------------------
 
-         jmp start
-
          .include "prsrconst.asm"
          .include "prsrmacros.asm"
-         .include "io.asm"
          .include "assert.asm"
-start
-         #cprl 5,"Unit Test: macrotest"
-         #nl
+
+*=$8000
+        jmp start
+        .include "io.asm"
+
+start 
+        jsr settextmode
+        #cprl 5, "Unit Test: macrotest"
+     ;    #nl
 
 test1
-         .block
-         lda #"a"-$40
-         #chkifalpha nota,isa
-         #abra2 "test1","nota","isa"
-         .bend
+        .block
+        lda #"a"
+        #chkifalpha nota, isa
+        #abra2 "test1",nota,isa
+        .bend
+
+        jmp *
 
 test2
-         .block
-         lda #"["-$40
-         #chkifalpha nota,isa
-         #abra2 "test2","isa","nota"
-         .bend
+        .block
+        lda #"["
+        #chkifalpha nota,isa
+        #abra2 "test2",isa,nota
+        .bend
 
 test3
-         .block
-         lda #"z"-$40
-         #chkifalpha nota,isa
-         #abra2 "test3","nota","isa"
-         .bend
+        .block
+        lda #"z"
+        #chkifalpha nota,isa
+        #abra2 "test3",nota,isa
+        .bend
 
 test4
-         .block
-         lda #"{SHIFT-*}"-$c0
-         #chkifalpha isa,nota
-         #abra2 "test4","nota","isa"
-         .bend
+        .block
+        lda #"_"
+        #chkifalpha isa,nota
+        #abra2 "test4",nota,isa
+        .bend
 
 test5
-         .block
-         lda #"A"-$c0
-         #chkifalpha isa,nota
-         #abra2 "test5","isa","nota"
-         .bend
+        .block
+        lda #"A"
+        #chkifalpha isa,nota
+        #abra2 "test5",isa,nota
+        .bend
 
 test6
-         .block
-         lda #"{SHIFT-+}"-$c0
-         #chkifalpha isa,nota
-         #abra2 "test6","nota","isa"
-         .bend
+        .block
+        lda #"_"
+        #chkifalpha isa,nota
+        #abra2 "test6",nota,isa
+        .bend
 
-         #nl
-         #cprl 5,"Done"
+        #nl
+        #cprl 5,"Done"
 
-         jmp *
+        jmp *
 

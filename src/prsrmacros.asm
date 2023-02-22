@@ -14,16 +14,16 @@
 ;---------------------------------------
 chkifalpha .macro
 
-         cmp #prsla  ; "a"
-         bcc \1     ; notAlpha
-         cmp #prslbr ; "["
-         bcc \2     ; isAlpha
-         cmp #prsua  ; "A"
-         bcc \1
-         cmp #$5b   ; {SHIFT-+}
-         bcs \1     ; notAlpha
+        cmp #"A"
+        bcc \1     ; notAlpha
+        cmp #"{"
+        bcc \2     ; isAlpha
+        cmp #"a"
+        bcc \1
+        cmp #"["
+        bcs \1     ; notAlpha
 
-         .endm
+        .endm
 
 ;---------------------------------------
 ; chkifcomment(\1, \2)
@@ -34,14 +34,14 @@ chkifalpha .macro
 ;---------------------------------------
 chkifcomment .macro
 
-         cmp #prsfsl ; "/"
-         bne \2     ; notComment
-         iny        ; next input char
-         lda (\1),y
-         cmp #prsfsl ; "/"
-         bne \2     ; notComment
+        cmp #"/"
+        bne \2     ; notComment
+        iny        ; next input char
+        lda (\1),y
+        cmp #"/"
+        bne \2     ; notComment
 
-         .endm
+        .endm
 
 ;---------------------------------------
 ; chklinetype(\1, \2, \3)
@@ -54,12 +54,12 @@ chkifcomment .macro
 ;---------------------------------------
 chklinetype .macro
 
-         lda #\2  ; lineTypeFlags
-         eor #$ff
-         and \1   ; lineType
-         beq \3   ; okLabel
+        lda #\2  ; lineTypeFlags
+        eor #$ff
+        and \1   ; lineType
+        beq \3   ; okLabel
 
-         .endm
+        .endm
 
 ;---------------------------------------
 ; setprspc(\1)
@@ -69,12 +69,12 @@ chklinetype .macro
 ;---------------------------------------
 setprspc .macro
 
-         lda #<\1  ; parsePC
-         sta prsbuf+2
-         lda #>\1  ; paserPC
-         sta prsbuf+3
+        lda #<\1  ; parsePC
+        sta prsbuf+2
+        lda #>\1  ; paserPC
+        sta prsbuf+3
 
-         .endm
+        .endm
 
 ;---------------------------------------
 ; setinputln(\1)
@@ -84,12 +84,12 @@ setprspc .macro
 ;---------------------------------------
 setinputln .macro
 
-         lda #<\1  ; inputLine
-         sta ilnptr
-         lda #>\1  ; inputLine
-         sta ilnptr+1
+        lda #<\1  ; inputLine
+        sta ilnptr
+        lda #>\1  ; inputLine
+        sta ilnptr+1
 
-         .endm
+        .endm
 
 ;---------------------------------------
 ; setjsraddr(\1, \2)
@@ -100,10 +100,10 @@ setinputln .macro
 ;---------------------------------------
 setjsraddr .macro
 
-         lda #<\2 ; targetAddr
-         sta \1+1
-         lda #>\2 ; targetAddr
-         sta \1+1
+        lda #<\2 ; targetAddr
+        sta \1+1
+        lda #>\2 ; targetAddr
+        sta \1+1
 
-         .endm
+        .endm
 

@@ -138,12 +138,12 @@ gr06     .byte amimp,$00,$70
 gr07     .byte amimm,$00,$20
          .byte amzp,$04,$30
          .byte amabs,$08,$40
-gr08     .byte amzp,$8c,$50
+gr08     .byte amzp,$8c,$50		; TODO: this offset value can't be right?! investigate and fix if needed
          .byte amabs,$08,$60
          .byte amzpx,$08,$60
          .byte amabx,$08,$70
 gr09     .byte amabs,$00,$30
-         .byte amind,$20,$50
+         .byte amind,$20,$50	; TODO: if this offset corret? investigate and fix if needed
 gr10     .byte amimm,$00,$20
          .byte amzp,$04,$30
          .byte amabs,$08,$40

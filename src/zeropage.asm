@@ -33,3 +33,5 @@ zptmp2   = $31
 zptmp3   = $32
 zptmp4   = $33
 
+cxpos   = $40
+cypos   = $41

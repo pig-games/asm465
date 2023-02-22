@@ -2,12 +2,12 @@
 ; prsrconst.s
 ;---------------------------------------
 
-prsla    = $01  ; a
-prsua    = $41  ; A
+prsla    = "a"  ; a
+prsua    = "A"  ; A
 
-prslbr   = $1b  ; [
-prsrbr   = $1d  ; ]
-prsfsl   = $2f   ; /
+prslbr   = "["  ; [
+prsrbr   = "]"  ; ]
+prsfsl   = "/"   ; /
 
 
 ;---------------------------------------
