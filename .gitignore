@@ -7,4 +7,6 @@ build
 *.sym
 *.vs
 .source.txt
+.DS_Store
 .vscode
+**/target
