@@ -12,29 +12,10 @@ ClearScreen .macro colour
     #SetLocation 0,0
 .endmacro
 
-SetLocation .macro row, col
-    lda #\col
-    sta PrtColumn
-    lda #0
-    sta math.IN_B4
-    sta math.IN_B3
-    sta math.IN_B2
-    sta math.IN_A4
-    sta math.IN_A3
-    sta math.IN_A2
-    lda #80
-    sta math.IN_A1
-    lda #\row
-    sta PrtRow
-    sta math.IN_B1
-    clc
-    ldqa math.MULTOUT1
-    adqa ScreenPtr
-    stqa CurScreenPosPtr
-    clc
-    ldqa math.MULTOUT1
-    adqa ColPtr
-    stqa CurColourPosPtr
+SetLocation .macro col, row
+    ldx #\col
+    ldy #\row
+    jsr setLocation
 .endmacro
 
 PutC .macro

@@ -6,10 +6,12 @@
     #ClearScreen 1
     jsr setLowerCase
 
+    #cprl 5,"Screen functions tests"
+
     ; set location to 4,2
     ldx #4
     ldy #2
-    jsr setLocation
+    #SetLocation 4,2
 
     ; setCPrintC
     lda #'a'
@@ -21,16 +23,12 @@
     jsr cPrintC
 
     ; setLocation 2, 10 + putc
-    ldx #2
-    ldy #10
-    jsr setLocation
+    #SetLocation 2, 10
     lda #'c'
     jsr putC
 
     ; sPrint
-    ldx #10
-    ldy #20
-    jsr setLocation
+    #SetLocation 10,20
     jsr sPrint
     .null "10,10 sPrint, "
 
@@ -39,9 +37,7 @@
     .byte 4
     .null "sCPrint"
 
-    ldx #10
-    ldy #30
-    jsr setLocation
+    #SetLocation 10,30
 
     #pr "10,30 pr, "
     #cpr 3,"3, cpr "
