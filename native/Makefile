@@ -8,7 +8,6 @@ NAME = 	asm465
 ADDR = 	0000
 OUTDIR = build
 BLD_NAME = $(OUTDIR)/$(NAME).prg
-PTEST_NAME = $(OUTDIR)/parsertest
 
 CORE_SRC = \
 		src/include/m65defs.h \
@@ -25,15 +24,26 @@ PTEST_SRC = \
 		src/parser.s \
 		src/tests/parsertest.s
 
+STEST_SRC = \
+		src/tests/screentest.s
+
 OPTS = 	-C -a -B -i --m4510
 
-$(PTEST_NAME): $(PTEST_SRC) $(CORE_SRC) 
-		64tass $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $@ --list $(basename $@).lst --labels=$(basename $@).lbl
+parsertest: $(PTEST_SRC) $(CORE_SRC) 
+		64tass $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
 
-runtest: $(PTEST_NAME)
-		etherload.osx -r $(PTEST_NAME)
+screentest: $(STEST_SRC) $(CORE_SRC) 
+		64tass $(OPTS) $(CORE_SRC) $(STEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
+
+all: parsertest screentest
+
+run_ptest: parsertest
+		etherload.osx -r $(OUTDIR)/parsertest
+
+run_stest: screentest
+		etherload.osx -r $(OUTDIR)/screentest
 
 clean:
 		rm -r $(OUTDIR)/*
 
-.PHONY: up clean
+.PHONY: run_ptest run_stest all clean

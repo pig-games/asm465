@@ -1,3 +1,4 @@
+
 ; constants
 
     CA_BLINK = %0001_0000
@@ -9,6 +10,7 @@
     ColPtr          .dword 0
     CurScreenPosPtr .dword 0
     CurColourPosPtr .dword 0
+    Ptr             .dword 0
 .endsection
 
 .section data
@@ -20,6 +22,26 @@ PrtColour   .byte 0
 .endsection
 
 .section screen
+
+    setLowerCase .proc
+        lda #00
+        sta vic4.CHARPTRLO
+        lda #$D8
+        sta vic4.CHARPTRHI
+        lda #$02
+        sta vic4.CHARPTRBN
+        rts
+    .endproc
+
+    setUpperCase .proc
+        lda #00
+        sta vic4.CHARPTRLO
+        lda #$D0
+        sta vic4.CHARPTRHI
+        lda #$02
+        sta vic4.CHARPTRBN
+        rts
+    .endproc
 
     ; X: column
     ; Y: row
@@ -96,10 +118,125 @@ PrtColour   .byte 0
         rts
     .endproc
 
-    ; X: String Ptr lo
-    ; Y: String Ptr hi
-    Print .proc
+    ; X: str ptr lo
+    ; Y: str ptr hi
+    print .proc
+        #stxy Ptr
+        
+        ldz PrtColumn
+        ldy #0
+        loop
+            lda (Ptr),y
+            beq end
+        
+            stabpqz CurScreenPosPtr
+            lda PrtColour
+            stabpqz CurColourPosPtr
 
+            inz
+            iny
+        jmp loop
+    end
+        stz PrtColumn
+        rts
+    .endproc
+
+    ; X: str ptr lo
+    ; Y: str ptr hi
+    ; Z: colour
+    cPrint .proc
+        #stxy Ptr
+        stz PrtColour
+        
+        ldz PrtColumn
+        ldy #0
+        loop
+            lda (Ptr),y
+            beq end
+        
+            stabpqz CurScreenPosPtr
+            lda PrtColour
+            stabpqz CurColourPosPtr
+
+            inz
+            iny
+        jmp loop
+    end
+        stz PrtColumn
+        rts
+    .endproc
+
+    sPrint .proc
+        plx
+        ply
+        ; do actual print
+        
+        #incxy
+        
+        jsr print
+
+        ; calculate new return address
+        tya
+        clc
+        adc Ptr
+        sta Ptr
+        lda #0
+        adc Ptr+1
+
+        ; restore return address
+        pha
+        lda Ptr
+        pha
+        rts
+    .endproc
+
+    sCPrint .proc
+        plx
+        ply
+        ; do actual print
+
+        #incxy
+
+        #stxy Ptr
+        phy
+        ldy #0
+        lda (Ptr),y
+        taz
+        ply
+        #incxy
+        jsr cPrint
+
+        ; calculate new return address
+        tya
+        clc
+        adc Ptr
+        sta Ptr
+        lda #0
+        adc Ptr+1
+
+        ; restore return address
+        pha
+        lda Ptr
+        pha
+        rts
+    .endproc
+
+    printNL .proc
+        ldz #0
+        stz PrtColumn
+
+        lda #80
+        ldx #0
+        ldy #0
+        ldz #0
+        adqa CurScreenPosPtr
+        stqa CurScreenPosPtr
+        lda #80
+        ldx #0
+        ldy #0
+        ldz #0
+        adqa CurColourPosPtr
+        stqa CurColourPosPtr
         rts
     .endproc
 
