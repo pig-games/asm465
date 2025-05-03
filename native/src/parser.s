@@ -66,20 +66,6 @@ parser .namespace
 .section parser
 ; Parse the line of code at (BasePage) InputLinePtr
 parseLine .proc
-        ldx #4
-        ldy #2
-        jsr setLocation
-        lda #'a'
-        ldz #2
-        jsr setCPrintC
-        lda #'b'
-        jsr cPrintC
-        ldx #2
-        ldy #40
-        jsr setLocation
-        lda #'c'
-        jsr putC
-        
         ldy #0          ; init x to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
 
@@ -119,21 +105,17 @@ parseLine .proc
 ;parseLine_end
 
     endParse
-        lda #'d'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "d"          ; DEBUG OUTPUT
         rts
 
     parseDirectiveOrMacroDef
-        lda #'p'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "p"          ; DEBUG OUTPUT
         rts
 .endproc
 
 ; Process a symbol (label, macro use) or instruction
 parseSymbolOrInstruction .proc
-    lda #'s'            ; DEBUG OUTPUT
-    sta $0800+10*80,y   ; DEBUG OUTPUT
-
+    #cpr 5, "s"          ; DEBUG OUTPUT
     #setParsePC ParsePC
 
     ; store input line character column
@@ -171,8 +153,7 @@ parseSymbolOrInstruction .proc
 ; process the label definition
 ; only needs to update the line type and skip the colon 
 processLabelDef .proc
-        lda #'l'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "l"          ; DEBUG OUTPUT
 
     ; check on line type
         #checkLineType ParseBuf, 0, firstLabelDef
@@ -194,8 +175,7 @@ processLabelDef .proc
 .endproc
 
 parseInstruction .proc
-        lda #'i'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "i"          ; DEBUG OUTPUT
         lda (InputLinePtr),y
 
     ; check on line type
@@ -228,14 +208,12 @@ parseInstruction .proc
 
         rts
     tooLong
-        lda #'e'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "e"          ; DEBUG OUTPUT
         rts
 .endproc
 
 parseMacroUse .proc
-    lda #'u'            ; DEBUG OUTPUT
-    sta $0800+10*80,y   ; DEBUG OUTPUT
+    #cpr 5, "u"          ; DEBUG OUTPUT
     lda (InputLinePtr),y
 
     iny
@@ -243,17 +221,14 @@ parseMacroUse .proc
 .endproc
 
 parseMultiLabel .proc
-    lda #'m'            ; DEBUG OUTPUT
-    sta $0800+10*80,y   ; DEBUG OUTPUT
+    #cpr 5, "m"            ; DEBUG OUTPUT
     lda (InputLinePtr),y
-
 
     rts
 .endproc
 
 parseComment .proc
-        lda #'c'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
+        #cpr 5, "c"          ; DEBUG OUTPUT
 
         lda ParseBuf        ; load line type byte
         bne notOnlyComment
@@ -274,9 +249,7 @@ parseComment .proc
         lda (InputLinePtr),y
         cmp #$FF  
         beq end             ; found end of line
-
-        sta $0800+11*80,y   ; DEBUG OUTPUT
-
+        
         sta ParseBuf,x
         inx
         iny

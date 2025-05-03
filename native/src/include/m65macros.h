@@ -92,13 +92,13 @@ disableC65ROM .macro
 .endmacro
 
 mapMemory .macro source, target
-	sourceMB .var (\source & $ff00000) >> 20
+	sourceMB 	 .var (\source & $ff00000) >> 20
 	sourceOffset .var ((\source & $00fff00) - target)
 	sourceOffset .var ((\source & $00fff00) - target)
-	sourceOffHi .var \sourceOffset >> 16
-	sourceOffLo .var (\sourceOffset & $0ff00 ) >> 8
-	bitLo .var pow(2, (((\target) & $ff00) >> 12) / 2) << 4
-	bitHi .var pow(2, (((\target-$8000) & $ff00) >> 12) / 2) << 4
+	sourceOffHi	 .var \sourceOffset >> 16
+	sourceOffLo  .var (\sourceOffset & $0ff00 ) >> 8
+	bitLo 		 .var pow(2, (((\target) & $ff00) >> 12) / 2) << 4
+	bitHi 	 	 .var pow(2, (((\target-$8000) & $ff00) >> 12) / 2) << 4
 	
 	.if \target<$8000
 		lda #sourceMB
@@ -116,41 +116,41 @@ mapMemory .macro source, target
 	; Set offset map
 	.if \target<$8000
 		lda #sourceOffLo
-		ldx #[sourceOffHi + bitLo]
+		ldx #(sourceOffHi + bitLo)
 		ldy #$00
 		ldz #$00
 	.else
 		lda #$00
 		ldx #$00
 		ldy #sourceOffLo
-		ldz #[sourceOffHi + bitHi]
+		ldz #(sourceOffHi + bitHi)
 	.endif	
 	map 
 	eom
 .endmacro
 
 VIC4_SetCharLocation .macro addr
-	lda #[\addr & $ff]
+	lda #(\addr & $ff)
 	sta $d068
-	lda #[[\addr & $ff00]>>8]
+	lda #((\addr & $ff00)>>8)
 	sta $d069
-	lda #[[\addr & $ff0000]>>16]
+	lda #((\addr & $ff0000)>>16)
 	sta $d06a
 .endmacro
 
 VIC4_SetScreenLocation .macro addr
-	lda #[\addr & $ff]
+	lda #(\addr & $ff)
 	sta $d060
-	lda #[[\addr & $ff00]>>8]
+	lda #(\addr & $ff00)>>8)
 	sta $d061
-	lda #[[\addr & $ff0000]>>16]
+	lda #((\addr & $ff0000)>>16)
 	sta $d062
-	lda #[[[\addr & $ff0000]>>24] & $0f]
+	lda #(((\addr & $ff0000)>>24) & $0f)
 	sta $d063
 .endmacro
 
 RunDMAJob .macro JobPointer
-		lda #[\JobPointer >> 16]
+		lda #(\JobPointer >> 16)
 		sta $d702
 		sta $d704
 		lda #>\JobPointer
@@ -205,18 +205,19 @@ DMACopyJob .macro Source, Destination, Length, Chain, Backwards
 	.endif
 	.word \Length ; Size of Copy
 
-	.word \Source & $ffff
-	.byte [\Source >> 16] + backByte
+	.word \Source & $ff
+	.byte (\Source >> 16) + backByte
 
 	.word \Destination & $ffff
-	.byte [[\Destination >> 16] & $0f]  + backByte
+	.byte ((\Destination >> 16) & $0f) + backByte
 	.if \Chain
 		.word $0000
 	.endif
 .endmacro
 
 DMAFillJob .macro SourceByte, Destination, Length, Chain
-	.byte $81, [(\Destination>>20) & $ff] ; dest bank
+	.byte $0a ; 11 byte mode
+	.byte $81, (\Destination>>20) & $ff ; dest bank
 	.byte $00 ; EOL
 	.if \Chain
         .byte dma.FILL|dma.CHAIN        ; fill, chain next job
@@ -224,11 +225,10 @@ DMAFillJob .macro SourceByte, Destination, Length, Chain
 		.byte dma.FILL ; Fill and last request
 	.endif
 	.word \Length ; Size of Copy
-	.word \SourceByte
+	.word \SourceByte & $ff
 	.byte $00
 	.word \Destination & $ffff
-	.byte [[\Destination >> 16] & $0f]
-	.byte $00 ; command hi
+	.byte (\Destination >> 16) & $f
 	.word $0000
 .endmacro
 
@@ -249,9 +249,9 @@ DMAMixJob .macro Source, Destination, Length, Chain, Backwards
 	.endif
 	.word \Length ; Size of Copy
 	.word \Source & $ffff
-	.byte [\Source >> 16] + backByte
+	.byte (\Source >> 16) + backByte
 	.word \Destination & $ffff
-	.byte [[\Destination >> 16] & $0f]  + backByte
+	.byte ((\Destination >> 16) & $0f) + backByte
 	.if \Chain
 		.word $0000
 	.endif

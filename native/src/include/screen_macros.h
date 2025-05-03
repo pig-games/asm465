@@ -16,23 +16,23 @@ SetLocation .macro row, col
     lda #\col
     sta PrtColumn
     lda #0
-    sta $d777
-    sta $d776
-    sta $d775
-    sta $d773
-    sta $d772
-    sta $d771
+    sta math.IN_B4
+    sta math.IN_B3
+    sta math.IN_B2
+    sta math.IN_A4
+    sta math.IN_A3
+    sta math.IN_A2
     lda #80
-    sta $d770
+    sta math.IN_A1
     lda #\row
     sta PrtRow
-    sta $d774
+    sta math.IN_B1
     clc
-    ldqa $d778
+    ldqa math.MULTOUT1
     adqa ScreenPtr
     stqa CurScreenPosPtr
     clc
-    ldqa $d778
+    ldqa math.MULTOUT1
     adqa ColPtr
     stqa CurColourPosPtr
 .endmacro
@@ -42,4 +42,70 @@ PutC .macro
     stabpqz CurScreenPosPtr
 .endmacro
 
+nl .macro
+    pha
+    phx
+    phy
+    phz
+    jsr printNL
+    plz
+    ply
+    plx
+    pla
+.endmacro
 
+pr .macro str
+    pha
+    phx
+    phy
+    phz
+    jsr sPrint
+    .null \str
+    plz
+    ply
+    plx
+    pla
+.endmacro
+
+prl .macro str
+    pha
+    phx
+    phy
+    phz
+    jsr sPrint
+    .null \str
+    jsr printNL
+    plz
+    ply
+    plx
+    pla
+.endmacro
+
+cpr .macro colour, str
+    pha
+    phx
+    phy
+    phz
+    jsr sCPrint
+    .byte \colour
+    .null \str
+    plz
+    ply
+    plx
+    pla
+.endmacro
+
+cprl .macro colour, str
+    pha
+    phx
+    phy
+    phz
+    jsr sCPrint
+    .byte \colour
+    .null \str
+    jsr printNL
+    plz
+    ply
+    plx
+    pla
+.endmacro

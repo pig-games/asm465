@@ -1,16 +1,21 @@
 .cpu "4510"
+.enc "screen"
 
 .section main
 .namespace parser
 
     #ClearScreen 1
+    jsr setLowerCase
+
     #setParsePC $0000
     #setInputLine inputLine
 
     jsr parseLine
 
-    cli
-    rts
+    #nl
+    #cpr 5, "end of parse"
+
+    jmp *
 
 .endnamespace ; parser
 .endsection ; main
