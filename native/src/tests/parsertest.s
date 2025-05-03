@@ -1,8 +1,9 @@
 .cpu "4510"
 
 .section main
-    #ClearScreen 1
 .namespace parser
+
+    #ClearScreen 1
     #setParsePC $0000
     #setInputLine inputLine
 
@@ -10,18 +11,18 @@
 
     cli
     rts
-.endnamespace ; parser
 
+.endnamespace ; parser
 .endsection ; main
 
 .section data
 
-inputLine  .text  "label:  adc #10    ; abcd"
+inputLine   .text  "label:  adc #10    ; abcd"
             .byte $FF
 
 ;TODO: write test routines that validate the line above with expected results below
 .namespace parser
-expected   .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
+expected    .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
             .byte end_expected - expected       ; line length (of tokenised line)
             .word $0000                         ; line address (absolute or relative)
             .byte $00                           ; start column of label

@@ -665,4 +665,4 @@ lookup_end
 
 .endsection ; data
 
-.endnamespace ; parser
+.endnamespace ; def parser
