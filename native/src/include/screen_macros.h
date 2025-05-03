@@ -6,9 +6,9 @@ SetColour .macro colour
 
 ClearScreen .macro colour
     #SetColour \colour
-    sta $d707 ;TODO: find name and add constant
-    #DMAFillJob $0020, $000800, 4000, true
-    #DMAFillJob \colour, $01f800, 4000, false
+    sta dma.ETRIGINLINE
+    #DMAFillJob $0020,   $000800, 4000, true
+    #DMAFillJob \colour, $ff8000, 4000, false
     #SetLocation 0,0
 .endmacro
 

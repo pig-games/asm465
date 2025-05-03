@@ -30,7 +30,7 @@ expected    .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
             .byte 08                            ; start column of instruction
             .byte $61                           ; instruction token
             .byte 12                            ; start column of operand
-            .byte AM_IMM | VP_DEC               ; addressing mode | value spec (hex, dec, label, ...)
+            .byte AM_IMM | VD_DEC               ; addressing mode | value spec (hex, dec, label, ...)
             .byte $a                            ; value
             .byte 19                            ; start column of comment
             .text " abcd"                       ; comment text including leading space

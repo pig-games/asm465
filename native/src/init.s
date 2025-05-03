@@ -11,7 +11,7 @@
 	lda #80
 	sta vic4.CHRCOUNT
     lda #50
-    sta $D07B ;TODO: find name and add constant
+    sta vic4.DISPROWS
 
     ; set 640x400 mode
     lda vic3.SCRNMODE

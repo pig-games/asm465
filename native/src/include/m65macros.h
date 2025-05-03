@@ -216,11 +216,12 @@ DMACopyJob .macro Source, Destination, Length, Chain, Backwards
 .endmacro
 
 DMAFillJob .macro SourceByte, Destination, Length, Chain
-	.byte $00 ; No more options
+	.byte $81, [(\Destination>>20) & $ff] ; dest bank
+	.byte $00 ; EOL
 	.if \Chain
-	 	.byte $07 ; Fill and chain
+        .byte dma.FILL|dma.CHAIN        ; fill, chain next job
 	.else
-		.byte $03 ; Fill and last request
+		.byte dma.FILL ; Fill and last request
 	.endif
 	.word \Length ; Size of Copy
 	.word \SourceByte

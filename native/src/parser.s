@@ -34,12 +34,12 @@ parser .namespace
     LT_MCUSE = %0010_0000
     LT_COMM  = %0100_0000
 
-    VP_HEX   = 1 << 5
-    VP_DEC   = 2 << 5
-    VP_BIN   = 3 << 5
-    VP_OCT   = 4 << 5
-    VP_EXP   = 5 << 5
-    VP_LAB   = 6 << 5
+    VD_HEX   = 1 << 5
+    VD_DEC   = 2 << 5
+    VD_BIN   = 3 << 5
+    VD_OCT   = 4 << 5
+    VD_EXP   = 5 << 5
+    VD_LAB   = 6 << 5
 
 ; base page pointers
 .section bp
@@ -74,6 +74,11 @@ parseLine .proc
         jsr setCPrintC
         lda #'b'
         jsr cPrintC
+        ldx #2
+        ldy #40
+        jsr setLocation
+        lda #'c'
+        jsr putC
         
         ldy #0          ; init x to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
@@ -206,9 +211,8 @@ parseInstruction .proc
         sbc ParsePos
         cmp #5
         bcs tooLong
-        ; do binary search to find instruction
 
-        ;TODO: use binary search to find instruction (or not)
+        ;TODO: add mnemonic search
 
         iny
         inx                 ; skip colon from input

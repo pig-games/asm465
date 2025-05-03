@@ -15,6 +15,7 @@ dma .namespace
     ADDRBANK        = $D702
     CONTROL         = $D703 ; bit 1 = Enable F018b mode
     ADDRLSB_ETRIG   = $D705 ; LSB for MEGA65 DMA Extensions
+    ETRIGINLINE     = $D707
     M65_SCREEN      = $0800
     M65_COLRAM      = $f800
 .endnamespace ; dma
@@ -87,6 +88,7 @@ vic4 .namespace
     SPRPTRADRMSB = $D06D
     SPRPTRADRBNK = $D06E
     PALETTE      = $D070     ; MAPEDPAL(2) BTPALSEL(2) SPRPALSEL(2) ABTPALSEL(2)
+    DISPROWS     = $D07B
 .endnamespace ; vic4
 
 math .namespace
