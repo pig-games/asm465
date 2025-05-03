@@ -1,3 +1,9 @@
+; constants
+
+    CA_BLINK = %0001_0000
+    CA_REV = %0010_0000
+    CA_ULINE = %1000_0000
+
 .section bp
     ScreenPtr       .dword 0
     ColPtr          .dword 0
@@ -20,22 +26,22 @@ PrtColour   .byte 0
     setLocation .proc 
         stx PrtColumn
         lda #0
-        sta $d777
-        sta $d776
-        sta $d775
-        sta $d773
-        sta $d772
-        sta $d771
+        sta math.IN_B4
+        sta math.IN_B3
+        sta math.IN_B2
+        sta math.IN_A4
+        sta math.IN_A3
+        sta math.IN_A2
         lda #80
-        sta $d770
+        sta math.IN_A1
         sty PrtRow
-        sty $d774
+        sty math.IN_B1
         clc
-        ldqa $d778
+        ldqa math.MULTOUT1
         adqa ScreenPtr
         stqa CurScreenPosPtr
         clc
-        ldqa $d778
+        ldqa math.MULTOUT1
         adqa ColPtr
         stqa CurColourPosPtr
         rts

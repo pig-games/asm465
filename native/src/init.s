@@ -7,28 +7,28 @@
 
     ; set 80x50 character
 	lda #80
-	sta $D058
+	sta vic4.LINESTEPLO
 	lda #80
-	sta $D05E
+	sta vic4.CHRCOUNT
     lda #50
-    sta $D07B
+    sta $D07B ;TODO: find name and add constant
 
     ; set 640x400 mode
-    lda $d031
+    lda vic3.SCRNMODE
     ora #%10001000
-    sta $d031
+    sta vic3.SCRNMODE
 
-    #setBasePage BasePage 
+    #setBasePage BasePage
 
     sei 
 
-    lda $d060
+    lda vic4.SCRNPTR1
     sta ScreenPtr
-    lda $d061
+    lda vic4.SCRNPTR2
     sta ScreenPtr+1
-    lda $d062
+    lda vic4.SCRNPTR3
     sta ScreenPtr+2
-    lda $d063
+    lda vic4.SCRNPTR4
     sta ScreenPtr+3
     lda #0
     sta ColPtr

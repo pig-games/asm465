@@ -11,6 +11,7 @@ BLD_NAME = $(OUTDIR)/$(NAME).prg
 PTEST_NAME = $(OUTDIR)/parsertest
 
 CORE_SRC = \
+		src/include/m65defs.h \
 		src/include/m65macros.h \
 		src/include/utils.h \
 		src/include/screen_macros.h \

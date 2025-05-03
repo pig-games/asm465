@@ -1,5 +1,7 @@
 .enc "screen"
-; consts
+
+parser .namespace
+; constants
 
     AM_IMP   = 0
     AM_ACC   = 1
@@ -39,10 +41,6 @@
     VP_EXP   = 5 << 5
     VP_LAB   = 6 << 5
 
-    CA_BLINK = %0001_0000
-    CA_REV = %0010_0000
-    CA_ULINE = %1000_0000
-
 ; base page pointers
 .section bp
     ParsePos        .byte 0
@@ -61,7 +59,7 @@
     InputLinePtr    .word 0
     Ptr             .word 0
     LPtr            .dword 0
-.endsection
+.endsection ; bp
 
     mnemsize = (mn_end - mnemonics) / 6
 
@@ -665,4 +663,6 @@ tok_to_mnem
             ; !byte   $FB, <mn_plz, >mn_plz
 lookup_end
 
-.endsection
+.endsection ; data
+
+.endnamespace ; parser

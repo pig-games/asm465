@@ -1,5 +1,5 @@
 
-
+.namespace parser
 checkIfAlpha .macro notAlpha, isAlpha
         cmp #'a'
         bcc \notAlpha
@@ -44,3 +44,5 @@ setInputLine .macro inputLine
     lda #>\inputLine
     sta InputLinePtr + 1
 .endmacro
+
+.endnamespace ; parser

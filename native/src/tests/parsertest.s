@@ -2,7 +2,7 @@
 
 .section main
     #ClearScreen 1
-
+.namespace parser
     #setParsePC $0000
     #setInputLine inputLine
 
@@ -10,6 +10,8 @@
 
     cli
     rts
+.endnamespace ; parser
+
 .endsection ; main
 
 .section data
@@ -18,6 +20,7 @@ inputLine  .text  "label:  adc #10    ; abcd"
             .byte $FF
 
 ;TODO: write test routines that validate the line above with expected results below
+.namespace parser
 expected   .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
             .byte end_expected - expected       ; line length (of tokenised line)
             .word $0000                         ; line address (absolute or relative)
@@ -32,5 +35,7 @@ expected   .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
             .text " abcd"                       ; comment text including leading space
 end_expected 
             .byte $FF
+
+.endnamespace ; parser
 .endsection ; data
 

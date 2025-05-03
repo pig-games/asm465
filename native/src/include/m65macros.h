@@ -52,9 +52,9 @@ enableVIC3Registers .macro
 		eom
 
 		lda #$A5	;Enable VIC III
-		sta $d02f
+		sta vic4.KEY
 		lda #$96
-		sta $d02f
+		sta vic4.KEY
 .endmacro
 
 enableVIC4Registers .macro
@@ -66,9 +66,9 @@ enableVIC4Registers .macro
 		eom
 
 		lda #$47	;Enable VIC IV
-		sta $d02f
+		sta vic4.KEY
 		lda #$53
-		sta $d02f
+		sta vic4.KEY
 		eom
 .endmacro
 
