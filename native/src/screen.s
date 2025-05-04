@@ -141,6 +141,30 @@ PrtColour   .byte 0
         rts
     .endproc
 
+    sPrint .proc
+        plx
+        ply
+        ; do actual print
+        
+        #incxy
+        
+        jsr print
+
+        ; calculate new return address
+        tya
+        clc
+        adc Ptr
+        sta Ptr
+        lda #0
+        adc Ptr+1
+
+        ; restore return address
+        pha
+        lda Ptr
+        pha
+        rts
+    .endproc
+
     ; X: str ptr lo
     ; Y: str ptr hi
     ; Z: colour
@@ -163,30 +187,6 @@ PrtColour   .byte 0
         jmp loop
     end
         stz PrtColumn
-        rts
-    .endproc
-
-    sPrint .proc
-        plx
-        ply
-        ; do actual print
-        
-        #incxy
-        
-        jsr print
-
-        ; calculate new return address
-        tya
-        clc
-        adc Ptr
-        sta Ptr
-        lda #0
-        adc Ptr+1
-
-        ; restore return address
-        pha
-        lda Ptr
-        pha
         rts
     .endproc
 

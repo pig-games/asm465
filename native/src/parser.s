@@ -66,6 +66,8 @@ parser .namespace
 .section parser
 ; Parse the line of code at (BasePage) InputLinePtr
 parseLine .proc
+        #prl "Start"
+        #nl
         ldy #0          ; init x to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
 
@@ -115,7 +117,7 @@ parseLine .proc
 
 ; Process a symbol (label, macro use) or instruction
 parseSymbolOrInstruction .proc
-    #cpr 5, "s"          ; DEBUG OUTPUT
+    #prl "parseSymbolOrInstruction"          ; DEBUG OUTPUT
     #setParsePC ParsePC
 
     ; store input line character column
@@ -128,6 +130,15 @@ parseSymbolOrInstruction .proc
     ; first determine if this is a symbol or potential instruction
     loop
         lda (InputLinePtr),y
+        pha
+        phx
+        phy
+        phz
+        jsr printC
+        plz
+        ply
+        plx
+        pla
         cmp #':'
         bne notColon
         sta ParseBuf,x
@@ -141,7 +152,7 @@ parseSymbolOrInstruction .proc
         bne notSpace
         jmp parseInstruction
     notSpace
-        cmp #$ff
+        cmp #$FF
         beq end
         iny
         inx
@@ -153,7 +164,7 @@ parseSymbolOrInstruction .proc
 ; process the label definition
 ; only needs to update the line type and skip the colon 
 processLabelDef .proc
-        #cpr 5, "l"          ; DEBUG OUTPUT
+        #prl ": processLabelDef"          ; DEBUG OUTPUT
 
     ; check on line type
         #checkLineType ParseBuf, 0, firstLabelDef
@@ -175,8 +186,9 @@ processLabelDef .proc
 .endproc
 
 parseInstruction .proc
-        #cpr 5, "i"          ; DEBUG OUTPUT
-        lda (InputLinePtr),y
+        #prl ": parseInstruction"          ; DEBUG OUTPUT
+        #nl
+        rts
 
     ; check on line type
         #checkLineType ParseBuf, LT_LBDEF, firstInstruction
@@ -190,6 +202,9 @@ parseInstruction .proc
         sec
         sbc ParsePos
         cmp #5
+            lda #7
+    sta $d020
+        rts
         bcs tooLong
 
         ;TODO: add mnemonic search

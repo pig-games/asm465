@@ -25,6 +25,6 @@ stxy .macro ptr
 
 incxy .macro
         inx
-        bcc *+3
+        bne *+3
         iny
 .endmacro

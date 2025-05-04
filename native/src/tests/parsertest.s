@@ -7,13 +7,15 @@
     #ClearScreen 1
     jsr setLowerCase
 
+    #cprl 5,"Parser functions tests"
+
     #setParsePC $0000
     #setInputLine inputLine
 
     jsr parseLine
 
     #nl
-    #cpr 5, "end of parse"
+    #cprl 5, "end of parse"
 
     jmp *
 

@@ -6,41 +6,40 @@
     #ClearScreen 1
     jsr setLowerCase
 
-    #cprl 5,"Screen functions tests"
+    #SetBGBColors 11, 0
 
+    #cprl 3, "Screen functions tests"
+    
     ; set location to 4,2
-    ldx #4
-    ldy #2
     #SetLocation 4,2
 
     ; setCPrintC
     lda #'a'
-    ldz #2
+    ldz #4
     jsr setCPrintC
 
     ; cPrintC
     lda #'b'
-    jsr cPrintC
+    jsr printC
 
     ; setLocation 2, 10 + putc
-    #SetLocation 2, 10
+    #SetLocation 2, 5
     lda #'c'
     jsr putC
-
+    
     ; sPrint
-    #SetLocation 10,20
+    #SetLocation 10,4
     jsr sPrint
-    .null "10,10 sPrint, "
+    .null "10,4 sPrint, "
 
     ; sCPrint
     jsr sCPrint
-    .byte 4
-    .null "sCPrint"
+    .byte 7
+    .null "7 sCPrint"
 
     #SetLocation 10,30
-
-    #pr "10,30 pr, "
-    #cpr 3,"3, cpr "
+    #prl "10,30 prl,"
+    #cpr 3 | CA_BLINK | CA_REV,"3, cpr "
     #prl "prl"
     #pr "newline"
     #cprl 5,"5, cprl"
@@ -56,9 +55,20 @@
     #ldxy str
     ldz #1
     jsr cPrint
+    #nl
+
+    #cprl 3, "before proc"
+    jsr inside
+
+    #prl "outside proc again"
 
     jmp *
 
+inside .proc
+    #prl "test inside proc"
+    #prl "more inside proc"
+    rts
+.endproc
 str .null "StringPtr"
 
 .endsection ; main

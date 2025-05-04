@@ -1,4 +1,4 @@
-
+.enc "screen"
 .namespace parser
 checkIfAlpha .macro notAlpha, isAlpha
         cmp #'a'
@@ -24,8 +24,6 @@ checkLineType .macro lineType, lineTypeFlags, okLabel
         beq \okLabel
 
     ; not allowed to have multiple label defs on one line
-        lda #'e'            ; DEBUG OUTPUT
-        sta $0800+10*80,y   ; DEBUG OUTPUT
         iny
         ;TODO: handle error
 .endmacro
