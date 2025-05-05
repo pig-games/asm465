@@ -1,31 +1,30 @@
 .enc "screen"
 .namespace parser
 checkIfAlpha .macro notAlpha, isAlpha
-        cmp #'a'
-        bcc \notAlpha
-        cmp #'['
-        bcc \isAlpha
-        cmp #'A'
-        bcc \notAlpha
-        cmp #$5B
-        bcs \notAlpha
+    cmp #'a'
+    bcc \notAlpha
+    cmp #'['
+    bcc \isAlpha
+    cmp #'A'
+    bcc \notAlpha
+    cmp #$5B
+    bcs \notAlpha
 .endmacro
 
-checkIfComment .macro notComment
-        cmp #';'
-        bne \notComment
+checkIfComment .macro notComment           
+    cmp #';'
+    bne \notComment
 .endmacro
 
 checkLineType .macro lineType, lineTypeFlags, okLabel
-        ; check on line type
-        lda #\lineTypeFlags
-        eor #$ff
-        and \lineType
-        beq \okLabel
-
-    ; not allowed to have multiple label defs on one line
-        iny
-        ;TODO: handle error
+    ; check on line type
+    lda #\lineTypeFlags
+    eor #$ff
+    and \lineType
+    beq \okLabel
+; not allowed to have multiple label defs on one line
+    iny
+    ;TODO: handle error
 .endmacro
 
 setParsePC .macro parsePC

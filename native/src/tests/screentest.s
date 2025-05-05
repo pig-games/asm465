@@ -6,8 +6,8 @@
     #ClearScreen 1
     jsr setLowerCase
 
-    #SetBGBColors 11, 0
-
+    #SetBGBColors 11, 0 
+ 
     #cprl 3, "Screen functions tests"
     
     ; set location to 4,2

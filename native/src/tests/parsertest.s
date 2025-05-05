@@ -8,9 +8,15 @@
     jsr setLowerCase
 
     #cprl 5,"Parser functions tests"
-
+    #nl
     #setParsePC $0000
     #setInputLine inputLine
+
+    #cpr 4,"Testing: ["
+    #ldxy inputLine
+    ldz #1
+    jsr cPrint
+    #cprl 4, "]"
 
     jsr parseLine
 
@@ -25,7 +31,7 @@
 .section data
 
 inputLine   .text  "label:  adc #10    ; abcd"
-            .byte $FF
+            .byte $FF, 0
 
 ;TODO: write test routines that validate the line above with expected results below
 .namespace parser

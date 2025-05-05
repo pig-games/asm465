@@ -64,10 +64,10 @@ parser .namespace
     mnemsize = (mn_end - mnemonics) / 6
 
 .section parser
+
 ; Parse the line of code at (BasePage) InputLinePtr
 parseLine .proc
-        #prl "Start"
-        #nl
+        #debug.infoLn "[parseLine]"
         ldy #0          ; init x to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
 
@@ -107,17 +107,17 @@ parseLine .proc
 ;parseLine_end
 
     endParse
-        #cpr 5, "d"          ; DEBUG OUTPUT
+        #debug.info "d"
         rts
 
     parseDirectiveOrMacroDef
-        #cpr 5, "p"          ; DEBUG OUTPUT
+        #debug.info "p"
         rts
 .endproc
 
 ; Process a symbol (label, macro use) or instruction
 parseSymbolOrInstruction .proc
-    #prl "parseSymbolOrInstruction"          ; DEBUG OUTPUT
+    #debug.infoLn "[parseSymbolOrInstruction]"
     #setParsePC ParsePC
 
     ; store input line character column
@@ -130,15 +130,7 @@ parseSymbolOrInstruction .proc
     ; first determine if this is a symbol or potential instruction
     loop
         lda (InputLinePtr),y
-        pha
-        phx
-        phy
-        phz
-        jsr printC
-        plz
-        ply
-        plx
-        pla
+        #debug.infoCReg 1
         cmp #':'
         bne notColon
         sta ParseBuf,x
@@ -164,7 +156,7 @@ parseSymbolOrInstruction .proc
 ; process the label definition
 ; only needs to update the line type and skip the colon 
 processLabelDef .proc
-        #prl ": processLabelDef"          ; DEBUG OUTPUT
+        #debug.infoLn "[processLabelDef]"
 
     ; check on line type
         #checkLineType ParseBuf, 0, firstLabelDef
@@ -186,8 +178,7 @@ processLabelDef .proc
 .endproc
 
 parseInstruction .proc
-        #prl ": parseInstruction"          ; DEBUG OUTPUT
-        #nl
+        #debug.infoLn "[parseInstruction]"
         rts
 
     ; check on line type
@@ -223,12 +214,12 @@ parseInstruction .proc
 
         rts
     tooLong
-        #cpr 5, "e"          ; DEBUG OUTPUT
+        #debug.info "e"
         rts
 .endproc
 
 parseMacroUse .proc
-    #cpr 5, "u"          ; DEBUG OUTPUT
+    #debug.info "u"
     lda (InputLinePtr),y
 
     iny
@@ -236,14 +227,14 @@ parseMacroUse .proc
 .endproc
 
 parseMultiLabel .proc
-    #cpr 5, "m"            ; DEBUG OUTPUT
+    #debug.info "m"
     lda (InputLinePtr),y
 
     rts
 .endproc
 
 parseComment .proc
-        #cpr 5, "c"          ; DEBUG OUTPUT
+        #debug.info "c"
 
         lda ParseBuf        ; load line type byte
         bne notOnlyComment

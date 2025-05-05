@@ -1,5 +1,7 @@
 .cpu "4510"
 
+DEBUG_ :?=false
+
 * = $2001
     .dsection boot
 

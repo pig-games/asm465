@@ -14,6 +14,7 @@ CORE_SRC = \
 		src/include/m65macros.h \
 		src/include/utils.h \
 		src/include/screen_macros.h \
+		src/include/debug_macros.h \
 		src/layout.s \
 		src/boot.s \
 		src/init.s \
@@ -30,10 +31,10 @@ STEST_SRC = \
 OPTS = 	-C -a -B -i --m4510
 
 parsertest: $(PTEST_SRC) $(CORE_SRC) 
-		64tass $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
+		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
 
 screentest: $(STEST_SRC) $(CORE_SRC) 
-		64tass $(OPTS) $(CORE_SRC) $(STEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
+		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
 
 all: parsertest screentest
 
