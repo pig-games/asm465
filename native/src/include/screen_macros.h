@@ -7,8 +7,8 @@ SetColour .macro colour
 ClearScreen .macro colour
     #SetColour \colour
     sta dma.ETRIGINLINE
-    #DMAFillJob $0020,   $000800, 4000, true
-    #DMAFillJob \colour, $ff80000, 4000, false
+    #dma.FillJob $0020,   $000800, 4000, true
+    #dma.FillJob \colour, $ff80000, 4000, false
     #SetLocation 0,0
 .endmacro
 
@@ -39,69 +39,39 @@ PutC .macro
 .endmacro
 
 nl .macro
-    pha
-    phx
-    phy
-    phz
+    phq
     jsr printNL
-    plz
-    ply
-    plx
-    pla
+    plq
 .endmacro
 
 pr .macro str
-    pha
-    phx
-    phy
-    phz
+    phq
     jsr sPrint
     .null \str
-    plz
-    ply
-    plx
-    pla
+    plq
 .endmacro
 
 prl .macro str
-    pha
-    phx
-    phy
-    phz
+    phq
     jsr sPrint
     .null \str
     jsr printNL
-    plz
-    ply
-    plx
-    pla
+    plq
 .endmacro
 
 cpr .macro colour, str
-    pha
-    phx
-    phy
-    phz
+    phq
     jsr sCPrint
     .byte \colour
     .null \str
-    plz
-    ply
-    plx
-    pla
+    plq
 .endmacro
 
 cprl .macro colour, str
-    pha
-    phx
-    phy
-    phz
+    phq
     jsr sCPrint
     .byte \colour
     .null \str
     jsr printNL
-    plz
-    ply
-    plx
-    pla
+    plq
 .endmacro

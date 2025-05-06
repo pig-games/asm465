@@ -16,7 +16,7 @@ entry
 BasePage
     .logical $0000
     .dsection bp
-    .cerror * > $100, "Out of DP space"
+    .cerror * > $100, "Out of BP space"
     .endlogical
 
     .align

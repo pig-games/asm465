@@ -25,6 +25,20 @@ adqa .function address ; adcq bp/addr/(BP)/[BP4]
 	adc address
 .endfunction
 
+phq .function
+	pha
+	phx
+	phy
+	phz
+.endfunction
+
+plq .function
+	plz
+	ply
+	plx
+	pla
+.endfunction
+
 BasicUpstart65 .macro addr
 		.byte $09,$20 ; End of command marker (first byte after the 00 terminator)
 		.byte $0a,$00 ; 10
@@ -129,7 +143,8 @@ mapMemory .macro source, target
 	eom
 .endmacro
 
-VIC4_SetCharLocation .macro addr
+.namespace vic4
+SetCharLocation .macro addr
 	lda #(\addr & $ff)
 	sta $d068
 	lda #((\addr & $ff00)>>8)
@@ -138,7 +153,7 @@ VIC4_SetCharLocation .macro addr
 	sta $d06a
 .endmacro
 
-VIC4_SetScreenLocation .macro addr
+SetScreenLocation .macro addr
 	lda #(\addr & $ff)
 	sta $d060
 	lda #(\addr & $ff00)>>8)
@@ -148,8 +163,10 @@ VIC4_SetScreenLocation .macro addr
 	lda #(((\addr & $ff0000)>>24) & $0f)
 	sta $d063
 .endmacro
+.endnamespace
 
-RunDMAJob .macro JobPointer
+.namespace dma
+RunJob .macro JobPointer
 		lda #(\JobPointer >> 16)
 		sta $d702
 		sta $d704
@@ -159,13 +176,13 @@ RunDMAJob .macro JobPointer
 		sta $d705
 .endmacro
 
-DMAHeader .macro SourceBank, DestBank
+Header .macro SourceBank, DestBank
 		.byte $0A ; Request format is F018A
 		.byte $80, \SourceBank
 		.byte $81, \DestBank
 .endmacro
 
-DMAStep .macro SourceStep, SourceStepFractional, DestStep, DestStepFractional
+Step .macro SourceStep, SourceStepFractional, DestStep, DestStepFractional
 		.if \SourceStepFractional != 0
 			.byte $82, \SourceStepFractional
 		.endif
@@ -180,16 +197,16 @@ DMAStep .macro SourceStep, SourceStepFractional, DestStep, DestStepFractional
 		.endif
 .endmacro
 
-DMADisableTransparency .macro
+DisableTransparency .macro
 		.byte $06
 .endmacro
 
-DMAEnableTransparency .macro TransparentByte
+EnableTransparency .macro TransparentByte
 		.byte $07 
 		.byte $86, \TransparentByte
 .endmacro
 
-DMACopyJob .macro Source, Destination, Length, Chain, Backwards
+CopyJob .macro Source, Destination, Length, Chain, Backwards
 	.byte $00 ; No more options
 	.if \Chain
 		.byte $04 ; Copy and chain
@@ -215,7 +232,7 @@ DMACopyJob .macro Source, Destination, Length, Chain, Backwards
 	.endif
 .endmacro
 
-DMAFillJob .macro SourceByte, Destination, Length, Chain
+FillJob .macro SourceByte, Destination, Length, Chain
 	.byte $0a ; 11 byte mode
 	.byte $81, (\Destination>>20) & $ff ; dest bank
 	.byte $00 ; EOL
@@ -233,7 +250,7 @@ DMAFillJob .macro SourceByte, Destination, Length, Chain
 .endmacro
 
 
-DMAMixJob .macro Source, Destination, Length, Chain, Backwards
+MixJob .macro Source, Destination, Length, Chain, Backwards
 	.byte $00 ; No more options
 	.if \Chain
 		.byte $04 ; Mix and chain
@@ -256,3 +273,5 @@ DMAMixJob .macro Source, Destination, Length, Chain, Backwards
 		.word $0000
 	.endif
 .endmacro
+
+.endnamespace ; dma
