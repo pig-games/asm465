@@ -2,6 +2,7 @@
 .enc "screen"
 
 .section main
+    #debug.setupDebugStats
 
     #ClearScreen 1
     jsr setLowerCase
@@ -61,7 +62,12 @@
     jsr inside
 
     #prl "outside proc again"
+    #debug.warningLn "test warning1"
+    #debug.warningLn "test warning2"
 
+    #debug.errorLn "test error"
+
+    #debug.Stats
     jmp *
 
 inside .proc
