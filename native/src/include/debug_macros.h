@@ -4,14 +4,15 @@
 debug .namespace
     STATS_ :?=false
 
-setupDebugStats .macro
+
+setupDebugStats .macro datasection=data
     .if DEBUG_
     .namespace debug
         STATS_ := true
-        .section bp
+        .section \datasection
             NumWarnings .byte 0
             NumErrors   .byte 0
-        .endsection ; dp
+        .endsection ; data
     .endnamespace
     .endif
 .endmacro
