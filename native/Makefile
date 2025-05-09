@@ -28,6 +28,9 @@ PTEST_SRC = \
 STEST_SRC = \
 		src/tests/screentest.s
 
+DTEST_SRC = \
+		src/tests/debugtest.s
+
 OPTS = 	-C -a -B -i --m4510
 
 parsertest: $(PTEST_SRC) $(CORE_SRC) 
@@ -36,13 +39,19 @@ parsertest: $(PTEST_SRC) $(CORE_SRC)
 screentest: $(STEST_SRC) $(CORE_SRC) 
 		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
 
-all: parsertest screentest
+debugtest: $(DTEST_SRC) $(CORE_SRC) 
+		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(DTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
+
+all: parsertest screentest debugtest
 
 run_ptest: parsertest
 		etherload.osx -r $(OUTDIR)/parsertest
 
 run_stest: screentest
 		etherload.osx -r $(OUTDIR)/screentest
+
+run_dtest: debugtest
+		etherload.osx -r $(OUTDIR)/debugtest
 
 clean:
 		rm -r $(OUTDIR)/*

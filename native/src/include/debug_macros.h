@@ -114,7 +114,7 @@ numWarnings .macro
         lda debug.NumWarnings
         #debug.infoCReg 7
         #nl
-        plq 
+        plq
     .endif
 .endmacro
 
@@ -125,7 +125,7 @@ numErrors .macro
         lda debug.NumErrors
         #debug.infoCReg 9
         #nl
-        plq 
+        plq
     .endif
 .endmacro
 
