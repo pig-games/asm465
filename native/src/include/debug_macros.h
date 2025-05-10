@@ -102,6 +102,13 @@ warningReg .macro reg="a"
     .endif
 .endmacro
 
+warningRegDec .macro reg="a"
+    #debug.infoCRegDec 7, \reg
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
 error .macro str
     #debug.infoC 9, \str
     .if DEBUG_ && debug.STATS_
@@ -113,6 +120,13 @@ errorReg .macro reg="a"
     #debug.infoCReg 8, \reg
     .if DEBUG_ && debug.STATS_
         inc debug.NumErrors
+    .endif
+.endmacro
+
+errorRegDec .macro reg="a"
+    #debug.infoCRegDec 9, \reg
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
     .endif
 .endmacro
 
