@@ -22,55 +22,64 @@
     #debug.errorLn "[#debug.errorLn {shift-2}...{shift-2}]"
 
     #nl
-    #debug.info "[infoRegDec] A=1: "
+    #debug.info "[#infoRegDec] A=1: "
     lda #1
     #debug.infoRegDec
     #nl
-    #debug.info "[infoRegDec {shift-2}a{shift-2}] A=2: "
+    #debug.info "[#infoRegDec {shift-2}a{shift-2}] A=2: "
     lda #2
     #debug.infoRegDec "a"
     #nl
-    #debug.info "[infoRegDec {shift-2}x{shift-2}] X=3: "
+    #debug.info "[#infoRegDec {shift-2}x{shift-2}] X=3: "
     ldx #3
     #debug.infoRegDec "x"
     #nl
-    #debug.info "[infoRegDec {shift-2}y{shift-2}] Y=4: "
+    #debug.info "[#infoRegDec {shift-2}y{shift-2}] Y=4: "
     ldy #4
     #debug.infoRegDec "y"
     #nl
-    #debug.info "[infoRegDec {shift-2}z{shift-2}] Z=5: "
+    #debug.info "[#infoRegDec {shift-2}z{shift-2}] Z=5: "
     ldz #5
     #debug.infoRegDec "z"
     #nl
 
-    #debug.info "[infoCReg 4] A=1: "
+    #debug.info "[#infoCReg 4] A=1: "
     lda #1
     #debug.infoCReg 4
     #nl
-    #debug.info "[infoCReg 4, {shift-2}a{shift-2}] A=2: "
+    #debug.info "[#infoCReg 4, {shift-2}a{shift-2}] A=2: "
     lda #2
     #debug.infoCReg 4, "a"
     #nl
-    #debug.info "[infoCReg 4, {shift-2}x{shift-2}] X=3: "
+    #debug.info "[#infoCReg 4, {shift-2}x{shift-2}] X=3: "
     ldx #3
     #debug.infoCReg 4, "x"
     #nl
-    #debug.info "[infoCReg 4, {shift-2}y{shift-2}] Y=4: "
+    #debug.info "[#infoCReg 4, {shift-2}y{shift-2}] Y=4: "
     ldy #4
     #debug.infoCReg 4, "y"
     #nl
-    #debug.info "[infoCReg 4, {shift-2}z{shift-2}] Z=5: "
+    #debug.info "[#infoCReg 4, {shift-2}z{shift-2}] Z=5: "
     ldz #5
     #debug.infoCReg 4, "z"
     #nl
 
-    #debug.info "[warningReg] A=1: "
+    #debug.info "[#warningReg] A=1: "
     lda #1
     #debug.warningReg
     #nl
-    #debug.info "[errorReg] A=2: "
+    #debug.info "[#errorReg] A=2: "
     lda #2
     #debug.errorReg
+    #nl
+
+    #debug.info "[#warningRegDec] A=1: "
+    lda #1
+    #debug.warningRegDec
+    #nl
+    #debug.info "[#errorRegDec] A=2: "
+    lda #2
+    #debug.errorRegDec
     #nl
 
     lda #$fe
