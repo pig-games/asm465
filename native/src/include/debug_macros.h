@@ -4,7 +4,6 @@
 debug .namespace
     STATS_ :?=false
 
-
 setupDebugStats .macro datasection=data
     .if DEBUG_
     .namespace debug
@@ -41,6 +40,36 @@ infoCReg .macro col=5, reg="a"
     .endif
 .endmacro
 
+infoCRegDec .macro col=5, reg="a"
+    .if DEBUG_
+        pha
+        phx
+        phy
+        phz
+        .switch \reg
+        .case "x"
+            txa
+        .case "y"
+            tya
+        .case "z"
+            tza
+        .default
+        .endswitch
+        ldz #\col
+        stz PrtColour
+        sta toDec.In
+        ldx #0
+        stx toDec.In+1
+        jsr toDec
+        #ldbcd24 toDec.Out
+        jsr cPrintBCD24
+        plz
+        ply
+        plx
+        pla
+    .endif
+.endmacro
+
 infoC .macro col, str
     .if DEBUG_
         #cpr \col, \str
@@ -53,6 +82,10 @@ info .macro str
 
 infoReg .macro reg="a"
     #debug.infoCReg 5, \reg
+.endmacro
+
+infoRegDec .macro reg="a"
+    #debug.infoCRegDec 5, \reg
 .endmacro
 
 warning .macro str
@@ -112,7 +145,7 @@ numWarnings .macro
         phq
         #debug.infoC  7, "Number of warnings: "
         lda debug.NumWarnings
-        #debug.infoCReg 7
+        #debug.infoCRegDec 7
         #nl
         plq
     .endif
@@ -123,7 +156,7 @@ numErrors .macro
         phq
         #debug.infoC 9, "Number of errors: "
         lda debug.NumErrors
-        #debug.infoCReg 9
+        #debug.infoCRegDec 9
         #nl
         plq
     .endif

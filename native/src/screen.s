@@ -141,6 +141,118 @@ PrtColour   .byte 0
         rts
     .endproc
 
+    printSC .proc
+        pha
+        clc
+        adc #48
+        phz
+        jsr printC
+        plz
+        pla
+        rts
+    .endproc
+
+    cPrintSC .proc
+        pha
+        clc
+        adc #48
+        phz
+        jsr cPrintC
+        plz
+        pla
+        rts
+    .endproc
+
+    printBCD24 .proc ; a, x, y
+        pha
+        clc
+        tya
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec6
+        jsr printSC
+    noDec6
+        tya
+        and #$f
+        beq noDec5
+        jsr printSC
+    noDec5
+        txa
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec4
+        jsr printSC
+    noDec4
+        txa
+        and #$f
+        beq noDec3
+        jsr printSC
+    noDec3
+        pla
+        pha
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec2
+        jsr printSC
+    noDec2
+        pla
+        and #$f
+        jsr printSC
+
+        rts
+    .endproc
+
+    cPrintBCD24 .proc ; a, x, y, z
+        pha
+        clc
+        tya
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec6
+        jsr cPrintSC
+    noDec6
+        tya
+        and #$f
+        beq noDec5
+        jsr cPrintSC
+    noDec5
+        txa
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec4
+        jsr cPrintSC
+    noDec4
+        txa
+        and #$f
+        beq noDec3
+        jsr cPrintSC
+    noDec3
+        pla
+        pha
+        lsr
+        lsr
+        lsr
+        lsr
+        beq noDec2
+        jsr cPrintSC
+    noDec2
+        pla
+        and #$f
+        jsr cPrintSC
+
+        rts
+    .endproc
+
     sPrint .proc
         plx
         ply

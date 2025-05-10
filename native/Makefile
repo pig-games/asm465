@@ -19,6 +19,7 @@ CORE_SRC = \
 		src/boot.s \
 		src/init.s \
 		src/screen.s \
+		src/util.s \
 
 PTEST_SRC = \
 		src/include/parser_macros.h \

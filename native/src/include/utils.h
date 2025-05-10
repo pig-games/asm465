@@ -23,6 +23,19 @@ stxy .macro ptr
         sty \ptr+1
 .endmacro
 
+ldbcd24 .macro ptr
+        ldy \ptr+2
+        ldx \ptr+1
+        lda \ptr
+.endmacro
+
+stbcd24 .macro ptr
+        sty \ptr+2
+        stx \ptr+1
+        sta \ptr
+.endmacro
+
+
 incxy .macro
         inx
         bne *+3

@@ -10,8 +10,8 @@ entry
     .dsection init
     .dsection main
     .dsection screen
+    .dsection util
     .dsection parser
-
     .align
 BasePage
     .logical $0000

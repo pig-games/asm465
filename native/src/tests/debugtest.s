@@ -22,25 +22,25 @@
     #debug.errorLn "[#debug.errorLn {shift-2}...{shift-2}]"
 
     #nl
-    #debug.info "[infoReg] A=1: "
+    #debug.info "[infoRegDec] A=1: "
     lda #1
-    #debug.infoReg
+    #debug.infoRegDec
     #nl
-    #debug.info "[infoReg {shift-2}a{shift-2}] A=2: "
+    #debug.info "[infoRegDec {shift-2}a{shift-2}] A=2: "
     lda #2
-    #debug.infoReg "a"
+    #debug.infoRegDec "a"
     #nl
-    #debug.info "[infoReg {shift-2}x{shift-2}] X=3: "
+    #debug.info "[infoRegDec {shift-2}x{shift-2}] X=3: "
     ldx #3
-    #debug.infoReg "x"
+    #debug.infoRegDec "x"
     #nl
-    #debug.info "[infoReg {shift-2}y{shift-2}] Y=4: "
+    #debug.info "[infoRegDec {shift-2}y{shift-2}] Y=4: "
     ldy #4
-    #debug.infoReg "y"
+    #debug.infoRegDec "y"
     #nl
-    #debug.info "[infoReg {shift-2}z{shift-2}] Z=5: "
+    #debug.info "[infoRegDec {shift-2}z{shift-2}] Z=5: "
     ldz #5
-    #debug.infoReg "z"
+    #debug.infoRegDec "z"
     #nl
 
     #debug.info "[infoCReg 4] A=1: "
@@ -73,6 +73,15 @@
     #debug.errorReg
     #nl
 
+    lda #$fe
+    sta toDec.In
+    lda #0
+    sta toDec.In+1
+    jsr toDec
+    #ldbcd24 toDec.Out
+    #debug.info "decimal converted $b: "
+    jsr cPrintBCD24
+
     #nl
     #nl
     #debug.Stats
@@ -83,6 +92,7 @@ inside .proc
     #debug.warningLn "[#debug.warningLn {shift-2}...{shift-2}] inside, "
     rts
 .endproc
+
 str .null "StringPtr"
 
 .endsection ; main
