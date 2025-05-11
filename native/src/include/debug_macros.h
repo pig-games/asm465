@@ -2,16 +2,14 @@
 .enc "screen"
 
 debug .namespace
-    STATS_ :?=false
 
 setupDebugStats .macro datasection=data
     .if DEBUG_
     .namespace debug
-        STATS_ := true
         .section \datasection
             NumWarnings .byte 0
             NumErrors   .byte 0
-        .endsection ; data
+        .endsection ; \datasection
     .endnamespace
     .endif
 .endmacro
@@ -139,106 +137,106 @@ infoRegHex .macro reg="a"
 
 warning .macro str
     #debug.infoC 7, \str
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningLn .macro str
     #debug.infoCLn 7, \str
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningPtr .macro ptr
     #debug.infoCPtr 7, \ptr
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningLnPtr .macro ptr
     #debug.infoCLnPtr 7, \ptr
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningReg .macro reg="a"
     #debug.infoCReg 7, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningRegDec .macro reg="a"
     #debug.infoCRegDec 7, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 warningRegHex .macro reg="a"
     #debug.infoCRegHex 7, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 error .macro str
     #debug.infoC 9, \str
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
 errorLn .macro str
     #debug.infoCLn 9, \str
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
 errorPtr .macro ptr
     #debug.infoCPtr 9, \ptr
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
 errorLnPtr .macro ptr
     #debug.infoCLnPtr 9, \ptr
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
 errorReg .macro reg="a"
     #debug.infoCReg 8, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
 errorRegDec .macro reg="a"
     #debug.infoCRegDec 9, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 errorRegHex .macro reg="a"
     #debug.infoCRegHex 9, \reg
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
 numWarnings .macro
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         phq
-        #debug.infoC  7, "Number of warnings: "
+        #debug.infoC 7, "Number of warnings: "
         lda debug.NumWarnings
         #debug.infoCRegDec 7
         #nl
@@ -247,7 +245,7 @@ numWarnings .macro
 .endmacro
 
 numErrors .macro
-    .if DEBUG_ && debug.STATS_
+    .if DEBUG_
         phq
         #debug.infoC 9, "Number of errors: "
         lda debug.NumErrors
