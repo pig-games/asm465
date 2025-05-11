@@ -29,7 +29,7 @@ ge_0a2  sbc #$09
         rts
 .endproc
 
-toDec .proc 
+toDec .proc
     sed             ; Output gets added up in decimal.
     lda #0
     sta Out         ; Inititalize output as 0.

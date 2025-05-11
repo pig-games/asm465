@@ -45,7 +45,7 @@ PrtColour   .byte 0
 
     ; X: column
     ; Y: row
-    setLocation .proc 
+    setLocation .proc
         stx PrtColumn
         lda #0
         sta math.IN_B4

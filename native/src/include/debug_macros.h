@@ -18,10 +18,7 @@ setupDebugStats .macro datasection=data
 
 infoCReg .macro col=5, reg="a"
     .if DEBUG_
-        pha
-        phx
-        phy
-        phz
+        phq
         .switch \reg
         .case "x"
             txa
@@ -33,19 +30,13 @@ infoCReg .macro col=5, reg="a"
         .endswitch
         ldz #\col
         jsr setCPrintC
-        plz
-        ply
-        plx
-        pla
+        plq
     .endif
 .endmacro
 
 infoCRegDec .macro col=5, reg="a"
     .if DEBUG_
-        pha
-        phx
-        phy
-        phz
+        phq
         .switch \reg
         .case "x"
             txa
@@ -63,10 +54,7 @@ infoCRegDec .macro col=5, reg="a"
         jsr toDec
         #ldbcd24 toDec.Out
         jsr cPrintBCD24
-        plz
-        ply
-        plx
-        pla
+        plq
     .endif
 .endmacro
 
@@ -80,6 +68,40 @@ info .macro str
     #debug.infoC 5, \str
 .endmacro
 
+infoCLn .macro col, str
+    .if DEBUG_
+        #cprl \col, \str
+    .endif
+.endmacro
+
+infoLn .macro str
+    #debug.infoCLn 5, \str
+.endmacro
+
+infoCPtr .macro col, ptr
+    .if DEBUG_
+        phq
+        ldz #\col
+        stz PrtColour
+        #ldxy \ptr
+        jsr print
+        plq
+    .endif
+.endmacro
+
+infoCLnPtr .macro col, ptr
+    #debug.infoCPtr \col, \ptr
+    #nl
+.endmacro
+
+infoPtr .macro ptr
+    #debug.infoCPtr 5, \ptr
+.endmacro
+
+infoLnPtr .macro ptr
+    #debug.infoCLnPtr 5, \ptr
+.endmacro
+
 infoReg .macro reg="a"
     #debug.infoCReg 5, \reg
 .endmacro
@@ -90,6 +112,27 @@ infoRegDec .macro reg="a"
 
 warning .macro str
     #debug.infoC 7, \str
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
+warningLn .macro str
+    #debug.infoCLn 7, \str
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
+warningPtr .macro ptr
+    #debug.infoCPtr 7, \ptr
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
+warningLnPtr .macro ptr
+    #debug.infoCLnPtr 7, \ptr
     .if DEBUG_ && debug.STATS_
         inc debug.NumWarnings
     .endif
@@ -116,6 +159,27 @@ error .macro str
     .endif
 .endmacro
 
+errorLn .macro str
+    #debug.infoCLn 9, \str
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumErrors
+    .endif
+.endmacro
+
+errorPtr .macro ptr
+    #debug.infoCPtr 9, \ptr
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumErrors
+    .endif
+.endmacro
+
+errorLnPtr .macro ptr
+    #debug.infoCLnPtr 9, \ptr
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumErrors
+    .endif
+.endmacro
+
 errorReg .macro reg="a"
     #debug.infoCReg 8, \reg
     .if DEBUG_ && debug.STATS_
@@ -127,30 +191,6 @@ errorRegDec .macro reg="a"
     #debug.infoCRegDec 9, \reg
     .if DEBUG_ && debug.STATS_
         inc debug.NumWarnings
-    .endif
-.endmacro
-
-infoCLn .macro col, str
-    .if DEBUG_
-        #cprl \col, \str
-    .endif
-.endmacro
-
-infoLn .macro str
-    #debug.infoCLn 5, \str
-.endmacro
-
-warningLn .macro str
-    #debug.infoCLn 7, \str
-    .if DEBUG_ && debug.STATS_
-        inc debug.NumWarnings
-    .endif
-.endmacro
-
-errorLn .macro str
-    #debug.infoCLn 9, \str
-    .if DEBUG_ && debug.STATS_
-        inc debug.NumErrors
     .endif
 .endmacro
 

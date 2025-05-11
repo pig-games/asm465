@@ -18,8 +18,17 @@
     jsr inside
     #debug.infoLn "[#debug.infoLn {shift-2}...{shift-2}] after proc"
 
+    #debug.infoPtr InfoPtrStr
+    #debug.infoLnPtr InfoPtrLnStr
+
+    #debug.warningPtr WarningPtrStr
+    #debug.warningLnPtr WarningPtrLnStr
+
     #debug.error "[#debug.error {shift-2}...{shift-2}], "
     #debug.errorLn "[#debug.errorLn {shift-2}...{shift-2}]"
+
+    #debug.errorPtr ErrorPtrStr
+    #debug.errorLnPtr ErrorPtrLnStr
 
     #nl
     #debug.info "[#infoRegDec] A=1: "
@@ -87,8 +96,8 @@
     lda #0
     sta toDec.In+1
     jsr toDec
+    #debug.info "decimal converted $fe: "
     #ldbcd24 toDec.Out
-    #debug.info "decimal converted $b: "
     jsr cPrintBCD24
 
     #nl
@@ -98,10 +107,15 @@
 
 inside .proc
     #debug.warning "[#debug.warning {shift-2}...{shift-2}] inside, "
-    #debug.warningLn "[#debug.warningLn {shift-2}...{shift-2}] inside, "
+    #debug.warningLn "[#debug.warningLn {shift-2}...{shift-2}] inside"
     rts
 .endproc
 
-str .null "StringPtr"
+InfoPtrStr     .null "[#debug.infoPtr {shift-2}...{shift-2}], "
+InfoPtrLnStr   .null "[#debug.infoLnPtr {shift-2}...{shift-2}]"
+WarningPtrStr     .null "[#debug.warningPtr {shift-2}...{shift-2}], "
+WarningPtrLnStr   .null "[#debug.warningLnPtr {shift-2}...{shift-2}]"
+ErrorPtrStr     .null "[#debug.errorPtr {shift-2}...{shift-2}], "
+ErrorPtrLnStr   .null "[#debug.errorLnPtr {shift-2}...{shift-2}]"
 
 .endsection ; main

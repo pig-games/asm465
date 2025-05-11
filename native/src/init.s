@@ -1,5 +1,6 @@
 .cpu "4510"
 .section init
+    cli
     #enable40Mhz
     #enableVIC4Registers
     #disableC65ROM
