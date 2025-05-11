@@ -3,9 +3,9 @@
 .cpu "4510"
 
 stabpqz  .function address ; sta [BP4],z
-        nop
-        sta (address),z
-    .endfunction
+	nop
+	sta (address),z
+.endfunction
 
 ldqa .function address ; ldq bp/addr/(BP),z/[BP4],z
 	neg

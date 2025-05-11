@@ -336,13 +336,14 @@ PrtColour   .byte 0
     printNL .proc
         ldz #0
         stz PrtColumn
-
+        clc
         lda #80
         ldx #0
         ldy #0
         ldz #0
         adqa CurScreenPosPtr
         stqa CurScreenPosPtr
+        clc
         lda #80
         ldx #0
         ldy #0

@@ -15,7 +15,6 @@ toHexXY .proc
 ge_0a1  sbc #$09
         tay
         pla
-        pha
         lsr a
         lsr a
         lsr a
@@ -25,7 +24,6 @@ ge_0a1  sbc #$09
         adc #$3a
 ge_0a2  sbc #$09
         tax
-        pha
         rts
 .endproc
 

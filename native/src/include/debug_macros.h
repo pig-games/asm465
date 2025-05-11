@@ -58,6 +58,29 @@ infoCRegDec .macro col=5, reg="a"
     .endif
 .endmacro
 
+infoCRegHex .macro col=5, reg="a"
+    .if DEBUG_
+        phq
+        .switch \reg
+        .case "x"
+            txa
+        .case "y"
+            tya
+        .case "z"
+            tza
+        .default
+        .endswitch
+        ldz #\col
+        stz PrtColour
+        jsr toHexXY
+        txa
+        jsr cPrintC
+        tya
+        jsr cPrintC
+        plq
+    .endif
+.endmacro
+
 infoC .macro col, str
     .if DEBUG_
         #cpr \col, \str
@@ -110,6 +133,10 @@ infoRegDec .macro reg="a"
     #debug.infoCRegDec 5, \reg
 .endmacro
 
+infoRegHex .macro reg="a"
+    #debug.infoCRegHex 5, \reg
+.endmacro
+
 warning .macro str
     #debug.infoC 7, \str
     .if DEBUG_ && debug.STATS_
@@ -152,6 +179,13 @@ warningRegDec .macro reg="a"
     .endif
 .endmacro
 
+warningRegHex .macro reg="a"
+    #debug.infoCRegHex 7, \reg
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
 error .macro str
     #debug.infoC 9, \str
     .if DEBUG_ && debug.STATS_
@@ -189,6 +223,13 @@ errorReg .macro reg="a"
 
 errorRegDec .macro reg="a"
     #debug.infoCRegDec 9, \reg
+    .if DEBUG_ && debug.STATS_
+        inc debug.NumWarnings
+    .endif
+.endmacro
+
+errorRegHex .macro reg="a"
+    #debug.infoCRegHex 9, \reg
     .if DEBUG_ && debug.STATS_
         inc debug.NumWarnings
     .endif

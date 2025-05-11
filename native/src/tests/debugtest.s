@@ -52,6 +52,29 @@
     #debug.infoRegDec "z"
     #nl
 
+    #nl
+    #debug.info "[#infoRegHex] A=1: "
+    lda #1
+    #debug.infoRegHex
+    #nl
+    #debug.info "[#infoRegHex {shift-2}a{shift-2}] A=$1a: "
+    lda #$1a
+    #debug.infoRegHex "a"
+    #nl
+    #debug.info "[#infoRegHex {shift-2}x{shift-2}] X=$9f: "
+    ldx #$9f
+    #debug.infoRegHex "x"
+    #nl
+    #debug.info "[#infoRegHex {shift-2}y{shift-2}] Y=$a0: "
+    ldy #$a0
+    #debug.infoRegHex "y"
+    #nl
+    #debug.info "[#infoRegHex {shift-2}z{shift-2}] Z=$f9: "
+    ldz #$f9
+    #debug.infoRegHex "z"
+    #nl
+
+    #nl
     #debug.info "[#infoCReg 4] A=1: "
     lda #1
     #debug.infoCReg 4
@@ -89,6 +112,15 @@
     #debug.info "[#errorRegDec] A=2: "
     lda #2
     #debug.errorRegDec
+    #nl
+
+    #debug.info "[#warningRegHex] A=$ae: "
+    lda #$ae
+    #debug.warningRegHex
+    #nl
+    #debug.info "[#errorRegHex] A=1f: "
+    lda #$1f
+    #debug.errorRegHex
     #nl
 
     lda #$fe

@@ -75,6 +75,7 @@ inside .proc
     #prl "more inside proc"
     rts
 .endproc
+
 str .null "StringPtr"
 
 .endsection ; main
