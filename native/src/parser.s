@@ -67,8 +67,9 @@ parser .namespace
 
 ; Parse the line of code at (BasePage) InputLinePtr
 parseLine .proc
-        #debug.infoLn "[parseLine]"
-        ldy #0          ; init x to start pos in input
+
+        .dbg.info "[parseLine]!n"
+        ldy #0          ; init y to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
 
         lda #0
@@ -88,37 +89,37 @@ parseLine .proc
     notSpace
         cmp #'.'
         bne notDirectiveOrMacroDef
-        jmp parseDirectiveOrMacroDef
+        jsr parseDirectiveOrMacroDef
         jmp loop
     notDirectiveOrMacroDef
         cmp #'!'
         bne notMultiLabel
         jmp parseMultiLabel
     notMultiLabel
-        #checkIfAlpha notAlpha, isAlpha
+        .checkIfAlpha notAlpha, isAlpha
     isAlpha
         jsr parseSymbolOrInstruction
         jmp loop
     notAlpha
-        #checkIfComment InputLinePtr, notComment
+        .checkIfComment InputLinePtr, notComment
         jmp parseComment
     notComment
         jmp endParse          ; TODO: add error handling
 ;parseLine_end
 
     endParse
-        #debug.info "d"
+        .dbg.info "[endParse]!n"
         rts
 
     parseDirectiveOrMacroDef
-        #debug.info "p"
+        .dbg.info "p"
         rts
 .endproc
 
 ; Process a symbol (label, macro use) or instruction
 parseSymbolOrInstruction .proc
-    #debug.infoLn "[parseSymbolOrInstruction]"
-    #setParsePC ParsePC
+    .dbg.info "[parseSymbolOrInstruction]!n"
+    .setParsePC ParsePC
 
     ; store input line character column
         tya
@@ -130,7 +131,7 @@ parseSymbolOrInstruction .proc
     ; first determine if this is a symbol or potential instruction
     loop
         lda (InputLinePtr),y
-        #debug.infoCReg 1
+        .dbg.infoCReg 1
         cmp #':'
         bne notColon
         sta ParseBuf,x
@@ -156,10 +157,10 @@ parseSymbolOrInstruction .proc
 ; process the label definition
 ; only needs to update the line type and skip the colon 
 processLabelDef .proc
-        #debug.infoLn "[processLabelDef]"
+        .dbg.info "[processLabelDef]!n"
 
     ; check on line type
-        #checkLineType ParseBuf, 0, firstLabelDef
+        .checkLineType ParseBuf, 0, firstLabelDef
         rts
 
     firstLabelDef
@@ -167,59 +168,128 @@ processLabelDef .proc
         ora #LT_LBDEF
         sta ParseBuf
 
-        iny
-        inx                 ; skip colon from input
+        iny ; skip colon from input
+        inx
 
         ; update start pos
-        txa
+        tya
         sta ParsePos
 
         rts
 .endproc
 
 parseInstruction .proc
-        #debug.infoLn "[parseInstruction]"
-        rts
+        .dbg.setTag "firstInstruction"
+        .dbg.info "[parseInstruction]!n"
 
     ; check on line type
-        #checkLineType ParseBuf, LT_LBDEF, firstInstruction
+        .checkLineType ParseBuf, LT_LBDEF, firstInstruction
         rts
 
     firstInstruction
-        dex                 ; x points to the ' ' after the candidate instruction so decrease
+        .dbg.info "[first instruction]!n"
+        dey ; x points to the ' ' after the candidate instruction so decrease
+        .dbg.infoRegDec "y", "[end pos of candidate: ", "]!n"
 
         ; check if longer than 4 chars (can't be an instruction)
-        txa
+        tya
         sec
         sbc ParsePos
         cmp #5
-            lda #7
-    sta $d020
-        rts
-        bcs tooLong
+        bcs errTooLong
 
-        ;TODO: add mnemonic search
+        jsr searchInstruction
+        bcs errNoInstruction
 
-        iny
-        inx                 ; skip colon from input
-
-        ; update start pos
-        txa
+        ; update parse pos
+        tya
         sta ParsePos
-
         ; update line type with instruction flag
         lda ParseBuf
         ora #LT_INST
         sta ParseBuf
+        rts
+    errTooLong
+        .dbg.error "[mnemonic too long!]!n"
+        sec
+        rts
+    errNoInstruction
+        .dbg.error "[invalid instruction!]!n"
+        sec
+        rts
+        .dbg.resetTag
+.endproc
 
-        rts
-    tooLong
-        #debug.info "e"
-        rts
+; -> A: 
+searchInstruction .proc
+    .dbg.setTag "searchInstruction"
+    phx
+    phy
+    
+    .dbg.info "[searchInstruction]!n"
+    .dbg.only lda ParsePos
+    .dbg.infoRegDec "a", "[start pos of candidate: ", "]!n"
+    .dbg.only .rdxy InputLinePtr
+    .dbg.infoXYHex "InputLine address: $", " (InputLinePtr)!n"
+
+    .ldxy mnemonics
+    .dbg.infoXYHex "mnemonics address: $", " (Ptr)!n"
+    .dbg.resetTag
+    .dbg.setTag "searchInstruction"
+
+    .stxy Ptr
+    ldy ParsePos
+    ldz #0
+    ldx #0
+loop
+    .dbg.setTag "SIInOut"
+    lda (InputLinePtr), y
+    .dbg.infoReg "a", "input: ", "!n"
+    lda (Ptr), z
+    .dbg.infoReg "a", "mnem: ", "!n"
+    .dbg.resetTag
+    beq noMatch
+    cmp (InputLinePtr), y
+    bne noMatch
+    iny
+    lda (InputLinePtr),y
+    cmp #' '
+    beq found
+    inx
+    beq notFound ; temp search end
+    inz
+    cpz #4
+    beq noMatch
+    bra loop
+noMatch
+    ldz #0
+    ldy ParsePos
+    clc
+    lda Ptr
+    adc #6
+    sta Ptr
+    lda #0
+    adc Ptr+1
+    sta Ptr+1
+    bra loop
+found
+    .dbg.info "[Found instruction]!n"
+
+    ply
+    plx
+    clc
+    rts
+notFound
+    .dbg.info "[instruction not found]!n"
+    ply
+    plx
+    sec
+    rts
+    .dbg.resetTag
 .endproc
 
 parseMacroUse .proc
-    #debug.info "u"
+    .dbg.info "u"
     lda (InputLinePtr),y
 
     iny
@@ -227,20 +297,20 @@ parseMacroUse .proc
 .endproc
 
 parseMultiLabel .proc
-    #debug.info "m"
+    .dbg.info "m"
     lda (InputLinePtr),y
 
     rts
 .endproc
 
 parseComment .proc
-        #debug.info "c"
+        .dbg.info "c"
 
         lda ParseBuf        ; load line type byte
         bne notOnlyComment
 
         ; we're responsibble for setting the current PC
-        #setParsePC ParsePC
+        .setParsePC ParsePC
 
     notOnlyComment
         ora #LT_COMM
@@ -271,11 +341,13 @@ parseComment .proc
 
 ; x: character column, increments x to first non-space character column
 skipWhiteSpace .proc
+    .dbg.info "[skipWhiteSpace]!n"
     loop
         iny
         lda (InputLinePtr),y
         cmp #' '
         beq loop
+        sty ParsePos
         rts
 .endproc
 .endsection ; parser
@@ -356,11 +428,10 @@ ParseBuf .fill $FF, 0
 ;example2:  .byte %00000011, $14    ,$00,$21, $00, $00, $01, $02, $ff, $05, $61, $09, AM_IMM, $a,   $10, $20, $01, $02, $03, $04
 
 ; the first opcode for each mnemonic is the token for the editor, combined with the id of the specific addressing mode
-
 datasize   .word lookup_end-mnemonics
 tokensize  .word lookup_end-tok_to_mnem
 addrmsize  .word tok_to_mnem-addrm_groups
-
+            .align
 mnemonics
 mn_adc      .text "adc@"
             .byte $61, gr01-addrm_groups
@@ -512,7 +583,6 @@ mn_ply      .text "ply@"
             .byte $7A, gr08-addrm_groups 
 mn_plz      .text "plz@"
             .byte $FB, gr08-addrm_groups
-
 mn_end 
 
 addrm_groups

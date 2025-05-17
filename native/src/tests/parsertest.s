@@ -2,35 +2,39 @@
 .enc "screen"
 
 .section main
-.namespace parser
-
-    #ClearScreen 1
+    .dbg.setupDebugStats
+    .with parser
+    
+    .ClearScreen 1
     jsr setLowerCase
 
-    #cprl 5,"Parser functions tests"
-    #nl
-    #setParsePC $0000
-    #setInputLine inputLine
+    .dbg.info "Parser functions tests!n!n"
+    .setParsePC $0000
+    .setInputLine inputLine
 
-    #cpr 4,"Testing: ["
-    #ldxy inputLine
+    .cpr 4,"Testing: ["
+    .ldxy inputLine
     ldz #1
     jsr cPrint
-    #cprl 4, "]"
+    .cpr 4, "]!n"
 
+    .dbg.setFilter "searchInstruction", "firstInstruction", "SIInOut"
     jsr parseLine
 
-    #nl
-    #cprl 5, "end of parse"
+    .nl
+    .dbg.info "end of parse!n"
+
+    .nl
+    .nl
+    .dbg.Stats
 
     jmp *
-
-.endnamespace ; parser
+    .endwith
 .endsection ; main
 
 .section data
-
-inputLine   .text  "label:  adc #10    ; abcd"
+.align
+inputLine   .text  "label:  and    ";"#10    ; abcd"
             .byte $FF, 0
 
 ;TODO: write test routines that validate the line above with expected results below
