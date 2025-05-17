@@ -7,9 +7,9 @@ SetColour .macro colour
 ClearScreen .macro colour
     #SetColour \colour
     sta dma.ETRIGINLINE
-    #dma.FillJob $0020,   $000800, 4000, true
-    #dma.FillJob \colour, $ff80000, 4000, false
-    #SetLocation 0,0
+    .dma.FillJob $0020,   $000800, 4000, true
+    .dma.FillJob \colour, $ff80000, 4000, false
+    .SetLocation 0,0
 .endmacro
 
 SetLocation .macro col, row
@@ -29,8 +29,8 @@ SetBColor .macro col
 .endmacro
 
 SetBGBColors .macro bg, b
-    #SetBGColor \bg
-    #SetBColor \b
+    .SetBGColor \bg
+    .SetBColor \b
 .endmacro
 
 PutC .macro
@@ -51,27 +51,10 @@ pr .macro str
     plq
 .endmacro
 
-prl .macro str
-    phq
-    jsr sPrint
-    .null \str
-    jsr printNL
-    plq
-.endmacro
-
 cpr .macro colour, str
     phq
     jsr sCPrint
     .byte \colour
     .null \str
-    plq
-.endmacro
-
-cprl .macro colour, str
-    phq
-    jsr sCPrint
-    .byte \colour
-    .null \str
-    jsr printNL
     plq
 .endmacro

@@ -1,5 +1,6 @@
 .enc "screen"
 .namespace parser
+
 checkIfAlpha .macro notAlpha, isAlpha
     cmp #'a'
     bcc \notAlpha

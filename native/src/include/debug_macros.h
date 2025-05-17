@@ -1,16 +1,23 @@
 .cpu "4510"
 .enc "screen"
 
-debug .namespace
+
+dbg .namespace
 
 setupDebugStats .macro datasection=data
     .if DEBUG_
-    .namespace debug
+    .namespace dbg
         .section \datasection
             NumWarnings .byte 0
             NumErrors   .byte 0
         .endsection ; \datasection
     .endnamespace
+    .endif
+.endmacro
+
+only .macro
+    .if DEBUG_
+        \@
     .endif
 .endmacro
 
@@ -27,17 +34,12 @@ infoCReg .macro col=5, reg="a", pre="", post=""
         .default
         .endswitch
         .if \pre!=""
-            #debug.infoC \col, \pre
+            .dbg.infoC \col, \pre
         .endif
         ldz #\col
         jsr setCPrintC
         .if \post!=""
-            .if \post[-2:] == "/n"
-                #debug.infoC \col, \post[:-2]
-                #nl
-            .else
-                #debug.infoC \col, \post
-            .endif
+            .dbg.infoC \col, \post
         .endif
         plq
     .endif
@@ -58,21 +60,16 @@ infoCRegDec .macro col=5, reg="a", pre="", post=""
         ldz #\col
         stz PrtColour
         .if \pre!=""
-            #debug.infoC \col, \pre
+            .dbg.infoC \col, \pre
         .endif
         sta toDec.In
         ldx #0
         stx toDec.In+1
         jsr toDec
-        #ldbcd24 toDec.Out
+        .ldbcd24 toDec.Out
         jsr cPrintBCD24
         .if \post!=""
-            .if \post[-2:] == "/n"
-                #debug.infoC \col, \post[:-2]
-                #nl
-            .else
-                #debug.infoC \col, \post
-            .endif
+            .dbg.infoC \col, \post
         .endif
         plq
     .endif
@@ -93,7 +90,7 @@ infoCRegHex .macro col=5, reg="a", pre="", post=""
         ldz #\col
         stz PrtColour
         .if \pre!=""
-            #debug.infoC \col, \pre
+            .dbg.infoC \col, \pre
         .endif
         jsr toHexXY
         txa
@@ -101,35 +98,25 @@ infoCRegHex .macro col=5, reg="a", pre="", post=""
         tya
         jsr cPrintC
         .if \post!=""
-            .if \post[-2:] == "/n"
-                #debug.infoC \col, \post[:-2]
-                #nl
-            .else
-                #debug.infoC \col, \post
-            .endif
+            .dbg.infoC \col, \post
         .endif
         plq
     .endif
 .endmacro
 
+infoCXYHex .macro col=5, pre="", post=""
+    .dbg.infoCRegHex \col, "y", \pre
+    .dbg.infoCRegHex \col, "x", "", \post
+.endmacro
+
 infoC .macro col, str
     .if DEBUG_
-        #cpr \col, \str
+        .cpr \col, \str
     .endif
 .endmacro
 
 info .macro str
-    #debug.infoC 5, \str
-.endmacro
-
-infoCLn .macro col, str
-    .if DEBUG_
-        #cprl \col, \str
-    .endif
-.endmacro
-
-infoLn .macro str
-    #debug.infoCLn 5, \str
+    .dbg.infoC 5, \str
 .endmacro
 
 infoCPtr .macro col, ptr
@@ -137,142 +124,132 @@ infoCPtr .macro col, ptr
         phq
         ldz #\col
         stz PrtColour
-        #ldxy \ptr
+        .ldxy \ptr
         jsr print
         plq
     .endif
 .endmacro
 
 infoCLnPtr .macro col, ptr
-    #debug.infoCPtr \col, \ptr
-    #nl
+    .dbg.infoCPtr \col, \ptr
+    .nl
 .endmacro
 
 infoPtr .macro ptr
-    #debug.infoCPtr 5, \ptr
+    .dbg.infoCPtr 5, \ptr
 .endmacro
 
 infoLnPtr .macro ptr
-    #debug.infoCLnPtr 5, \ptr
+    .dbg.infoCLnPtr 5, \ptr
 .endmacro
 
 infoReg .macro reg="a", pre="", post=""
-    #debug.infoCReg 5, \reg, \pre, \post
+    .dbg.infoCReg 5, \reg, \pre, \post
 .endmacro
 
 infoRegDec .macro reg="a", pre="", post=""
-    #debug.infoCRegDec 5, \reg, \pre, \post
+    .dbg.infoCRegDec 5, \reg, \pre, \post
 .endmacro
 
 infoRegHex .macro reg="a", pre="", post=""
-    #debug.infoCRegHex 5, \reg, \pre, \post
+    .dbg.infoCRegHex 5, \reg, \pre, \post
+.endmacro
+
+infoXYHex .macro pre="", post=""
+    .dbg.infoCXYHex 5, \pre, \post
 .endmacro
 
 warning .macro str
-    #debug.infoC 7, \str
+    .dbg.infoC 7, \str
     .if DEBUG_
-        inc debug.NumWarnings
-    .endif
-.endmacro
-
-warningLn .macro str
-    #debug.infoCLn 7, \str
-    .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningPtr .macro ptr
-    #debug.infoCPtr 7, \ptr
+    .dbg.infoCPtr 7, \ptr
     .if DEBUG_
-        inc debug.NumWarnings
-    .endif
-.endmacro
-
-warningLnPtr .macro ptr
-    #debug.infoCLnPtr 7, \ptr
-    .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningReg .macro reg="a", pre="", post=""
-    #debug.infoCReg 7, \reg, \pre, \post
+    .dbg.infoCReg 7, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningRegDec .macro reg="a", pre="", post=""
-    #debug.infoCRegDec 7, \reg, \pre, \post
+    .dbg.infoCRegDec 7, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningRegHex .macro reg="a", pre="", post=""
-    #debug.infoCRegHex 7, \reg, \pre, \post
+    .dbg.infoCRegHex 7, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumWarnings
+    .endif
+.endmacro
+
+warningXYHex .macro pre="", post=""
+    .dbg.infoCXYHex 7, \pre, \post
+    .if DEBUG_
+        inc dbg.NumWarnings
     .endif
 .endmacro
 
 error .macro str
-    #debug.infoC 9, \str
+    .dbg.infoC 9, \str
     .if DEBUG_
-        inc debug.NumErrors
-    .endif
-.endmacro
-
-errorLn .macro str
-    #debug.infoCLn 9, \str
-    .if DEBUG_
-        inc debug.NumErrors
+        inc dbg.NumErrors
     .endif
 .endmacro
 
 errorPtr .macro ptr
-    #debug.infoCPtr 9, \ptr
+    .dbg.infoCPtr 9, \ptr
     .if DEBUG_
-        inc debug.NumErrors
-    .endif
-.endmacro
-
-errorLnPtr .macro ptr
-    #debug.infoCLnPtr 9, \ptr
-    .if DEBUG_
-        inc debug.NumErrors
+        inc dbg.NumErrors
     .endif
 .endmacro
 
 errorReg .macro reg="a", pre="", post=""
-    #debug.infoCReg 8, \reg, \pre, \post
+    .dbg.infoCReg 8, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumErrors
+        inc dbg.NumErrors
     .endif
 .endmacro
 
 errorRegDec .macro reg="a", pre="", post=""
-    #debug.infoCRegDec 9, \reg, \pre, \post
+    .dbg.infoCRegDec 9, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumErrors
     .endif
 .endmacro
 
 errorRegHex .macro reg="a", pre="", post=""
-    #debug.infoCRegHex 9, \reg, \pre, \post
+    .dbg.infoCRegHex 9, \reg, \pre, \post
     .if DEBUG_
-        inc debug.NumWarnings
+        inc dbg.NumErrors
+    .endif
+.endmacro
+
+errorXYHex .macro pre="", post=""
+    .dbg.infoCXYHex 9, \pre, \post
+    .if DEBUG_
+        inc dbg.NumErrors
     .endif
 .endmacro
 
 numWarnings .macro
     .if DEBUG_
         phq
-        #debug.infoC 7, "Number of warnings: "
-        lda debug.NumWarnings
-        #debug.infoCRegDec 7
-        #nl
+        .dbg.infoC 7, "Number of warnings: "
+        lda dbg.NumWarnings
+        .dbg.infoCRegDec 7
+        .nl
         plq
     .endif
 .endmacro
@@ -280,18 +257,18 @@ numWarnings .macro
 numErrors .macro
     .if DEBUG_
         phq
-        #debug.infoC 9, "Number of errors: "
-        lda debug.NumErrors
-        #debug.infoCRegDec 9
-        #nl
+        .dbg.infoC 9, "Number of errors: "
+        lda dbg.NumErrors
+        .dbg.infoCRegDec 9
+        .nl
         plq
     .endif
 .endmacro
 
 Stats .macro
-    #debug.infoLn "Debug stats:"
-    #debug.numWarnings
-    #debug.numErrors
+    .dbg.info "Debug stats:!n"
+    .dbg.numWarnings
+    .dbg.numErrors
 .endmacro
 
 .endnamespace ; def debug

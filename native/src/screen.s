@@ -1,3 +1,4 @@
+.enc "screen"
 
 ; constants
 
@@ -71,13 +72,13 @@ PrtColour   .byte 0
 
     ; A: character
     putC .proc
-        #PutC
+        .PutC
         rts
     .endproc
 
     ; A: character
     cPutC .proc
-        #PutC
+        .PutC
         lda PrtColour
         ldz PrtColumn
         stabpqz CurColourPosPtr
@@ -93,14 +94,14 @@ PrtColour   .byte 0
 
     ; A: character
     printC .proc
-        #PutC
+        .PutC
         inc PrtColumn
         rts
     .endproc
 
     ; A: character
     cPrintC .proc
-        #PutC
+        .PutC
         lda PrtColour
         stabpqz CurColourPosPtr
         inc PrtColumn
@@ -111,7 +112,7 @@ PrtColour   .byte 0
     ; Z: colour
     setCPrintC .proc
         stz PrtColour
-        #PutC
+        .PutC
         lda PrtColour
         stabpqz CurColourPosPtr
         inc PrtColumn
@@ -121,18 +122,35 @@ PrtColour   .byte 0
     ; X: str ptr lo
     ; Y: str ptr hi
     print .proc
-        #stxy Ptr
+        .stxy Ptr
         
         ldz PrtColumn
         ldy #0
         loop
             lda (Ptr),y
             beq end
-        
+            cmp #'!'
+            bne noCmd
+            iny
+            lda (Ptr),y
+            cmp #'!'
+            beq noCmd
+            cmp #'n'
+            bne noN
+            phy
+            jsr printNL
+            ply
+            iny
+            ldz #0
+            bra loop
+        noN
+            dey
+            lda (Ptr),y
+        noCmd
             stabpqz CurScreenPosPtr
             lda PrtColour
             stabpqz CurColourPosPtr
-
+        next
             inz
             iny
         jmp loop
@@ -258,7 +276,7 @@ PrtColour   .byte 0
         ply
         ; do actual print
         
-        #incxy
+        .incxy
         
         jsr print
 
@@ -281,25 +299,9 @@ PrtColour   .byte 0
     ; Y: str ptr hi
     ; Z: colour
     cPrint .proc
-        #stxy Ptr
+        .stxy Ptr
         stz PrtColour
-        
-        ldz PrtColumn
-        ldy #0
-        loop
-            lda (Ptr),y
-            beq end
-        
-            stabpqz CurScreenPosPtr
-            lda PrtColour
-            stabpqz CurColourPosPtr
-
-            inz
-            iny
-        jmp loop
-    end
-        stz PrtColumn
-        rts
+        jmp print
     .endproc
 
     sCPrint .proc
@@ -307,15 +309,15 @@ PrtColour   .byte 0
         ply
         ; do actual print
 
-        #incxy
+        .incxy
 
-        #stxy Ptr
+        .stxy Ptr
         phy
         ldy #0
         lda (Ptr),y
         taz
         ply
-        #incxy
+        .incxy
         jsr cPrint
 
         ; calculate new return address

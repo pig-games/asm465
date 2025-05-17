@@ -18,6 +18,11 @@ ldxy .macro ptr
     ldy #>\ptr
 .endmacro
 
+rdxy .macro ptr
+    ldx \ptr
+    ldy \ptr+1
+.endmacro
+
 stxy .macro ptr
         stx \ptr
         sty \ptr+1

@@ -2,17 +2,17 @@
 .enc "screen"
 
 .section main
-    #debug.setupDebugStats
+    .dbg.setupDebugStats
 
-    #ClearScreen 1
+    .ClearScreen 1
     jsr setLowerCase
 
-    #SetBGBColors 11, 0 
+    .SetBGBColors 11, 0 
  
-    #cprl 3, "Screen functions tests"
+    .cpr 3, "Screen functions tests!n"
     
     ; set location to 4,2
-    #SetLocation 4,2
+    .SetLocation 4,2
 
     ; setCPrintC
     lda #'a'
@@ -24,12 +24,12 @@
     jsr printC
 
     ; setLocation 2, 10 + putc
-    #SetLocation 2, 5
+    .SetLocation 2, 5
     lda #'c'
     jsr putC
     
     ; sPrint
-    #SetLocation 10,4
+    .SetLocation 10,4
     jsr sPrint
     .null "10,4 sPrint, "
 
@@ -38,41 +38,40 @@
     .byte 7
     .null "7 sCPrint"
 
-    #SetLocation 10,30
-    #prl "10,30 prl,"
-    #cpr 3 | CA_BLINK | CA_REV,"3, cpr "
-    #prl "prl"
-    #pr "newline"
-    #cprl 5,"5, cprl"
-    #pr "newline"
-    #nl
-    #pr "newline"
+    .SetLocation 10,30
+    .pr "10,30 prl,!n"
+    .cpr 3 | CA_BLINK | CA_REV,"3, cpr "
+    .pr "pr!n"
+    .pr "newline"
+    .cpr 5,"5, cpr!n"
+    .pr "newline"
+    .nl
+    .pr "newline!n"
 
-    #nl
-    #ldxy str
+    .ldxy str
     jsr print
 
-    #nl
-    #ldxy str
+    .nl
+    .ldxy str
     ldz #1
     jsr cPrint
-    #nl
+    .nl
 
-    #cprl 3, "before proc"
+    .cpr 3, "before proc!n"
     jsr inside
 
-    #prl "outside proc again"
-    #debug.warningLn "test warning1"
-    #debug.warningLn "test warning2"
+    .pr "outside proc again!n"
+    .dbg.warning "test warning1!n"
+    .dbg.warning "test warning2!n"
 
-    #debug.errorLn "test error"
+    .dbg.error "test error!n"
 
-    #debug.Stats
+    .dbg.Stats
     jmp *
 
 inside .proc
-    #prl "test inside proc"
-    #prl "more inside proc"
+    .pr "test inside proc!n"
+    .pr "more inside proc!n"
     rts
 .endproc
 
