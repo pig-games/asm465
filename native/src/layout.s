@@ -1,6 +1,8 @@
 .cpu "4510"
 
 DEBUG_ :?=false
+DBG_FILTER_ :?=[]
+DBG_TAG_ :?=""
 
 * = $2001
     .dsection boot

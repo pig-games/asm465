@@ -15,14 +15,38 @@ setupDebugStats .macro datasection=data
     .endif
 .endmacro
 
-only .macro
+setFilter .macro
     .if DEBUG_
+        DBG_FILTER_ ::= [\@]
+    .endif
+.endmacro
+
+resetFilter .macro
+    .if DEBUG_
+        DBG_FILTER_ ::= []
+    .endif
+.endmacro
+
+setTag .macro tag
+    .if DEBUG_
+        DBG_TAG_ ::= \tag
+    .endif
+.endmacro
+
+resetTag .macro
+    .if DEBUG_
+        DBG_TAG_ ::= ""
+    .endif
+.endmacro
+
+only .macro
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         \@
     .endif
 .endmacro
 
 infoCReg .macro col=5, reg="a", pre="", post=""
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         .switch \reg
         .case "x"
@@ -46,7 +70,7 @@ infoCReg .macro col=5, reg="a", pre="", post=""
 .endmacro
 
 infoCRegDec .macro col=5, reg="a", pre="", post=""
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         .switch \reg
         .case "x"
@@ -76,7 +100,7 @@ infoCRegDec .macro col=5, reg="a", pre="", post=""
 .endmacro
 
 infoCRegHex .macro col=5, reg="a", pre="", post=""
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         .switch \reg
         .case "x"
@@ -110,7 +134,7 @@ infoCXYHex .macro col=5, pre="", post=""
 .endmacro
 
 infoC .macro col, str
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         .cpr \col, \str
     .endif
 .endmacro
@@ -120,7 +144,7 @@ info .macro str
 .endmacro
 
 infoCPtr .macro col, ptr
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         ldz #\col
         stz PrtColour
@@ -161,90 +185,90 @@ infoXYHex .macro pre="", post=""
 
 warning .macro str
     .dbg.infoC 7, \str
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningPtr .macro ptr
     .dbg.infoCPtr 7, \ptr
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningReg .macro reg="a", pre="", post=""
     .dbg.infoCReg 7, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningRegDec .macro reg="a", pre="", post=""
     .dbg.infoCRegDec 7, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningRegHex .macro reg="a", pre="", post=""
     .dbg.infoCRegHex 7, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 warningXYHex .macro pre="", post=""
     .dbg.infoCXYHex 7, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
     .endif
 .endmacro
 
 error .macro str
     .dbg.infoC 9, \str
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 errorPtr .macro ptr
     .dbg.infoCPtr 9, \ptr
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 errorReg .macro reg="a", pre="", post=""
     .dbg.infoCReg 8, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 errorRegDec .macro reg="a", pre="", post=""
     .dbg.infoCRegDec 9, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 errorRegHex .macro reg="a", pre="", post=""
     .dbg.infoCRegHex 9, \reg, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 errorXYHex .macro pre="", post=""
     .dbg.infoCXYHex 9, \pre, \post
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif
 .endmacro
 
 numWarnings .macro
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         .dbg.infoC 7, "Number of warnings: "
         lda dbg.NumWarnings
@@ -255,7 +279,7 @@ numWarnings .macro
 .endmacro
 
 numErrors .macro
-    .if DEBUG_
+    .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
         .dbg.infoC 9, "Number of errors: "
         lda dbg.NumErrors

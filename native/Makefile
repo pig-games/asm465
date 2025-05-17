@@ -23,8 +23,8 @@ CORE_SRC = \
 
 PTEST_SRC = \
 		src/include/parser_macros.h \
-		src/parser.s \
-		src/tests/parsertest.s
+		src/tests/parsertest.s \
+		src/parser.s 
 
 STEST_SRC = \
 		src/tests/screentest.s
@@ -36,7 +36,6 @@ UTEST_SRC = \
 		src/include/unittest_macros.h \
 		src/unittest.s \
 		src/tests/unittest.s
-
 
 OPTS = 	-C -a -B -i --m4510
 
