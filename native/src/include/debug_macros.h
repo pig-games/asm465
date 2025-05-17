@@ -14,7 +14,7 @@ setupDebugStats .macro datasection=data
     .endif
 .endmacro
 
-infoCReg .macro col=5, reg="a"
+infoCReg .macro col=5, reg="a", pre="", post=""
     .if DEBUG_
         phq
         .switch \reg
@@ -26,13 +26,24 @@ infoCReg .macro col=5, reg="a"
             tza
         .default
         .endswitch
+        .if \pre!=""
+            #debug.infoC \col, \pre
+        .endif
         ldz #\col
         jsr setCPrintC
+        .if \post!=""
+            .if \post[-2:] == "/n"
+                #debug.infoC \col, \post[:-2]
+                #nl
+            .else
+                #debug.infoC \col, \post
+            .endif
+        .endif
         plq
     .endif
 .endmacro
 
-infoCRegDec .macro col=5, reg="a"
+infoCRegDec .macro col=5, reg="a", pre="", post=""
     .if DEBUG_
         phq
         .switch \reg
@@ -46,17 +57,28 @@ infoCRegDec .macro col=5, reg="a"
         .endswitch
         ldz #\col
         stz PrtColour
+        .if \pre!=""
+            #debug.infoC \col, \pre
+        .endif
         sta toDec.In
         ldx #0
         stx toDec.In+1
         jsr toDec
         #ldbcd24 toDec.Out
         jsr cPrintBCD24
+        .if \post!=""
+            .if \post[-2:] == "/n"
+                #debug.infoC \col, \post[:-2]
+                #nl
+            .else
+                #debug.infoC \col, \post
+            .endif
+        .endif
         plq
     .endif
 .endmacro
 
-infoCRegHex .macro col=5, reg="a"
+infoCRegHex .macro col=5, reg="a", pre="", post=""
     .if DEBUG_
         phq
         .switch \reg
@@ -70,11 +92,22 @@ infoCRegHex .macro col=5, reg="a"
         .endswitch
         ldz #\col
         stz PrtColour
+        .if \pre!=""
+            #debug.infoC \col, \pre
+        .endif
         jsr toHexXY
         txa
         jsr cPrintC
         tya
         jsr cPrintC
+        .if \post!=""
+            .if \post[-2:] == "/n"
+                #debug.infoC \col, \post[:-2]
+                #nl
+            .else
+                #debug.infoC \col, \post
+            .endif
+        .endif
         plq
     .endif
 .endmacro
@@ -123,16 +156,16 @@ infoLnPtr .macro ptr
     #debug.infoCLnPtr 5, \ptr
 .endmacro
 
-infoReg .macro reg="a"
-    #debug.infoCReg 5, \reg
+infoReg .macro reg="a", pre="", post=""
+    #debug.infoCReg 5, \reg, \pre, \post
 .endmacro
 
-infoRegDec .macro reg="a"
-    #debug.infoCRegDec 5, \reg
+infoRegDec .macro reg="a", pre="", post=""
+    #debug.infoCRegDec 5, \reg, \pre, \post
 .endmacro
 
-infoRegHex .macro reg="a"
-    #debug.infoCRegHex 5, \reg
+infoRegHex .macro reg="a", pre="", post=""
+    #debug.infoCRegHex 5, \reg, \pre, \post
 .endmacro
 
 warning .macro str
@@ -163,22 +196,22 @@ warningLnPtr .macro ptr
     .endif
 .endmacro
 
-warningReg .macro reg="a"
-    #debug.infoCReg 7, \reg
+warningReg .macro reg="a", pre="", post=""
+    #debug.infoCReg 7, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
-warningRegDec .macro reg="a"
-    #debug.infoCRegDec 7, \reg
+warningRegDec .macro reg="a", pre="", post=""
+    #debug.infoCRegDec 7, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
-warningRegHex .macro reg="a"
-    #debug.infoCRegHex 7, \reg
+warningRegHex .macro reg="a", pre="", post=""
+    #debug.infoCRegHex 7, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumWarnings
     .endif
@@ -212,22 +245,22 @@ errorLnPtr .macro ptr
     .endif
 .endmacro
 
-errorReg .macro reg="a"
-    #debug.infoCReg 8, \reg
+errorReg .macro reg="a", pre="", post=""
+    #debug.infoCReg 8, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumErrors
     .endif
 .endmacro
 
-errorRegDec .macro reg="a"
-    #debug.infoCRegDec 9, \reg
+errorRegDec .macro reg="a", pre="", post=""
+    #debug.infoCRegDec 9, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumWarnings
     .endif
 .endmacro
 
-errorRegHex .macro reg="a"
-    #debug.infoCRegHex 9, \reg
+errorRegHex .macro reg="a", pre="", post=""
+    #debug.infoCRegHex 9, \reg, \pre, \post
     .if DEBUG_
         inc debug.NumWarnings
     .endif

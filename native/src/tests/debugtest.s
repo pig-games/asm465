@@ -47,10 +47,9 @@
     ldy #4
     #debug.infoRegDec "y"
     #nl
-    #debug.info "[#infoRegDec {shift-2}z{shift-2}] Z=5: "
+    #debug.info "[#infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post/n{shift-2}] Z=5: "
     ldz #5
-    #debug.infoRegDec "z"
-    #nl
+    #debug.infoRegDec "z", "pre:", ":post/n"
 
     #nl
     #debug.info "[#infoRegHex] A=1: "
