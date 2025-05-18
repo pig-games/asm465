@@ -462,8 +462,6 @@ datasize   .word lookup_end-mnemonics
 tokensize  .word lookup_end-tok_to_mnem
 addrmsize  .word tok_to_mnem-addrm_groups
             .align
-mnem_start  .word 0, mn_adc, mn_br0, mn_clc, mn_dec, mn_eom, mn_inc, mn_jmp
-            .word mn_lda, mn_map, mn_neg, mn_ora, mn_pha
 mnemonics
 mn_adc      .text "adc@"
             .byte $61, gr01-addrm_groups
