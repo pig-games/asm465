@@ -188,7 +188,6 @@ parseInstruction .proc
 
     firstInstruction
         .dbg.info "[first instruction]!n"
-        dey ; x points to the ' ' after the candidate instruction so decrease
         .dbg.infoRegDec "y", "[end pos of candidate: ", "]!n"
 
         ; check if longer than 4 chars (can't be an instruction)
@@ -197,7 +196,6 @@ parseInstruction .proc
         sbc ParsePos
         cmp #5
         bcs errTooLong
-
         jsr searchInstruction
         bcs errNoInstruction
 
@@ -234,32 +232,45 @@ searchInstruction .proc
 
     .ldxy mnemonics
     .dbg.infoXYHex "mnemonics address: $", " (Ptr)!n"
+    .ldxy mn_end
+    .dbg.infoXYHex "mn end address:    $", " (Ptr)!n"
     .dbg.resetTag
-    .dbg.setTag "searchInstruction"
 
+    .ldxy mnemonics
     .stxy Ptr
     ldy ParsePos
     ldz #0
     ldx #0
 loop
     .dbg.setTag "SIInOut"
-    lda (InputLinePtr), y
+    .dbg.only lda (InputLinePtr), y
     .dbg.infoReg "a", "input: ", "!n"
-    lda (Ptr), z
-    .dbg.infoReg "a", "mnem: ", "!n"
+    .dbg.only lda (Ptr), z
+    .dbg.infoReg "a", "mnem:  ", "!n"
     .dbg.resetTag
-    beq noMatch
+    .dbg.setTag "searchInstruction"
+
+    lda (Ptr), z
+    beq notFound
     cmp (InputLinePtr), y
-    bne noMatch
+    bcc noMatch
+    bne notFound
     iny
+
     lda (InputLinePtr),y
     cmp #' '
     beq found
-    inx
-    beq notFound ; temp search end
+
+    lda Ptr
+    cmp #<mn_end
+    bcc +
+    lda Ptr+1
+    cmp #>mn_end
+    bcs notFound
++
     inz
-    cpz #4
-    beq noMatch
+    cpz #5
+    beq found
     bra loop
 noMatch
     ldz #0
@@ -273,14 +284,18 @@ noMatch
     sta Ptr+1
     bra loop
 found
-    .dbg.info "[Found instruction]!n"
-
+    .dbg.info "[found instruction]!n"
+    .dbg.only .rdxy Ptr
+    .dbg.infoXYHex "Ptr address: $", " (Ptr)!n"
     ply
     plx
     clc
     rts
 notFound
     .dbg.info "[instruction not found]!n"
+    .dbg.only .rdxy Ptr
+    .dbg.infoXYHex "Ptr address: $", " (Ptr)!n"
+
     ply
     plx
     sec
@@ -289,7 +304,7 @@ notFound
 .endproc
 
 parseMacroUse .proc
-    .dbg.info "u"
+    .dbg.info "[parseMacroUse]!n"
     lda (InputLinePtr),y
 
     iny
@@ -297,14 +312,14 @@ parseMacroUse .proc
 .endproc
 
 parseMultiLabel .proc
-    .dbg.info "m"
+    .dbg.info "[parseMultiLabel]!n"
     lda (InputLinePtr),y
 
     rts
 .endproc
 
 parseComment .proc
-        .dbg.info "c"
+        .dbg.info "[parseComment]!n"
 
         lda ParseBuf        ; load line type byte
         bne notOnlyComment
@@ -318,13 +333,14 @@ parseComment .proc
 
         tya
         sta ParseBuf,x      ; store position of comment
-        iny                 ; skip size
-        inx                 ; skip second '/'
+        inx                 ; skip size
+        iny
 
     parseCmt1
         lda (InputLinePtr),y
-        cmp #$FF  
+        cmp #$FF
         beq end             ; found end of line
+        .dbg.infoReg "a", "comment: ", "!n"
         
         sta ParseBuf,x
         inx

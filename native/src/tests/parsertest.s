@@ -18,7 +18,7 @@
     jsr cPrint
     .cpr 4, "]!n"
 
-    .dbg.setFilter "searchInstruction", "firstInstruction", "SIInOut"
+    .dbg.setFilter "searchInstruction", "firstInstruction"
     jsr parseLine
 
     .nl
@@ -34,7 +34,7 @@
 
 .section data
 .align
-inputLine   .text  "label:  and    ";"#10    ; abcd"
+inputLine   .text  "label:  dex      ; abcd"
             .byte $FF, 0
 
 ;TODO: write test routines that validate the line above with expected results below
