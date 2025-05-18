@@ -2,19 +2,16 @@
 .enc "screen"
 
 .section main
-    #debug.setupDebugStats
+    .dbg.setupDebugStats
 
-    #ClearScreen 1
+    .ClearScreen 1
     jsr setLowerCase
 
-    #debug.infoLn "unittest framework tests"
-    #nl
+    .dbg.info "unittest framework tests!n"
 
-    
-
-    #nl
-    #nl
-    #debug.Stats
+    .nl
+    .nl
+    .dbg.Stats
     jmp *
 
 .endsection ; main
