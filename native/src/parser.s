@@ -238,9 +238,11 @@ searchInstruction .proc
 
     .ldxy mnemonics
     .stxy Ptr
+
     ldy ParsePos
     ldz #0
     ldx #0
+
 loop
     .dbg.setTag "SIInOut"
     .dbg.only lda (InputLinePtr), y
@@ -271,10 +273,9 @@ loop
     inz
     cpz #5
     beq found
+
     bra loop
 noMatch
-    ldz #0
-    ldy ParsePos
     clc
     lda Ptr
     adc #6
@@ -282,6 +283,19 @@ noMatch
     lda #0
     adc Ptr+1
     sta Ptr+1
+    
+    dez
+    bmi +
+    lda (Ptr),z
+    dey
+    cmp (InputLinePtr),y
+    bne +
+    inz
+    iny
+    bra loop
++
+    ldz #0
+    ldy ParsePos
     bra loop
 found
     .dbg.info "[found instruction]!n"
@@ -448,6 +462,8 @@ datasize   .word lookup_end-mnemonics
 tokensize  .word lookup_end-tok_to_mnem
 addrmsize  .word tok_to_mnem-addrm_groups
             .align
+mnem_start  .word 0, mn_adc, mn_br0, mn_clc, mn_dec, mn_eom, mn_inc, mn_jmp
+            .word mn_lda, mn_map, mn_neg, mn_ora, mn_pha
 mnemonics
 mn_adc      .text "adc@"
             .byte $61, gr01-addrm_groups
