@@ -1,4 +1,3 @@
-.cpu "4510"
 
 DEBUG_ :?=false
 DBG_FILTER_ :?=[]

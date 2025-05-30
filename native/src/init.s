@@ -1,4 +1,4 @@
-.cpu "4510"
+.cpu "45gs02"
 .section init
     cli
     #enable40Mhz

@@ -1,4 +1,3 @@
-.cpu "4510"
 .enc "screen"
 
 

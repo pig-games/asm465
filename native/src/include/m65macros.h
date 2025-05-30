@@ -1,30 +1,5 @@
      ; Based on the great work by Shallan at: https://github.com/smnjameson
 
-.cpu "4510"
-
-stabpqz  .function address ; sta [BP4],z
-	nop
-	sta (address),z
-.endfunction
-
-ldqa .function address ; ldq bp/addr/(BP),z/[BP4],z
-	neg
-	neg
-	lda address
-.endfunction
-
-stqa .function address ; stq bp/addr/(BP)/[BP4]
-	neg
-	neg
-	sta address
-.endfunction
-
-adqa .function address ; adcq bp/addr/(BP)/[BP4]
-	neg
-	neg
-	adc address
-.endfunction
-
 phq .function
 	pha
 	phx

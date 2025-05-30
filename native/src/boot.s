@@ -1,4 +1,4 @@
-.cpu "4510"
+.cpu "45gs02"
 
     .section boot
     #BasicUpstart65 entry

@@ -60,13 +60,13 @@ PrtColour   .byte 0
         sty PrtRow
         sty math.IN_B1
         clc
-        ldqa math.MULTOUT1
-        adqa ScreenPtr
-        stqa CurScreenPosPtr
+        ldq math.MULTOUT1
+        adq ScreenPtr
+        stq CurScreenPosPtr
         clc
-        ldqa math.MULTOUT1
-        adqa ColPtr
-        stqa CurColourPosPtr
+        ldq math.MULTOUT1
+        adq ColPtr
+        stq CurColourPosPtr
         rts
     .endproc
 
@@ -81,7 +81,7 @@ PrtColour   .byte 0
         .PutC
         lda PrtColour
         ldz PrtColumn
-        stabpqz CurColourPosPtr
+        sta [CurColourPosPtr],z
         rts
     .endproc
 
@@ -103,7 +103,7 @@ PrtColour   .byte 0
     cPrintC .proc
         .PutC
         lda PrtColour
-        stabpqz CurColourPosPtr
+        sta [CurColourPosPtr],z
         inc PrtColumn
         rts
     .endproc
@@ -114,7 +114,7 @@ PrtColour   .byte 0
         stz PrtColour
         .PutC
         lda PrtColour
-        stabpqz CurColourPosPtr
+        sta [CurColourPosPtr],z
         inc PrtColumn
         rts
     .endproc
@@ -147,9 +147,9 @@ PrtColour   .byte 0
             dey
             lda (Ptr),y
         noCmd
-            stabpqz CurScreenPosPtr
+            sta [CurScreenPosPtr],z
             lda PrtColour
-            stabpqz CurColourPosPtr
+            sta [CurColourPosPtr],z
         next
             inz
             iny
@@ -343,15 +343,15 @@ PrtColour   .byte 0
         ldx #0
         ldy #0
         ldz #0
-        adqa CurScreenPosPtr
-        stqa CurScreenPosPtr
+        adq CurScreenPosPtr
+        stq CurScreenPosPtr
         clc
         lda #80
         ldx #0
         ldy #0
         ldz #0
-        adqa CurColourPosPtr
-        stqa CurColourPosPtr
+        adq CurColourPosPtr
+        stq CurColourPosPtr
         rts
     .endproc
 

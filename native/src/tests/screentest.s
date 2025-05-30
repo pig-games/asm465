@@ -1,4 +1,3 @@
-.cpu "4510"
 .enc "screen"
 
 .section main
@@ -48,11 +47,11 @@
     .nl
     .pr "newline!n"
 
-    .ldxy str
+    .ldxy teststr
     jsr print
 
     .nl
-    .ldxy str
+    .ldxy teststr
     ldz #1
     jsr cPrint
     .nl
@@ -75,6 +74,6 @@ inside .proc
     rts
 .endproc
 
-str .null "StringPtr"
+teststr .null "StringPtr"
 
 .endsection ; main

@@ -37,7 +37,7 @@ UTEST_SRC = \
 		src/unittest.s \
 		src/tests/unittest.s
 
-OPTS = 	-C -a -B -i --m4510
+OPTS = 	-C -a -B -i --m45gs02
 
 parsertest: $(PTEST_SRC) $(CORE_SRC) 
 		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl

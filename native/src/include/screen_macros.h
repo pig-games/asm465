@@ -35,7 +35,7 @@ SetBGBColors .macro bg, b
 
 PutC .macro
     ldz PrtColumn
-    stabpqz CurScreenPosPtr
+    sta [CurScreenPosPtr],z
 .endmacro
 
 nl .macro

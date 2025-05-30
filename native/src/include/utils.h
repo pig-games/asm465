@@ -1,5 +1,4 @@
 
-.cpu "4510"
 
 setJSRAddress .macro addr_jsr, addr_calc
         lda #<\addr_calc
