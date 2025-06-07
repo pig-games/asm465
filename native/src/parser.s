@@ -55,6 +55,7 @@ parser .namespace
     ParseLabelID6   .byte 0
     ParseLabelID7   .byte 0
     ParseSize       .byte 0
+    ParseBufPos     .byte 0
     ParsePC         .word 0
     InputLinePtr    .word 0
     Ptr             .word 0
@@ -67,15 +68,13 @@ parser .namespace
 
 ; Parse the line of code at (BasePage) InputLinePtr
 parseLine .proc
-
         .dbg.info "[parseLine]!n"
         ldy #0          ; init y to start pos in input
         ldx #4          ; start of content of parsed/tokenised line
-
+        stx ParseBufPos
+        sty ParsePos
         lda #0
         sta ParseBuf    ; reset the line type byte
-        lda #4
-        sta ParsePos
     loop
         lda (InputLinePtr),y
         cmp #$FF
@@ -85,17 +84,13 @@ parseLine .proc
         cmp #' '            ; test for space and skip if found
         bne notSpace
         jsr skipWhiteSpace
-        jmp loop
+        bra loop
     notSpace
         cmp #'.'
         bne notDirectiveOrMacroDef
         jsr parseDirectiveOrMacroDef
         jmp loop
     notDirectiveOrMacroDef
-        cmp #'!'
-        bne notMultiLabel
-        jmp parseMultiLabel
-    notMultiLabel
         .checkIfAlpha notAlpha, isAlpha
     isAlpha
         jsr parseSymbolOrInstruction
@@ -119,7 +114,6 @@ parseLine .proc
 ; Process a symbol (label, macro use) or instruction
 parseSymbolOrInstruction .proc
     .dbg.info "[parseSymbolOrInstruction]!n"
-    .setParsePC ParsePC
 
     ; store input line character column
         tya
@@ -130,11 +124,11 @@ parseSymbolOrInstruction .proc
 
     ; first determine if this is a symbol or potential instruction
     loop
-        lda (InputLinePtr),y
+        lda (InputLinePtr),y ; read char from input
         .dbg.infoCReg 1
         cmp #':'
         bne notColon
-        sta ParseBuf,x
+        dex
         jmp processLabelDef
     notColon
         cmp #'('
@@ -147,10 +141,12 @@ parseSymbolOrInstruction .proc
     notSpace
         cmp #$FF
         beq end
+        sta ParseBuf,x       ; store in parse buf
         iny
         inx
         jmp loop
     end
+        ;stx ParseBufPos
         rts
 .endproc
 
@@ -158,9 +154,10 @@ parseSymbolOrInstruction .proc
 ; only needs to update the line type and skip the colon 
 processLabelDef .proc
         .dbg.info "[processLabelDef]!n"
-
+        .dbg.infoRegDec "x", "ParseBufPos: ", " (x)!n"
     ; check on line type
         .checkLineType ParseBuf, 0, firstLabelDef
+        ldx ParseBufPos
         rts
 
     firstLabelDef
@@ -169,12 +166,14 @@ processLabelDef .proc
         sta ParseBuf
 
         iny ; skip colon from input
-        inx
-
         ; update start pos
-        tya
-        sta ParsePos
+        sty ParsePos
 
+        inx ; increase past last label char
+        lda #$ff
+        sta ParseBuf,x  ; store TEND for label
+        inx
+        stx ParseBufPos
         rts
 .endproc
 
@@ -198,7 +197,12 @@ parseInstruction .proc
         bcs errTooLong
         jsr searchInstruction
         bcs errNoInstruction
-
+        ldx ParseBufPos
+        .dbg.infoRegDec "x", "ParseBufPos: ", "!n"
+                
+        lda ParsePos
+        sta ParseBuf,x
+        inx
         ; update parse pos
         tya
         sta ParsePos
@@ -206,6 +210,21 @@ parseInstruction .proc
         lda ParseBuf
         ora #LT_INST
         sta ParseBuf
+
+        .dbg.info "[found instruction]!n"
+        clc
+        lda #4
+        adc Ptr
+        sta Ptr
+        lda #0
+        adc Ptr
+        ldz #0
+        lda (Ptr),z
+        .dbg.infoRegHex "a", "Opcode base: $", "!n"
+        sta ParseBuf,x ; store instruction
+        inx
+        stx ParseBufPos
+
         rts
     errTooLong
         .dbg.error "[mnemonic too long!]!n"
@@ -222,7 +241,6 @@ parseInstruction .proc
 searchInstruction .proc
     .dbg.setTag "searchInstruction"
     phx
-    phy
     
     .dbg.info "[searchInstruction]!n"
     .dbg.only lda ParsePos
@@ -298,10 +316,8 @@ noMatch
     ldy ParsePos
     bra loop
 found
-    .dbg.info "[found instruction]!n"
-    .dbg.only .rdxy Ptr
-    .dbg.infoXYHex "Ptr address: $", " (Ptr)!n"
-    ply
+    .dbg.info "[instruction found]!n"
+
     plx
     clc
     rts
@@ -310,7 +326,6 @@ notFound
     .dbg.only .rdxy Ptr
     .dbg.infoXYHex "Ptr address: $", " (Ptr)!n"
 
-    ply
     plx
     sec
     rts
@@ -322,13 +337,6 @@ parseMacroUse .proc
     lda (InputLinePtr),y
 
     iny
-    rts
-.endproc
-
-parseMultiLabel .proc
-    .dbg.info "[parseMultiLabel]!n"
-    lda (InputLinePtr),y
-
     rts
 .endproc
 
@@ -383,6 +391,7 @@ skipWhiteSpace .proc
 .endsection ; parser
 
 .section data
+.align
 ParseBuf .fill $FF, 0
 
 ; Design sketches:
