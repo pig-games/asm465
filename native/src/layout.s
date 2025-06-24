@@ -20,5 +20,4 @@ BasePage
     .cerror * > $100, "Out of BP space"
     .endlogical
 
-    .align
     .dsection data

@@ -17,15 +17,12 @@ checkIfComment .macro notComment
     bne \notComment
 .endmacro
 
+; error if any other LT bits are set than lineTypeFlags.
 checkLineType .macro lineType, lineTypeFlags, okLabel
-    ; check on line type
     lda #\lineTypeFlags
     eor #$ff
     and \lineType
     beq \okLabel
-; not allowed to have multiple label defs on one line
-    iny
-    ;TODO: handle error
 .endmacro
 
 setParsePC .macro parsePC

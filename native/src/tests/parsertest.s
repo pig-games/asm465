@@ -32,7 +32,7 @@
 .endsection ; main
 
 .section data
-.align
+
 inputLine   .text  "label:  adc     ; abcd"
             .byte $FF, 0
 
@@ -40,7 +40,7 @@ inputLine   .text  "label:  adc     ; abcd"
 .namespace parser
 expected    .byte LT_LBDEF | LT_INST | LT_COMM  ; line type
             .byte end_expected - expected       ; line length (of tokenised line)
-            .word $3412                         ; line address (absolute or relative)
+            .word $1234                         ; line address (absolute or relative)
             .byte $00                           ; start column of label
             .text "label"                       ; unresolved label text
             .byte $ff

@@ -3,27 +3,42 @@
 parser .namespace
 ; constants
 
-    AM_IMP   = 0
-    AM_ACC   = 1
-    AM_IMM   = 2
-    AM_IMW   = 3
-    AM_BP    = 4
-    AM_BPQ   = 5
-    AM_BPX   = 6 
-    AM_ABS   = 7
-    AM_ABX   = 8
-    AM_ABY   = 9
-    AM_REL   = 10
-    AM_RLW   = 11
-    AM_XIN   = 12   ; ($nn, X)
-    AM_INY   = 13   ; ($nn), Y
-    AM_INZ   = 14   ; ($nn), Z
-    AM_IND   = 15
-    AM_BPR   = 16
+    AM_IMP   = 00
+    AM_ACC   = 01   ; A
+    AM_QPR   = 02   ; Q
+    AM_IMM   = 03   ; #$nn
+    AM_IMW   = 04   ; #$nnnn
+    AM_BP    = 05   ; $nn
+    AM_BPQ   = 06   ; $nn
+    AM_BPX   = 07   ; $nn,x
+    AM_BQX   = 08   ; $nn,x
+    AM_BPY   = 09   ; $nn,y
+    AM_ABS   = 10   ; $nnnn
+    AM_ABQ   = 11   ; $nnnn
+    AM_ABX   = 12   ; $nnnn,x
+    AM_ABQX  = 13   ; $nnnn,x
+    AM_ABY   = 14   ; $nnnn,y
+    AM_AIN   = 15   ; ($nnnn)
+    AM_AIX   = 16   ; ($nnnn,x)
+    AM_BIX   = 17   ; ($nn,x)
+    AM_BIY   = 18   ; ($nn),y
+    AM_BIZ   = 19   ; ($nn),z
+    AM_BQIZ  = 20   ; ($nn),z
+    AM_BIZ32 = 21   ; [$nn],z
+    AM_BQIZ32= 22   ; [$nn],z
+    AM_BQI   = 23   ; ($nn)
+    AM_BQI32 = 24   ; [$nn]
+    AM_SRI   = 25   ; ($nn+sp),y
+    AM_REL   = 26   ; $nnnn
+    AM_RLW   = 27   ; $nnnn
+    AM_BPR   = 28   ; $nn,$rr
 
-    EXT_EA   = %0001
-    EXT_4242 = %0110
-    EXT_4242EA = %0111
+    VD_HEX   = 1 << 5
+    VD_DEC   = 2 << 5
+    VD_BIN   = 3 << 5
+    VD_OCT   = 4 << 5
+    VD_EXP   = 5 << 5
+    VD_LAB   = 6 << 5
 
     LT_EMPTY = %0000_0000
     LT_LBDEF = %0000_0001
@@ -34,12 +49,9 @@ parser .namespace
     LT_MCUSE = %0010_0000
     LT_COMM  = %0100_0000
 
-    VD_HEX   = 1 << 5
-    VD_DEC   = 2 << 5
-    VD_BIN   = 3 << 5
-    VD_OCT   = 4 << 5
-    VD_EXP   = 5 << 5
-    VD_LAB   = 6 << 5
+    EXT_EA   = 1
+    EXT_4242 = 2
+    EXT_4242EA = 3
 
 ; base page pointers
 .section bp
@@ -156,8 +168,8 @@ processLabelDef .proc
         .dbg.info "[processLabelDef]!n"
         .dbg.infoRegDec "x", "ParseBufPos: ", " (x)!n"
     ; check on line type
-        .checkLineType ParseBuf, 0, firstLabelDef
-        ldx ParseBufPos
+        .checkLineType ParseBuf, LT_DIR, firstLabelDef
+        .dbg.error "[LabelDef LT Error]!n"
         rts
 
     firstLabelDef
@@ -182,7 +194,9 @@ parseInstruction .proc
         .dbg.info "[parseInstruction]!n"
 
     ; check on line type
-        .checkLineType ParseBuf, LT_LBDEF, firstInstruction
+        .checkLineType ParseBuf, LT_DIR | LT_LBDEF, firstInstruction
+        .dbg.error "[Instruction LT Error]!n"
+        sec
         rts
 
     firstInstruction
@@ -199,7 +213,7 @@ parseInstruction .proc
         bcs errNoInstruction
         ldx ParseBufPos
         .dbg.infoRegDec "x", "ParseBufPos: ", "!n"
-                
+
         lda ParsePos
         sta ParseBuf,x
         inx
@@ -224,6 +238,27 @@ parseInstruction .proc
         sta ParseBuf,x ; store instruction
         inx
         stx ParseBufPos
+
+        ; calc ptr in addr mode table
+        inz
+        lda (Ptr),z
+        .dbg.infoRegDec "a", "Addr mode offset: ", "!n"
+        phx
+        phy
+        clc
+        adc #<addrm_groups
+        tax
+        lda #0
+        adc #>addrm_groups
+        tay
+        .stxy Ptr
+        plx
+        ply
+        ldz #0
+        lda (Ptr),z
+        .dbg.infoRegDec "a", "First addr mode: ", "!n"
+
+        ; parse 
 
         rts
     errTooLong
@@ -371,6 +406,8 @@ parseComment .proc
         bne parseCmt1
     end
         ; we need to set the length of the line
+        sta ParseBuf,x
+        inx
         txa                 ; load last ParseBuf pos
         sta ParseBuf + 1
         rts
@@ -391,95 +428,27 @@ skipWhiteSpace .proc
 .endsection ; parser
 
 .section data
-.align
-ParseBuf .fill $FF, 0
+            .align
+ParseBuf    .fill $100, 0
 
-; Design sketches:
-; 
-; do_inst                   ; read operand and determine addressing mode
-;    read char
-;    if char == '#'          ; immediate mode
-;        check for allowed mode
-;        inc ParsePos
-;        do immediate
-;    if char == '$'
-;        check for allowed mode
-;        inc ParsePos
-;        do absolute
-;    if char == '('
-;        check for allowed mode
-;        inc ParsePos
-;        do indirect
-;    if char == 'a' || char == 'A'
-;        check for allowed mode
-;        inc ParsePos
-;        do accumulator
-;    
-;    ....
-;
-;    else
-;        do implicit
-;    
-;
-;do_immediate
-;    read char
-;    if char == "<" || char == '>'
-;        if byte_select > 0
-;            error
-;        set 'byte select'
-;        loop
-;    if char == '$'
-;        do hexvalue
-;    if char == '%'
-;        do binvalue
-;    if char == '&'
-;        do octvalue
-;    if char == '('
-;        do expression
-;    if char == '0-9'
-;        do decimal
-;        
-;    if char is alpha
-;        do label
-;
-;    if char == ' '
-;        process whitespace
-;    if char == '/'
-;        read char
-;        if char == '/'
-;            do comment
-;        dec ParsePos    ; get back to first '/'
-;    
-;    do expression           ; first implmenet simple addition, subtraction
-;    
-;
-;
-;do_hexvalue
-
-;
-; label token: label_id, parent_id, (parent_id)* (0 if no parent): a $00 at the first label byte means the following $ff terminated string is the unresolved label name
-;line_type flags: opcode, label def, label use, directive, macro def, macro use, comment
-; valuespec: bin, hex, dec, oct, expr, label (0, 1, 2, 3, 4, 5) (bit 7-5)
-;
-; ex text:                            |ab:  adc #10    ; abcd
-            ;    linetype    length, addr     pos, label decl          pos, opt, pos, addrm,  oper, pos, comment
-;example1:  .byte %00000011, $12    ,$00,$21, $00, $01, $00,         , $05, $61, $09, AM_IMM, $a,   $10, $20, $01, $02, $03, $04
-;example2:  .byte %00000011, $14    ,$00,$21, $00, $00, $01, $02, $ff, $05, $61, $09, AM_IMM, $a,   $10, $20, $01, $02, $03, $04
-
-; the first opcode for each mnemonic is the token for the editor, combined with the id of the specific addressing mode
-datasize   .word lookup_end-mnemonics
-tokensize  .word lookup_end-tok_to_mnem
-addrmsize  .word tok_to_mnem-addrm_groups
             .align
 mnemonics
 mn_adc      .text "adc@"
             .byte $61, gr01-addrm_groups
+mn_adcq     .text "adcq"
+            .byte $61, gr12-addrm_groups
 mn_and      .text "and@" 
             .byte $21, gr01-addrm_groups
+mn_andq     .text "andq"
+            .byte $21, gr12-addrm_groups
 mn_asl      .text "asl@"
             .byte $06, gr02-addrm_groups
+mn_aslq     .text "aslq"
+            .byte $06, gr13-addrm_groups
 mn_asr      .text "asr@"
             .byte $43, gr03-addrm_groups
+mn_asrq     .text "asrq"
+            .byte $43, gr14-addrm_groups
 mn_asw      .text "asw@"
             .byte $CB, gr04-addrm_groups
 mn_br0      .text "bbr0"
@@ -522,6 +491,8 @@ mn_beq      .text "beq@"
             .byte $F0, gr06-addrm_groups
 mn_bit      .text "bit@"
             .byte $24, gr07-addrm_groups
+mn_bitq     .text "bitq"
+            .byte $24, gr15-addrm_groups
 mn_bmi      .text "bmi@"
             .byte $30, gr06-addrm_groups
 mn_bne      .text "bne@"
@@ -550,16 +521,20 @@ mn_clv      .text "clv@"
             .byte $B8, gr08-addrm_groups
 mn_cmp      .text "cmp@"
             .byte $C1, gr01-addrm_groups
+mn_cmpq     .text "cmpq"
+            .byte $C1, gr12-addrm_groups
 mn_cpx      .text "cpx@"
-            .byte $E0, gr0A-addrm_groups
+            .byte $E0, gr0a-addrm_groups
 mn_cpy      .text "cpy@"
-            .byte $C0, gr0A-addrm_groups
+            .byte $C0, gr0a-addrm_groups
 mn_cpz      .text "cpz@"
-            .byte $C2, gr0A-addrm_groups
+            .byte $C2, gr0a-addrm_groups
 mn_dec      .text "dec@"
-            .byte $3A, gr0B-addrm_groups
+            .byte $3A, gr0b-addrm_groups
+mn_deq      .text "deq@"
+            .byte $3A, gr13-addrm_groups
 mn_dew      .text "dew@"
-            .byte $C3, gr0C-addrm_groups
+            .byte $C3, gr0c-addrm_groups
 mn_dex      .text "dex@"
             .byte $CA, gr08-addrm_groups
 mn_dey      .text "dey@"
@@ -570,10 +545,14 @@ mn_eom      .text "dez@"
             .byte $EA, gr08-addrm_groups
 mn_eor      .text "eor@"
             .byte $41, gr01-addrm_groups
+mn_eorq     .text "eorq"
+            .byte $41, gr12-addrm_groups
 mn_inc      .text "inc@"
-            .byte $1A, gr0B-addrm_groups
+            .byte $1A, gr0b-addrm_groups
+mn_inq       .text "inq@"
+            .byte $1A, gr13-addrm_groups
 mn_inw      .text "inw@"
-            .byte $E3, gr0C-addrm_groups
+            .byte $E3, gr0c-addrm_groups
 mn_inx      .text "inx@"
             .byte $E8, gr08-addrm_groups
 mn_iny      .text "iny@"
@@ -581,25 +560,31 @@ mn_iny      .text "iny@"
 mn_inz      .text "inz@"
             .byte $1B, gr08-addrm_groups
 mn_jmp      .text "jmp@"
-            .byte $4C, gr0D-addrm_groups
+            .byte $4C, gr0d-addrm_groups
 mn_jsr      .text "jsr@"
-            .byte $20, gr0D-addrm_groups
+            .byte $20, gr0d-addrm_groups
 mn_lda      .text "lda@"
             .byte $A1, gr01-addrm_groups
+mn_ldq      .text "ldaq"
+            .byte $A1, gr12-addrm_groups
 mn_ldx      .text "ldx@"
-            .byte $A2, gr0E-addrm_groups
+            .byte $A2, gr0e-addrm_groups
 mn_ldy      .text "ldy@"
-            .byte $A0, gr0E-addrm_groups
+            .byte $A0, gr0e-addrm_groups
 mn_ldz      .text "ldz@"
-            .byte $A3, gr0F-addrm_groups
+            .byte $A3, gr0f-addrm_groups
 mn_lsr      .text "lsr@"
             .byte $46, gr02-addrm_groups
+mn_lsrq     .text "lsrq"
+            .byte $46, gr13-addrm_groups
 mn_map      .text "map@"
             .byte $5C, gr08-addrm_groups
 mn_neg      .text "neg@"
             .byte $42, gr10-addrm_groups
 mn_ora      .text "ora@"
             .byte $01, gr01-addrm_groups
+mn_orq      .text "orq@"
+            .byte $01, gr12-addrm_groups
 mn_pha      .text "pha@"
             .byte $48, gr08-addrm_groups
 mn_php      .text "php@"
@@ -622,60 +607,180 @@ mn_ply      .text "ply@"
             .byte $7A, gr08-addrm_groups 
 mn_plz      .text "plz@"
             .byte $FB, gr08-addrm_groups
+mn_rmb0     .text "rmb0"
+            .byte $07, gr0c-addrm_groups
+mn_rmb1     .text "rmb0"
+            .byte $07, gr0c-addrm_groups
+mn_rmb2     .text "rmb0"
+            .byte $17, gr0c-addrm_groups
+mn_rmb3     .text "rmb0"
+            .byte $27, gr0c-addrm_groups
+mn_rmb4     .text "rmb0"
+            .byte $37, gr0c-addrm_groups
+mn_rmb5     .text "rmb0"
+            .byte $47, gr0c-addrm_groups
+mn_rmb6     .text "rmb0"
+            .byte $57, gr0c-addrm_groups
+mn_rmb7     .text "rmb0"
+            .byte $67, gr0c-addrm_groups
+mn_rol      .text "rol@"
+            .byte $26, gr02-addrm_groups
+mn_ror      .text "ror@"
+            .byte $66, gr02-addrm_groups
+mn_row      .text "row@"
+            .byte $eb, gr04-addrm_groups
+mn_rti      .text "rti@"
+            .byte $40, gr08-addrm_groups
+mn_rts      .text "rts@"
+            .byte $60, gr16-addrm_groups
+mn_sbc      .text "sbc@"
+            .byte $e1, gr01-addrm_groups
+mn_sbcq     .text "sbcq"
+            .byte $e1, gr12-addrm_groups
+mn_sec      .text "sec@"
+            .byte $38, gr08-addrm_groups
+mn_sed      .text "sed@"
+            .byte $f8, gr08-addrm_groups
+mn_see      .text "see@"
+            .byte $03, gr08-addrm_groups
+mn_sei      .text "sei@"
+            .byte $78, gr08-addrm_groups
+mn_smb0     .text "rmb0"
+            .byte $87, gr0c-addrm_groups
+mn_smb1     .text "rmb0"
+            .byte $97, gr0c-addrm_groups
+mn_smb2     .text "rmb0"
+            .byte $a7, gr0c-addrm_groups
+mn_smb3     .text "rmb0"
+            .byte $b7, gr0c-addrm_groups
+mn_smb4     .text "rmb0"
+            .byte $c7, gr0c-addrm_groups
+mn_smb5     .text "rmb0"
+            .byte $d7, gr0c-addrm_groups
+mn_smb6     .text "rmb0"
+            .byte $e7, gr0c-addrm_groups
+mn_smb7     .text "rmb0"
+            .byte $f7, gr0c-addrm_groups
+mn_sta      .text "sta@"
+            .byte $81, gr17-addrm_groups
+mn_stx      .text "stx@"
+            .byte $86, gr17-addrm_groups
+mn_sty      .text "sty@"
+            .byte $84, gr17-addrm_groups
+mn_stz      .text "stz@"
+            .byte $64, gr17-addrm_groups
+mn_tab      .text "tab@"
+            .byte $5b, gr08-addrm_groups
+mn_tax      .text "tax@"
+            .byte $aa, gr08-addrm_groups
+mn_tay      .text "tay@"
+            .byte $a8, gr08-addrm_groups
+mn_taz      .text "taz@"
+            .byte $4b, gr08-addrm_groups
+mn_tba      .text "tba@"
+            .byte $7b, gr08-addrm_groups
+mn_trb      .text "trb@"
+            .byte $14, gr18-addrm_groups
+mn_tsb      .text "tsb@"
+            .byte $04, gr18-addrm_groups
+mn_tsx      .text "tsx@"
+            .byte $ba, gr08-addrm_groups
+mn_tsy      .text "tsy@"
+            .byte $0b, gr08-addrm_groups
+mn_txa      .text "txa@"
+            .byte $8a, gr08-addrm_groups
+mn_txs      .text "txs@"
+            .byte $9a, gr08-addrm_groups
+mn_tya      .text "tya@"
+            .byte $98, gr08-addrm_groups
+mn_tys      .text "tys@"
+            .byte $2b, gr08-addrm_groups
+mn_tza      .text "tza@"
+            .byte $6b, gr08-addrm_groups
 mn_end 
 
+.align
 addrm_groups
-gr01        .byte AM_XIN, $00, $50
-            .byte AM_BP,  $04, $30 
-            .byte AM_IMM, $04, $20
-            .byte AM_ABS, $04, $40
-            .byte AM_INY, $04, $50
-            .byte AM_INZ, $01, $50
-            .byte AM_BPX, $03, $30
-            .byte AM_ABY, $04, $40
-            .byte AM_ABX, $04, $40
-gr02        .byte AM_BP,  $00, $40
-            .byte AM_ACC, $04, $10
-            .byte AM_ABS, $04, $50
-            .byte AM_BPX, $08, $40
-            .byte AM_ABX, $08, $40
-gr03        .byte AM_ACC, $00, $10
-            .byte AM_BP,  $01, $40
-            .byte AM_BPX, $0A, $40
-gr04        .byte AM_ABS, $00, $00
-gr05        .byte AM_BPR, $00, $50
-gr06        .byte AM_REL, $00, $20
-            .byte AM_RLW, $03, $30
-gr07        .byte AM_BP,  $00, $40
-            .byte AM_ABS, $04, $50
-            .byte AM_BPX, $08, $40
-            .byte AM_ABX, $08, $40
-            .byte AM_IMM, $4A, $00
-gr08        .byte AM_IMP, $00, $70
-gr09        .byte AM_RLW, $00, $30
-gr0A        .byte AM_IMM, $00, $00
-            .byte AM_BP,  $04, $00
-            .byte AM_ABS, $08, $00
-gr0B        .byte AM_ACC, $00, $10
-            .byte AM_BP,  $8C, $00
-            .byte AM_ABS, $08, $00
-            .byte AM_BPX, $08, $00
-            .byte AM_ABX, $08, $00
-gr0C        .byte AM_BP,  $00, $00
-gr0D        .byte AM_ABS, $00, $30
-            .byte AM_IND, $20, $50
-            .byte AM_XIN, $10, $00
-gr0E        .byte AM_IMM, $00, $00
-            .byte AM_BP,  $04, $00
-            .byte AM_ABS, $08, $00
-            .byte AM_BPX, $08, $00
-            .byte AM_ABX, $08, $00
-gr0F        .byte AM_IMM, $00, $00
-            .byte AM_BP,  $08, $00
-            .byte AM_ABS, $10, $00
-gr10        .byte AM_ACC, $00, $10
-gr11        .byte AM_IMW, $00, $00
-            .byte AM_ABS, $08, $00
+gr01        .byte AM_BIX,   $00, $50
+            .byte AM_BP,    $04, $30 
+            .byte AM_IMM,   $08, $20
+            .byte AM_ABS,   $0c, $40
+            .byte AM_BIY,   $10, $50
+            .byte AM_BIZ,   $11, $50
+            .byte AM_BIZ32, $11, $70 | EXT_EA
+            .byte AM_BPX,   $14, $30
+            .byte AM_ABY,   $18, $40
+            .byte AM_ABX,   $1c, $40
+gr02        .byte AM_ACC,   $04, $10
+            .byte AM_BP,    $00, $40
+            .byte AM_ABS,   $08, $50
+            .byte AM_BPX,   $10, $40
+            .byte AM_ABX,   $18, $40
+gr03        .byte AM_ACC,   $00, $10
+            .byte AM_BP,    $01, $40
+            .byte AM_BPX,   $0b, $40
+gr04        .byte AM_ABS,   $00, $40
+gr05        .byte AM_BPR,   $00, $50
+gr06        .byte AM_REL,   $00, $20
+            .byte AM_RLW,   $03, $30
+gr07        .byte AM_BP,    $00, $40
+            .byte AM_ABS,   $04, $50
+            .byte AM_BPX,   $0c, $40
+            .byte AM_ABX,   $14, $40
+            .byte AM_IMM,   $5e, $00
+gr08        .byte AM_IMP,   $00, $70
+gr09        .byte AM_RLW,   $00, $30
+gr0a        .byte AM_IMM,   $00, $00
+            .byte AM_BP,    $04, $00
+            .byte AM_ABS,   $0c, $00
+gr0b        .byte AM_ACC,   $00, $10
+            .byte AM_BP,    $8C, $00
+            .byte AM_ABS,   $94, $00
+            .byte AM_BPX,   $9c, $00
+            .byte AM_ABX,   $a4, $00
+gr0c        .byte AM_BP,    $00, $40
+gr0d        .byte AM_ABS,   $00, $30
+            .byte AM_AIN,   $20, $50
+            .byte AM_BIX,   $30, $00
+gr0e        .byte AM_IMM,   $00, $00
+            .byte AM_BP,    $04, $00
+            .byte AM_ABS,   $0c, $00
+            .byte AM_BPX,   $14, $00
+            .byte AM_ABX,   $1c, $00
+gr0f        .byte AM_IMM,   $00, $00
+            .byte AM_BP,    $08, $00
+            .byte AM_ABS,   $18, $00
+gr10        .byte AM_ACC,   $00, $10
+gr11        .byte AM_IMW,   $00, $00
+            .byte AM_ABS,   $08, $00
+gr12        .byte AM_BPQ,   $04, $80 | EXT_4242
+            .byte AM_ABQ,   $0c, $90 | EXT_4242
+            .byte AM_BQI,   $11, $a0 | EXT_4242
+            .byte AM_BQI32, $11, $d0 | EXT_4242EA
+gr13        .byte AM_BPQ,   $00, $c0 | EXT_4242
+            .byte AM_QPR,   $04, $30 | EXT_4242
+            .byte AM_ABQ,   $08, $d0 | EXT_4242
+            .byte AM_BQX,   $10, $c0 | EXT_4242
+            .byte AM_ABQX,  $18, $d0 | EXT_4242
+gr14        .byte AM_QPR,   $00, $30 | EXT_4242
+            .byte AM_BPQ,   $01, $c0 | EXT_4242
+            .byte AM_BQX,   $11, $c0 | EXT_4242
+gr15        .byte AM_BPQ,   $00, $80 | EXT_4242
+            .byte AM_ABQ,   $08, $90 | EXT_4242
+gr16        .byte AM_IMM,   $00, $60
+            .byte AM_IMW,   $02, $40
+gr17        .byte AM_BIX,   $00, $50
+            .byte AM_SRI,   $01, $60 
+            .byte AM_BP,    $04, $30
+            .byte AM_ABS,   $0c, $40
+            .byte AM_BIY,   $10, $50
+            .byte AM_BIZ,   $11, $50
+            .byte AM_BIZ32, $11, $70 | EXT_EA
+            .byte AM_BPX,   $14, $30
+            .byte AM_ABY,   $18, $40
+            .byte AM_ABX,   $1c, $40
+gr18        .byte AM_BP,    $00, $50
+            .byte AM_ABS,   $08, $40 
 
 tok_to_mnem
             .byte $00, <mn_brk, >mn_brk
@@ -754,6 +859,11 @@ tok_to_mnem
             .byte $7A, <mn_ply, >mn_ply
             ; !byte   $FB, <mn_plz, >mn_plz
 lookup_end
+
+; the first opcode for each mnemonic is the token for the editor, combined with the id of the specific addressing mode
+datasize    .word lookup_end-mnemonics
+tokensize   .word lookup_end-tok_to_mnem
+addrmsize   .word tok_to_mnem-addrm_groups
 
 .endsection ; data
 
