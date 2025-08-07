@@ -1,3 +1,7 @@
+PARSERMACROS :?= false
+.if !PARSERMACROS
+PARSERMACROS := true
+
 .enc "screen"
 .namespace parser
 
@@ -41,3 +45,5 @@ setInputLine .macro inputLine
 .endmacro
 
 .endnamespace ; parser
+
+.endif

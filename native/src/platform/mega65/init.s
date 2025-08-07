@@ -1,4 +1,5 @@
-.cpu "45gs02"
+.include "platformmacros.h"
+
 .section init
     cli
     #enable40Mhz

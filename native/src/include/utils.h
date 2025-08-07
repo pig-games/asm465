@@ -1,3 +1,6 @@
+UTILS :?= false
+.if !UTILS
+UTILS := true
 
 
 setJSRAddress .macro addr_jsr, addr_calc
@@ -5,11 +8,6 @@ setJSRAddress .macro addr_jsr, addr_calc
         sta \addr_jsr + 1
         lda #>\addr_calc
         sta \addr_jsr + 2
-.endmacro
-
-setBasePage .macro addr
-        lda #>\addr
-        tab
 .endmacro
 
 ldxy .macro ptr
@@ -45,3 +43,5 @@ incxy .macro
         bne *+3
         iny
 .endmacro
+
+.endif

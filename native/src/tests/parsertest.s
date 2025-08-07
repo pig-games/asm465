@@ -1,3 +1,6 @@
+.include "debug_macros.h"
+.include "parser_macros.h"
+
 .enc "screen"
 
 .section main

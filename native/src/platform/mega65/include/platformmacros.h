@@ -1,4 +1,8 @@
      ; Based on the great work by Shallan at: https://github.com/smnjameson
+PLATFORMMACROS :?= false
+.if !PLATFORMMACROS
+PLATFORMMACROS := true
+.include "platformdefs.h"
 
 phq .function
 	pha
@@ -14,7 +18,7 @@ plq .function
 	pla
 .endfunction
 
-BasicUpstart65 .macro addr
+BasicUpstart .macro addr
 		.byte $09,$20 ; End of command marker (first byte after the 00 terminator)
 		.byte $0a,$00 ; 10
 		.byte $fe,$02,$30,$00 ; BANK 0
@@ -78,6 +82,11 @@ disableC65ROM .macro
 		lda #$70
 		sta $d640
 		eom
+.endmacro
+
+setBasePage .macro addr
+        lda #>\addr
+        tab
 .endmacro
 
 mapMemory .macro source, target
@@ -250,3 +259,5 @@ MixJob .macro Source, Destination, Length, Chain, Backwards
 .endmacro
 
 .endnamespace ; dma
+
+.endif

@@ -1,3 +1,5 @@
+.include "screen_macros.h"
+.include "utils.h"
 .enc "screen"
 
 ; constants

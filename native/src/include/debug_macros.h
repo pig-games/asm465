@@ -1,5 +1,8 @@
-.enc "screen"
+DEBUGMACROS :?= false
+.if !DEBUGMACROS
+DEBUGMACROS := true
 
+.enc "screen"
 
 dbg .namespace
 
@@ -295,3 +298,5 @@ Stats .macro
 .endmacro
 
 .endnamespace ; def debug
+
+.endif

@@ -1,3 +1,7 @@
+PLATFORMDEFS :?= false
+.if !PLATFORMDEFS
+PLATFORMDEFS := true
+
 .comment
 
 Based on https://github.com/lydon42/mandelbrot-explorer65/blob/main/include/mega65defs.s
@@ -114,3 +118,5 @@ math .namespace
     DIVOUT3  = $D76A
     DIVOUT4  = $D76B
 .endnamespace ; math
+
+.endif

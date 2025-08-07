@@ -1,3 +1,6 @@
+SCREENMACROS :?= false
+.if !SCREENMACROS
+SCREENMACROS := true
 
 SetColour .macro colour
     ldz #\colour
@@ -58,3 +61,5 @@ cpr .macro colour, str
     .null \str
     plq
 .endmacro
+
+.endif
