@@ -1,3 +1,8 @@
+//! Integration tests for the official 6502 opcodes.
+//!
+//! Each test loads a small byte program (starting at `$8000` unless noted) and
+//! runs until `BRK`. Above each program we include mnemonics and expected effects.
+
 use bus::Bus;
 use core6502::{Cpu, P};
 
@@ -23,6 +28,14 @@ fn run_until_brk(cpu: &mut Cpu, max_steps: usize) {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// SEC          ; carry-in = 1
+/// LDA #$10     ; A = 0x10
+/// ADC #$20     ; A = 0x10 + 0x20 + 1 = 0x31
+/// SBC #$05     ; A = 0x31 - 0x05 - (1 - C) = 0x2B
+/// BRK
+/// ```
 fn adc_sbc() {
     let code = [0x38, 0xA9, 0x10, 0x69, 0x20, 0xE9, 0x05, 0x00];
     let mut cpu = cpu_with_program(&code, 0x8000);
@@ -31,6 +44,14 @@ fn adc_sbc() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$F0     ; A=F0
+/// AND #$3C     ; A=30
+/// EOR #$0F     ; A=3F
+/// ORA #$80     ; A=BF
+/// BRK
+/// ```
 fn and_eor_ora() {
     let code = [0xA9, 0xF0, 0x29, 0x3C, 0x49, 0x0F, 0x09, 0x80, 0x00];
     let mut cpu = cpu_with_program(&code, 0x8000);
@@ -39,6 +60,16 @@ fn and_eor_ora() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$40     ; A=40
+/// ASL A        ; A=80 (C from bit7)
+/// LSR A        ; A=40
+/// STA $C000
+/// ROL $C000    ; mem <<= 1 with carry-in
+/// ROR $C000    ; mem >>= 1 with carry-in
+/// BRK
+/// ```
 fn asl_lsr_rol_ror_acc_and_mem() {
     let code = [
         0xA9, 0x40, 0x0A, 0x4A, 0x8D, 0x00, 0xC0, 0x2E, 0x00, 0xC0, 0x6E, 0x00, 0xC0, 0x00,
@@ -49,6 +80,19 @@ fn asl_lsr_rol_ror_acc_and_mem() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$00
+/// CMP #$00     ; Z=1 -> BEQ taken
+/// BEQ +2
+/// LDA #$FF     ; skipped
+/// LDA #$01
+/// CMP #$02     ; Z=0 -> BNE taken
+/// BNE +2
+/// BRK
+/// NOP
+/// BRK
+/// ```
 fn branches_page_cross_and_flags() {
     let code = [
         0xA9, 0x00, 0xC9, 0x00, 0xF0, 0x02, 0xA9, 0xFF, 0xA9, 0x01, 0xC9, 0x02, 0xD0, 0x02, 0x00,
@@ -60,6 +104,14 @@ fn branches_page_cross_and_flags() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$C0
+/// STA $C100
+/// LDA #$3F
+/// BIT $C100    ; Z=(A&M)==0 ; V<-M6 ; N<-M7
+/// BRK
+/// ```
 fn bit_tests() {
     let code = [
         0xA9, 0xC0, 0x8D, 0x00, 0xC1, 0xA9, 0x3F, 0x2C, 0x00, 0xC1, 0x00,
@@ -77,6 +129,16 @@ fn bit_tests() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$10
+/// LDX #$20
+/// LDY #$10
+/// CMP #$10     ; C=1,Z=1
+/// CPX #$10     ; X(20)-10 -> C=1,Z=0
+/// CPY #$0F     ; Y(10)-0F -> C=1,Z=0
+/// BRK
+/// ```
 fn cmp_cpx_cpy() {
     let code = [
         0xA9, 0x10, 0xA2, 0x20, 0xA0, 0x10, 0xC9, 0x10, 0xE0, 0x10, 0xC0, 0x0F, 0x00,
@@ -87,6 +149,18 @@ fn cmp_cpx_cpy() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$00
+/// STA $C200
+/// INC $C200
+/// DEC $C200
+/// INX
+/// DEX
+/// INY
+/// DEY
+/// BRK
+/// ```
 fn inc_dec_inx_dex_iny_dey() {
     let code = [
         0xA9, 0x00, 0x8D, 0x00, 0xC2, 0xEE, 0x00, 0xC2, 0xCE, 0x00, 0xC2, 0xE8, 0xCA, 0xC8, 0x88,
@@ -100,6 +174,27 @@ fn inc_dec_inx_dex_iny_dey() {
 }
 
 #[test]
+/// Exercises stack and flow-control: PHA/PLA, BRK/RTI status, JSR/RTS.
+///
+/// ### Main
+/// ```asm
+/// LDA #$AA
+/// PHA
+/// PLA
+/// SEI
+/// BRK          ; vectors to $9000
+/// ```
+/// ### IRQ/BRK handler @ $9000
+/// ```asm
+/// PLP
+/// RTI
+/// ```
+/// ### After RTI
+/// ```asm
+/// JSR $9010    ; subroutine at $9010
+/// ... RTS
+/// BRK
+/// ```
 fn jmp_jsr_rts_rti_php_plp() {
     let mut code = vec![0xA9,0xAA, 0x48, 0x68, 0x78, 0x00];
     let load = 0x8000;
@@ -120,6 +215,19 @@ fn jmp_jsr_rts_rti_php_plp() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$11
+/// LDX #$22
+/// LDY #$33
+/// STA $0010
+/// STX $0011
+/// STY $0012
+/// STA $C300
+/// STX $C301
+/// STY $C302
+/// BRK
+/// ```
 fn loads_and_stores_all() {
     let code = [
         0xA9, 0x11, 0xA2, 0x22, 0xA0, 0x33, 0x85, 0x10, 0x86, 0x11, 0x84, 0x12, 0x8D, 0x00, 0xC3,
@@ -136,6 +244,24 @@ fn loads_and_stores_all() {
 }
 
 #[test]
+/// ### Program
+/// ```asm
+/// LDA #$7F
+/// TAX
+/// TAY
+/// TXA
+/// TYA
+/// TSX
+/// TXS
+/// CLC
+/// SEC
+/// CLD
+/// SED
+/// CLI
+/// SEI
+/// CLV
+/// BRK
+/// ```
 fn transfers_and_flags() {
     let code = [
         0xA9, 0x7F, 0xAA, 0xA8, 0x8A, 0x98, 0xBA, 0x9A, 0x18, 0x38, 0xD8, 0xF8, 0x58, 0x78, 0xB8,
@@ -150,6 +276,8 @@ fn transfers_and_flags() {
 }
 
 #[test]
+/// Demonstrates `($zp),Y`, `($zp,X)`, `abs,X`, and `abs,Y` modes using
+/// prepared memory so that `($10),Y` resolves to `$4030`.
 fn addressing_modes_indexed() {
     let code = [
         0xA2, 0x04, 0xA9, 0x34, 0x85, 0x30, 0xA9, 0x00, 0x85, 0x10, 0xA9, 0x40, 0x85, 0x11, 0xA9,
