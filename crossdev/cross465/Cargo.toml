@@ -1,0 +1,3 @@
+[workspace]
+members = ["bus","core6502","runner"]
+resolver = "2"

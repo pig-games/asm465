@@ -1,75 +1,105 @@
 #*******************************************************************************************
-# Makefile
-#
-# Created by: Erik van der Tier
-# on: 2025-05-31
+# Makefile — asm465
+# Per-target builds for MEGA65 and Ultimate64 (64tass)
 #*******************************************************************************************
-TARGET ?= Mega65
-# Force lowercase TARGET just in case
+
+# ---- Platform selection ----------------------------------------------------
+TARGET ?= mega65
 TARGET := $(shell echo $(TARGET) | tr A-Z a-z)
 
-# Validate target
-VALID_TARGETS := mega65 u64
+VALID_TARGETS := mega65 ultimate64 cross465
 ifeq (,$(filter $(TARGET),$(VALID_TARGETS)))
-$(error Unknown TARGET '$(TARGET)'. Valid targets: $(VALID_TARGETS))
+  $(error Unknown TARGET '$(TARGET)'. Valid targets: $(VALID_TARGETS))
 endif
 
+# ---- Network config (for Ultimate64 uploads) --------------------------------
 ULTIMATE_IP ?= 192.168.0.188
+-include config.mk   # optional local overrides (git-ignored)
 
-NAME = 	asm465
-ADDR = 	0000
-OUTDIR = build
+# ---- Project basics --------------------------------------------------------
+NAME    := asm465
+ADDR    := 0000
 
-PLATFORM_INCLUDE = src/platform/$(TARGET)/include
-COMMON_INCLUDE = src/include
-INCLUDE_FLAGS = -I $(COMMON_INCLUDE) -I $(PLATFORM_INCLUDE)
+# Per-target output dir (watch out for tabs here!)
+OUTDIR := build/$(TARGET)
 
-BLD_NAME = $(OUTDIR)/$(NAME).prg
+# Fail fast if OUTDIR is somehow empty (whitespace/tab issues etc.)
+ifeq ($(strip $(OUTDIR)),)
+  $(error OUTDIR is empty; expected something like build/$(TARGET))
+endif
 
-PLATFORM_SRC = platform/$(TARGET)
+# Create OUTDIR on demand (order-only prereq will trigger this)
+$(OUTDIR):
+	@mkdir -p $(OUTDIR)
 
-CORE_SRC = \
-		src/$(PLATFORM_SRC)/layout.s \
-		src/$(PLATFORM_SRC)/boot.s \
-		src/$(PLATFORM_SRC)/init.s \
-		src/$(PLATFORM_SRC)/screen.s \
-		src/util.s \
+# ---- Include paths for headers/macros -------------------------------------
+COMMON_INCLUDE   := src/include
+PLATFORM_INCLUDE := src/platform/$(TARGET)/include
 
-PTEST_SRC = \
-		src/tests/parsertest.s \
-		src/parser.s 
+# Use --include-dir (portable). These only affect `.include "..."` resolution.
+INCLUDE_FLAGS := -I $(COMMON_INCLUDE) -I $(PLATFORM_INCLUDE)
 
-STEST_SRC = \
-		src/tests/screentest.s
+# ---- Assembler options -----------------------------------------------------
+OPTS := -C -a -B $(INCLUDE_FLAGS)
 
-DTEST_SRC = \
-		src/tests/debugtest.s
-
-UTEST_SRC = \
-		src/unittest.s \
-		src/tests/unittest.s
-
-OPTS = -C -a -B $(INCLUDE_FLAGS)
-
-# Platform-specific options
 ifeq ($(TARGET),mega65)
-	OPTS += --m45gs02 -D MEGA65:=true
-	UPLOAD = etherload.osx -r
+  OPTS += --m45gs02 -D MEGA65:=true
+endif
+ifeq ($(TARGET),ultimate64)
+  OPTS += --m64 -D ULTIMATE64:=true
+endif
+ifeq ($(TARGET),cross465)
+  OPTS += --m64 -D CROSS465:=true
 endif
 
-ifeq ($(TARGET),run_unittest64)
-	OPTS += --m64 -D U64:=true
-	UPLOAD = curl --http1.1 -s -X POST http://$(ULTIMATE_IP)/v1/runners:run_prg \
-		-H "Content-Type: application/octet-stream" \
-		-H "Expect:" \
-		-H "Content-Length: $$(stat -f%z $(OUTDIR)/$$*)" \
-		--data-binary @$(OUTDIR)/$$*
-endif
+# ---- Sources ---------------------------------------------------------------
+PLATFORM_SRC := platform/$(TARGET)
 
+# If you add a platform_prelude.s, put it first in CORE_SRC.
+CORE_SRC = \
+	src/$(PLATFORM_SRC)/layout.s \
+	src/$(PLATFORM_SRC)/boot.s \
+	src/$(PLATFORM_SRC)/init.s \
+	src/$(PLATFORM_SRC)/screen.s \
+	src/util.s
+
+PTEST_SRC = src/tests/parsertest.s src/parser.s
+STEST_SRC = src/tests/screentest.s
+DTEST_SRC = src/tests/debugtest.s
+UTEST_SRC = src/unittest.s src/tests/unittest.s
+
+# ---- Build targets ---------------------------------------------------------
+parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
+
+screentest: $(STEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
+
+debugtest: $(DTEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(DTEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
+
+unittest: $(UTEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
+
+all: parsertest screentest debugtest unittest
+
+# ---- Run / Upload (kept separate) -----------------------------------------
 run_%: %
 ifeq ($(TARGET),mega65)
 	etherload.osx -r $(OUTDIR)/$*
-else ifeq ($(TARGET),u64)
+else ifeq ($(TARGET),ultimate64)
 	curl --http1.1 -s -X POST http://$(ULTIMATE_IP)/v1/runners:run_prg \
 		-H "Content-Type: application/octet-stream" \
 		-H "Expect:" \
@@ -77,29 +107,14 @@ else ifeq ($(TARGET),u64)
 		--data-binary @$(OUTDIR)/$*
 endif
 
-parsertest: $(PTEST_SRC) $(CORE_SRC) 
-		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
+# Convenience wrappers (build then run)
+run_ptest:   parsertest   run_parsertest
+run_stest:   screentest   run_screentest
+run_dtest:   debugtest    run_debugtest
+run_utest:   unittest     run_unittest
 
-screentest: $(STEST_SRC) $(CORE_SRC) 
-		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
-
-debugtest: $(DTEST_SRC) $(CORE_SRC) 
-		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(DTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
-
-unittest: $(UTEST_SRC) $(CORE_SRC) 
-		64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) -o $(OUTDIR)/$@ --list $(OUTDIR)/$(basename $@).lst --labels=$(OUTDIR)/$(basename $@).lbl
-
-all: parsertest screentest debugtest unittest
-
-run_ptest: parsertest run_parsertest
-
-run_stest: screentest run_screentest
-
-run_dtest: debugtest run_debugtest
-
-run_utest: unittest run_unittest
-
+# ---- Housekeeping ----------------------------------------------------------
 clean:
-		rm -r $(OUTDIR)/*
+	@rm -rf build/*
 
-.PHONY: run_ptest run_stest all clean
+.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest
