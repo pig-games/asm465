@@ -136,11 +136,12 @@ impl Cpu {
             bus,
         }
     }
+    
     /// Reset registers to a known state and load `PC` from `$FFFC/$FFFD`.
-///
-/// Mirrors typical 6502 power-on defaults: `SP=0xFD`, `P` has the unused
-/// bit set (`U`), others cleared except `Z/N` which follow subsequent loads.
-pub fn reset(&mut self) {
+    ///
+    /// Mirrors typical 6502 power-on defaults: `SP=0xFD`, `P` has the unused
+    /// bit set (`U`), others cleared except `Z/N` which follow subsequent loads.
+    pub fn reset(&mut self) {
         self.sp = 0xFD;
         self.p = P::from_bits_truncate(0x24);
         self.pc = self.read16(0xFFFC);
@@ -160,11 +161,12 @@ pub fn reset(&mut self) {
         let hi = self.read(a.wrapping_add(1)) as u16;
         (hi << 8) | lo
     }
+
     #[inline]
     /// Read a 16-bit little-endian value with the classic **JMP (indirect)**
-/// **page-wrap bug**: when the low byte is at `$xxFF`, the high byte is
-/// read from `$xx00` rather than `$xy00`.
-fn read16_bug(&mut self, a: u16) -> u16 {
+    /// **page-wrap bug**: when the low byte is at `$xxFF`, the high byte is
+    /// read from `$xx00` rather than `$xy00`.
+    fn read16_bug(&mut self, a: u16) -> u16 {
         let lo = self.read(a) as u16;
         let hi = self.read((a & 0xFF00) | ((a + 1) & 0x00FF)) as u16;
         (hi << 8) | lo
@@ -188,10 +190,10 @@ fn read16_bug(&mut self, a: u16) -> u16 {
     }
 
     /// Compute effective address for the given addressing mode.
-///
-/// Returns `(address, page_crossed)`. The boolean is used to apply the
-/// extra cycle penalty on certain indexed modes.
-fn addr(&mut self, mode: AddrMode) -> (u16, bool) {
+    ///
+    /// Returns `(address, page_crossed)`. The boolean is used to apply the
+    /// extra cycle penalty on certain indexed modes.
+    fn addr(&mut self, mode: AddrMode) -> (u16, bool) {
         use AddrMode::*;
         match mode {
             Imp | Acc => (0, false),
@@ -273,11 +275,12 @@ fn addr(&mut self, mode: AddrMode) -> (u16, bool) {
         self.p.set(P::C, carry);
         self.p.set(P::V, overflow);
     }
+
     /// **ADC in decimal (BCD) mode**.
-///
-/// 1) Compute binary sum (for `V`); 2) Apply BCD low/high nibble fixups;
-/// 3) Set `C` if result exceeded 99 (i.e. decimal carry-out).
-fn adc_bcd(&mut self, v: u8) {
+    ///
+    /// 1) Compute binary sum (for `V`); 2) Apply BCD low/high nibble fixups;
+    /// 3) Set `C` if result exceeded 99 (i.e. decimal carry-out).
+    fn adc_bcd(&mut self, v: u8) {
         // Do binary add first, then BCD adjust; keep V from binary add (NMOS behavior).
         let a = self.a;
         let c = if self.p.contains(P::C) { 1 } else { 0 };
@@ -321,10 +324,10 @@ fn adc_bcd(&mut self, v: u8) {
         self.p.set(P::V, overflow);
     }
     /// **SBC in decimal (BCD) mode**.
-///
-/// Uses binary path to determine `V`, then performs digit-wise subtraction
-/// with borrow across nibbles. `C=1` indicates **no borrow**.
-fn sbc_bcd(&mut self, v: u8) {
+    ///
+    /// Uses binary path to determine `V`, then performs digit-wise subtraction
+    /// with borrow across nibbles. `C=1` indicates **no borrow**.
+    fn sbc_bcd(&mut self, v: u8) {
         // Binary path for V, then decimal adjust; Carry indicates no borrow.
         let a = self.a;
         let c = if self.p.contains(P::C) { 1 } else { 0 };
@@ -360,10 +363,10 @@ fn sbc_bcd(&mut self, v: u8) {
     }
 
     /// Execute one instruction at `PC` and return the (approximate) cycle count.
-///
-/// Page-cross penalties are accounted for via the decode table’s
-/// `add_page_cycle` bit.
-pub fn step(&mut self) -> u32 {
+    ///
+    /// Page-cross penalties are accounted for via the decode table’s
+    /// `add_page_cycle` bit.
+    pub fn step(&mut self) -> u32 {
         use AddrMode::*;
         use Op::*;
         let opcode = self.read(self.pc);

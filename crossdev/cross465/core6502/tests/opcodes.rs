@@ -196,7 +196,7 @@ fn inc_dec_inx_dex_iny_dey() {
 /// BRK
 /// ```
 fn jmp_jsr_rts_rti_php_plp() {
-    let mut code = vec![0xA9,0xAA, 0x48, 0x68, 0x78, 0x00];
+    let mut code = vec![0xA9, 0xAA, 0x48, 0x68, 0x78, 0x00];
     let load = 0x8000;
     let irq = 0x9000;
     let pad = irq - load - (code.len() as u16);
