@@ -136,7 +136,7 @@ impl Cpu {
             bus,
         }
     }
-    
+
     /// Reset registers to a known state and load `PC` from `$FFFC/$FFFD`.
     ///
     /// Mirrors typical 6502 power-on defaults: `SP=0xFD`, `P` has the unused
@@ -189,56 +189,97 @@ impl Cpu {
         self.p.set(P::N, v & 0x80 != 0);
     }
 
-    /// Compute effective address for the given addressing mode.
+    /// Compute the effective address for an instruction's addressing mode.
     ///
-    /// Returns `(address, page_crossed)`. The boolean is used to apply the
-    /// extra cycle penalty on certain indexed modes.
+    /// Returns `(address, page_crossed)`:
+    /// - `address` is the resolved 16‑bit effective address (or a placeholder like `0`
+    ///   for implied/accumulator where no memory address is used).
+    /// - `page_crossed` is `true` when the effective address calculation crosses a
+    ///   page boundary (i.e., the high byte changes). Certain indexed modes use this
+    ///   to charge an extra cycle.
+    ///
+    /// # Addressing modes
+    ///
+    /// | Mode     | Meaning                                                                 | Notes                                                                                      | Page-cross? |
+    /// |----------|-------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|-------------|
+    /// | `Imp`    | Implied (no operand)                                                    | e.g. `CLC`, `SEI`. No memory address is needed.                                            | `false`     |
+    /// | `Acc`    | Accumulator                                                             | e.g. `ASL A`, operand is `A` (not memory).                                                 | `false`     |
+    /// | `Imm`    | Immediate                                                               | Operand byte follows the opcode. We return the address of that literal.                    | `false`     |
+    /// | `Zp`     | Zero Page                                                               | 8‑bit address; uses `$00xx`.                                                               | `false`     |
+    /// | `ZpX`    | Zero Page, X-indexed                                                    | `(zp + X) & 0xFF` (wraps within zero page).                                                | `false`     |
+    /// | `ZpY`    | Zero Page, Y-indexed                                                    | `(zp + Y) & 0xFF` (wraps within zero page).                                                | `false`     |
+    /// | `Abs`    | Absolute                                                                | 16‑bit address from the stream (little‑endian).                                            | `false`     |
+    /// | `AbsX`   | Absolute, X-indexed                                                     | `base + X`; sets page‑cross flag if high byte changes.                                     | maybe       |
+    /// | `AbsY`   | Absolute, Y-indexed                                                     | `base + Y`; sets page‑cross flag if high byte changes.                                     | maybe       |
+    /// | `Ind`    | Indirect                                                                | Used by `JMP ($addr)`. Reads 16‑bit pointer, then target via `read16_bug` (wrap bug).      | `false`     |
+    /// | `IndX`   | Indexed Indirect, X (a.k.a. `(zp,X)`)                                   | Add X to zero‑page pointer byte (wrap), then read 16‑bit target from ZP.                   | `false`     |
+    /// | `IndY`   | Indirect Indexed, Y (a.k.a. `(zp),Y`)                                   | Read 16‑bit base from ZP, then add Y; sets page‑cross if high byte changes.                | maybe       |
+    /// | `Rel`    | Relative (branches)                                                     | Returns sign‑extended 8‑bit offset; branch code adds it to PC and sets page‑cross there.   | `false`     |
     fn addr(&mut self, mode: AddrMode) -> (u16, bool) {
         use AddrMode::*;
         match mode {
+            // Implied / Accumulator: no memory operand.
             Imp | Acc => (0, false),
+
+            // Immediate: return the address of the literal byte that follows the opcode.
             Imm => {
                 let a = self.pc;
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
+
+            // Zero Page: fetch 8-bit address and use it as $00xx.
             Zp => {
                 let a = self.read(self.pc) as u16;
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
+
+            // Zero Page,X: add X with wrap in zero page.
             ZpX => {
                 let a = self.read(self.pc).wrapping_add(self.x) as u16;
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
+
+            // Zero Page,Y: add Y with wrap in zero page (used by a few ops like LDX).
             ZpY => {
                 let a = self.read(self.pc).wrapping_add(self.y) as u16;
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
+
+            // Absolute: 16-bit address from the instruction stream (little-endian).
             Abs => {
                 let a = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
                 (a, false)
             }
+
+            // Absolute,X: add X; report page-cross if high byte changes.
             AbsX => {
                 let base = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
                 let a = base.wrapping_add(self.x as u16);
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
+
+            // Absolute,Y: add Y; report page-cross if high byte changes.
             AbsY => {
                 let base = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
                 let a = base.wrapping_add(self.y as u16);
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
+
+            // Indirect (JMP only): follow 16-bit pointer, honoring 6502 wraparound bug at $xxFF.
             Ind => {
                 let ptr = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
                 (self.read16_bug(ptr), false)
             }
+
+            // (zp,X): add X to ZP byte (wrap), then read 16-bit target from zero page.
             IndX => {
                 let zp = self.read(self.pc).wrapping_add(self.x);
                 self.pc = self.pc.wrapping_add(1);
@@ -246,6 +287,8 @@ impl Cpu {
                 let hi = self.read(zp.wrapping_add(1) as u16) as u16;
                 ((hi << 8) | lo, false)
             }
+
+            // (zp),Y: read 16-bit base from ZP, then add Y; report page-cross if high byte changes.
             IndY => {
                 let zp = self.read(self.pc);
                 self.pc = self.pc.wrapping_add(1);
@@ -255,6 +298,8 @@ impl Cpu {
                 let a = base.wrapping_add(self.y as u16);
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
+
+            // Relative: return sign-extended offset; branch logic later adds it to PC and charges cycles.
             Rel => {
                 let off = self.read(self.pc) as i8;
                 self.pc = self.pc.wrapping_add(1);
