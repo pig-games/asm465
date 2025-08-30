@@ -16,7 +16,7 @@
 
     .cpr 4,"Testing: ["
     .ldxy inputLine
-    ldz #1
+    lda #1
     jsr cPrint
     .cpr 4, "]!n"
 

@@ -1,12 +1,15 @@
+DEBUG_      :?= false
+DBG_FILTER_ :?= []
+DBG_TAG_    :?= ""
 
-DEBUG_ :?=false
-DBG_FILTER_ :?=[]
-DBG_TAG_ :?=""
+.if !ULTIMATE64
+  .cerror "Using ultimate64 layout.s but ULTIMATE64 not defined"
+.endif
 
-* = $2001
+* = $0801
     .dsection boot
 
-* = $2020
+* = $0810
 entry
     .dsection init
     .dsection main
@@ -14,10 +17,11 @@ entry
     .dsection util
     .dsection parser
     .align
+
 BasePage
-    .logical $0000
+    .logical $0002
     .dsection bp
-    .cerror * > $100, "Out of BP space"
+    .cerror * > $0100, "Out of BP space"
     .endlogical
 
     .dsection data

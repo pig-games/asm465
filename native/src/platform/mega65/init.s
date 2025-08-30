@@ -39,4 +39,6 @@
     sta ColPtr+2
     lda #$0F
     sta ColPtr+3
+
+    .SetLocation 0,0
 .endsection

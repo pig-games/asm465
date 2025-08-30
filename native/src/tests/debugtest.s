@@ -49,9 +49,10 @@
     .dbg.infoRegDec "y"
     .nl
     .dbg.info "[.dbg.infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post!n{shift-2}] Z=5: "
-    ldz #5
-    .dbg.infoRegDec "z", "pre:", ":post!n"
-
+    .if MEGA65
+        ldz #5
+        .dbg.infoRegDec "z", "pre:", ":post!n"
+    .endif
     .nl
     .dbg.info "[.dbg.infoRegHex] A=1: "
     lda #1
@@ -70,9 +71,11 @@
     .dbg.infoRegHex "y"
     .nl
     .dbg.info "[.dbg.infoRegHex {shift-2}z{shift-2}] Z=$f9: "
-    ldz #$f9
-    .dbg.infoRegHex "z"
-    .nl
+    .if MEGA65
+        ldz #$f9
+        .dbg.infoRegHex "z"
+        .nl
+    .endif
 
     .nl
     .dbg.info "[.dbg.infoCReg 4] A=1: "
@@ -92,10 +95,11 @@
     .dbg.infoCReg 4, "y"
     .nl
     .dbg.info "[.dbg.infoCReg 4, {shift-2}z{shift-2}] Z=5: "
-    ldz #5
-    .dbg.infoCReg 4, "z"
-    .nl
-
+    .if MEGA65
+        ldz #5
+        .dbg.infoCReg 4, "z"
+        .nl
+    .endif
     .dbg.info "[.dbg.warningReg] A=1: "
     lda #1
     .dbg.warningReg

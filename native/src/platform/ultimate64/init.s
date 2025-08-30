@@ -1,42 +1,24 @@
-.include "m65macros.h"
+.include "platformmacros.h"
 
 .section init
-    cli
-    #enable40Mhz
-    #enableVIC4Registers
-    #disableC65ROM
-    #disableCIAandIRQ
+    ; No VIC‑IV setup here; keep it minimal so Mega65/U64 stay parallel.
+    ; Initialize screen/color base pointers and cursor defaults,
+    ; mirroring semantics from the Mega65 side (but 16‑bit).
 
-    ; set 80x50 character
-	lda #80
-	sta vic4.LINESTEPLO
-	lda #80
-	sta vic4.CHRCOUNT
-    lda #50
-    sta vic4.DISPROWS
-
-    ; set 640x400 mode
-    lda vic3.SCRNMODE
-    ora #%10001000
-    sta vic3.SCRNMODE
-
-    #setBasePage BasePage
-
-    sei 
-
-    lda vic4.SCRNPTR1
+    ; Screen base / color base
+    lda #<SCRN_BASE
     sta ScreenPtr
-    lda vic4.SCRNPTR2
+    lda #>SCRN_BASE
     sta ScreenPtr+1
-    lda vic4.SCRNPTR3
-    sta ScreenPtr+2
-    lda vic4.SCRNPTR4
-    sta ScreenPtr+3
-    lda #0
+
+    lda #<COLR_BASE
     sta ColPtr
+    lda #>COLR_BASE
     sta ColPtr+1
-    lda #$f8
-    sta ColPtr+2
-    lda #$0F
-    sta ColPtr+3
+
+    ; default colour: white
+    lda #$01
+    sta PrtColour
+
+    .SetLocation 0,0
 .endsection

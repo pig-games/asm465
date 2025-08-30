@@ -62,7 +62,7 @@ infoCReg .macro col=5, reg="a", pre="", post=""
         .if \pre!=""
             .dbg.infoC \col, \pre
         .endif
-        ldz #\col
+        ldx #\col
         jsr setCPrintC
         .if \post!=""
             .dbg.infoC \col, \post
@@ -83,8 +83,8 @@ infoCRegDec .macro col=5, reg="a", pre="", post=""
             tza
         .default
         .endswitch
-        ldz #\col
-        stz PrtColour
+        ldx #\col
+        stx PrtColour
         .if \pre!=""
             .dbg.infoC \col, \pre
         .endif
@@ -113,14 +113,16 @@ infoCRegHex .macro col=5, reg="a", pre="", post=""
             tza
         .default
         .endswitch
-        ldz #\col
-        stz PrtColour
+        ldx #\col
+        stx PrtColour
         .if \pre!=""
             .dbg.infoC \col, \pre
         .endif
         jsr toHexXY
         txa
+        sty YStore
         jsr cPrintC
+        ldy YStore
         tya
         jsr cPrintC
         .if \post!=""
@@ -148,8 +150,8 @@ info .macro str
 infoCPtr .macro col, ptr
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         phq
-        ldz #\col
-        stz PrtColour
+        ldx #\col
+        stx PrtColour
         .ldxy \ptr
         jsr print
         plq

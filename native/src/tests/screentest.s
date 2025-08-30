@@ -11,13 +11,13 @@
     .SetBGBColors 11, 0 
  
     .cpr 3, "Screen functions tests!n"
-    
+
     ; set location to 4,2
     .SetLocation 4,2
 
     ; setCPrintC
     lda #'a'
-    ldz #4
+    ldx #4
     jsr setCPrintC
 
     ; cPrintC
@@ -28,7 +28,7 @@
     .SetLocation 2, 5
     lda #'c'
     jsr putC
-    
+
     ; sPrint
     .SetLocation 10,4
     jsr sPrint
@@ -39,8 +39,9 @@
     .byte 7
     .null "7 sCPrint"
 
-    .SetLocation 10,30
-    .pr "10,30 prl,!n"
+    .SetLocation 10,8
+    .pr "10,8 prl,!n"
+
     .cpr 3 | CA_BLINK | CA_REV,"3, cpr "
     .pr "pr!n"
     .pr "newline"
@@ -54,7 +55,7 @@
 
     .nl
     .ldxy teststr
-    ldz #1
+    lda #1
     jsr cPrint
     .nl
 

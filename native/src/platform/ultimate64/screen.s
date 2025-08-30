@@ -1,360 +1,234 @@
+; C64/Ultimate64 screen implementation (ported from Mega65 version)
+; - Uses zero-page indirect indexed addressing for screen/color writes
+; - Assumes Ptr and PtrScr/PtrCol live in bp as project expects
+; - Expects ScreenPtr / ColPtr to be initialized by platform init
+
 .include "screen_macros.h"
 .include "utils.h"
 .enc "screen"
 
 ; constants
-
-    CA_BLINK = %0001_0000
-    CA_REV = %0010_0000
-    CA_ULINE = %1000_0000
+CA_BLINK = %0001_0000
+CA_REV   = %0010_0000
+CA_ULINE = %1000_0000
 
 .section bp
-    ScreenPtr       .dword 0
-    ColPtr          .dword 0
-    CurScreenPosPtr .dword 0
-    CurColourPosPtr .dword 0
-    Ptr             .dword 0
-.endsection
-
-.section data
-
-PrtRow      .byte 0
-PrtColumn   .byte 0
-PrtColour   .byte 0
-
+    ScreenPtr       .word 0
+    ColPtr          .word 0
+    CurScreenPosPtr .word 0
+    CurColourPosPtr .word 0
+    Ptr             .word 0
+    AStore          .byte 0
+    XStore          .byte 0
+    YStore          .byte 0
 .endsection
 
 .section screen
 
-    setLowerCase .proc
-        lda #00
-        sta vic4.CHARPTRLO
-        lda #$D8
-        sta vic4.CHARPTRHI
-        lda #$02
-        sta vic4.CHARPTRBN
-        rts
-    .endproc
+; multiply A * 40 -> Ptr (lo/hi). Preserves A.
+mul40 .proc
+    pha
+    sta Ptr
+    lda #0
+    sta Ptr+1          ; save A
 
-    setUpperCase .proc
-        lda #00
-        sta vic4.CHARPTRLO
-        lda #$D0
-        sta vic4.CHARPTRHI
-        lda #$02
-        sta vic4.CHARPTRBN
-        rts
-    .endproc
+    ; A*32
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
 
-    ; X: column
-    ; Y: row
-    setLocation .proc
-        stx PrtColumn
-        lda #0
-        sta math.IN_B4
-        sta math.IN_B3
-        sta math.IN_B2
-        sta math.IN_A4
-        sta math.IN_A3
-        sta math.IN_A2
-        lda #80
-        sta math.IN_A1
-        sty PrtRow
-        sty math.IN_B1
-        clc
-        ldq math.MULTOUT1
-        adq ScreenPtr
-        stq CurScreenPosPtr
-        clc
-        ldq math.MULTOUT1
-        adq ColPtr
-        stq CurColourPosPtr
-        rts
-    .endproc
+    .rdxy Ptr   ; backup Ptr in X/Y
+    ; + A*8
 
-    ; A: character
-    putC .proc
-        .PutC
-        rts
-    .endproc
+    pla
+    sta Ptr
+    lda #0
+    sta Ptr+1
 
-    ; A: character
-    cPutC .proc
-        .PutC
-        lda PrtColour
-        ldz PrtColumn
-        sta [CurColourPosPtr],z
-        rts
-    .endproc
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
+    asl Ptr
+    rol Ptr+1
 
-    ; A: character
-    ; Z: colour
-    setCPutC .proc
-        stz PrtColour
-        jmp cPutC
-    .endproc
+    clc
+    txa
+    adc Ptr
+    sta Ptr
+    tya
+    adc #0
+    sta Ptr+1
+    rts
+.endproc
 
-    ; A: character
-    printC .proc
-        .PutC
-        inc PrtColumn
-        rts
-    .endproc
+setLowerCase .proc
+    rts
+.endproc
 
-    ; A: character
-    cPrintC .proc
-        .PutC
-        lda PrtColour
-        sta [CurColourPosPtr],z
-        inc PrtColumn
-        rts
-    .endproc
+setUpperCase .proc
+    rts
+.endproc
 
-    ; A: character
-    ; Z: colour
-    setCPrintC .proc
-        stz PrtColour
-        .PutC
-        lda PrtColour
-        sta [CurColourPosPtr],z
-        inc PrtColumn
-        rts
-    .endproc
+; X: column
+; Y: row
+; computes CurScreenPosPtr = ScreenPtr + row*40
+; computes CurColourPosPtr = ColPtr + row*40
+setLocation .proc
+    ; store logical cursor
+    stx PrtColumn
+    sty PrtRow
 
-    ; X: str ptr lo
-    ; Y: str ptr hi
-    print .proc
-        .stxy Ptr
-        
-        ldz PrtColumn
-        ldy #0
-        loop
-            lda (Ptr),y
-            beq end
-            cmp #'!'
-            bne noCmd
-            iny
-            lda (Ptr),y
-            cmp #'!'
-            beq noCmd
-            cmp #'n'
-            bne noN
-            phy
-            jsr printNL
-            ply
-            iny
-            ldz #0
-            bra loop
-        noN
-            dey
-            lda (Ptr),y
-        noCmd
-            sta [CurScreenPosPtr],z
-            lda PrtColour
-            sta [CurColourPosPtr],z
-        next
-            inz
-            iny
-        jmp loop
-    end
-        stz PrtColumn
-        rts
-    .endproc
+    ; add 40 * row to CurScreenPosPtr
+    tya
 
-    printSC .proc
-        pha
-        clc
-        adc #48
-        phz
-        jsr printC
-        plz
-        pla
-        rts
-    .endproc
+    jsr mul40               ; Ptr = row*40
 
-    cPrintSC .proc
-        pha
-        clc
-        adc #48
-        phz
-        jsr cPrintC
-        plz
-        pla
-        rts
-    .endproc
+    ; CurScreenPosPtr = ScreenPtr + offset
+    clc
+    lda ScreenPtr
+    adc Ptr
+    sta CurScreenPosPtr
+    lda ScreenPtr+1
+    adc Ptr+1
+    sta CurScreenPosPtr+1
 
-    printBCD24 .proc ; a, x, y
-        pha
-        clc
-        tya
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec6
-        jsr printSC
-    noDec6
-        tya
-        and #$f
-        beq noDec5
-        jsr printSC
-    noDec5
-        txa
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec4
-        jsr printSC
-    noDec4
-        txa
-        and #$f
-        beq noDec3
-        jsr printSC
-    noDec3
-        pla
-        pha
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec2
-        jsr printSC
-    noDec2
-        pla
-        and #$f
-        jsr printSC
+    ; CurColourPosPtr = ColPtr + offset
+    clc
+    lda ColPtr
+    adc Ptr
+    sta CurColourPosPtr
+    lda ColPtr+1
+    adc Ptr+1
+    sta CurColourPosPtr+1
 
-        rts
-    .endproc
+    rts
+.endproc
 
-    cPrintBCD24 .proc ; a, x, y, z
-        pha
-        clc
-        tya
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec6
-        jsr cPrintSC
-    noDec6
-        tya
-        and #$f
-        beq noDec5
-        jsr cPrintSC
-    noDec5
-        txa
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec4
-        jsr cPrintSC
-    noDec4
-        txa
-        and #$f
-        beq noDec3
-        jsr cPrintSC
-    noDec3
-        pla
-        pha
-        lsr
-        lsr
-        lsr
-        lsr
-        beq noDec2
-        jsr cPrintSC
-    noDec2
-        pla
-        and #$f
-        jsr cPrintSC
+; A: character
+cPutC .proc
+    .PutC
 
-        rts
-    .endproc
+    lda PrtColour
+    ldy PrtColumn
+    ; write colour at colour RAM
+    sta (CurColourPosPtr),y
+    rts
+.endproc
 
-    sPrint .proc
-        plx
-        ply
-        ; do actual print
-        
-        .incxy
-        
-        jsr print
+; A: character
+cPrintC .proc
+    .PutC
+    lda PrtColour
+    ldy PrtColumn
+    sta (CurColourPosPtr),y
+    inc PrtColumn
+    rts
+.endproc
 
-        ; calculate new return address
-        tya
-        clc
-        adc Ptr
-        sta Ptr
-        lda #0
-        adc Ptr+1
+; A: character
+; X: colour
+setCPrintC .proc
+    stx PrtColour
+    .PutC
+    lda PrtColour
+    ldy PrtColumn
+    sta (CurColourPosPtr),y
+    inc PrtColumn
+    rts
+.endproc
 
-        ; restore return address
-        pha
-        lda Ptr
-        pha
-        rts
-    .endproc
+; X: str ptr lo
+; Y: str ptr hi
+print .proc
+    .stxy Ptr
 
-    ; X: str ptr lo
-    ; Y: str ptr hi
-    ; Z: colour
-    cPrint .proc
-        .stxy Ptr
-        stz PrtColour
-        jmp print
-    .endproc
+    ldy #0            ; Y = string index
 
-    sCPrint .proc
-        plx
-        ply
-        ; do actual print
+loop
+    sty YStore
+    lda (Ptr),y
+    beq end
+    cmp #'!'
+    bne noCmd
+    iny
+    lda (Ptr),y
+    cmp #'!'
+    beq noCmd
+    cmp #'n'
+    bne noN
+    phy
+    jsr printNL
+    ply
 
-        .incxy
+    iny
+    jmp loop
+noN
+    dey
+    sty YStore
+    lda (Ptr),y
+noCmd
+    ldy PrtColumn
+    sta (CurScreenPosPtr),y
+    lda PrtColour
+    sta (CurColourPosPtr),y
+next
+    inx
+    iny
+    sty PrtColumn
+    ldy YStore
+    iny
+    jmp loop
 
-        .stxy Ptr
-        phy
-        ldy #0
-        lda (Ptr),y
-        taz
-        ply
-        .incxy
-        jsr cPrint
+end
+    rts
+.endproc
 
-        ; calculate new return address
-        tya
-        clc
-        adc Ptr
-        sta Ptr
-        lda #0
-        adc Ptr+1
+printSC .proc
+    pha
+    clc
+    adc #48
+    jsr printC
+    pla
+    rts
+.endproc
 
-        ; restore return address
-        pha
-        lda Ptr
-        pha
-        rts
-    .endproc
+cPrintSC .proc
+    pha
+    clc
+    adc #48
+    jsr cPrintC
+    pla
+    rts
+.endproc
 
-    printNL .proc
-        ldz #0
-        stz PrtColumn
-        clc
-        lda #80
-        ldx #0
-        ldy #0
-        ldz #0
-        adq CurScreenPosPtr
-        stq CurScreenPosPtr
-        clc
-        lda #80
-        ldx #0
-        ldy #0
-        ldz #0
-        adq CurColourPosPtr
-        stq CurColourPosPtr
-        rts
-    .endproc
+; Print a newline: reset cursor to 0,0 and update pointers
+; (also updates current screen/color pointers)
+printNL .proc
+    lda #0
+    sta PrtColumn
+    clc
+    lda #40
+    adc CurScreenPosPtr
+    sta CurScreenPosPtr
+    lda #0
+    adc CurScreenPosPtr+1
+    sta CurScreenPosPtr+1
+    clc
+    lda #40
+    adc CurColourPosPtr
+    sta CurColourPosPtr
+    lda #0
+    adc CurColourPosPtr+1
+    sta CurColourPosPtr+1
+    rts
+.endproc
 
-.endsection ; screen
+.endsection

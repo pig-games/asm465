@@ -2,23 +2,16 @@ SCREENMACROS :?= false
 .if !SCREENMACROS
 SCREENMACROS := true
 
-SetColour .macro colour
-    ldz #\colour
-    stz PrtColour
-.endmacro
+.include "platformdefs.h"
+.include "platformmacros.h"
+.include "gen_screen_macros.h"
 
 ClearScreen .macro colour
-    #SetColour \colour
+    .SetColour \colour
     sta dma.ETRIGINLINE
     .dma.FillJob $0020,   $000800, 4000, true
     .dma.FillJob \colour, $ff80000, 4000, false
     .SetLocation 0,0
-.endmacro
-
-SetLocation .macro col, row
-    ldx #\col
-    ldy #\row
-    jsr setLocation
 .endmacro
 
 SetBGColor .macro col
@@ -31,35 +24,9 @@ SetBColor .macro col
     sta vic4.BORDERCOL
 .endmacro
 
-SetBGBColors .macro bg, b
-    .SetBGColor \bg
-    .SetBColor \b
-.endmacro
-
 PutC .macro
     ldz PrtColumn
     sta [CurScreenPosPtr],z
-.endmacro
-
-nl .macro
-    phq
-    jsr printNL
-    plq
-.endmacro
-
-pr .macro str
-    phq
-    jsr sPrint
-    .null \str
-    plq
-.endmacro
-
-cpr .macro colour, str
-    phq
-    jsr sCPrint
-    .byte \colour
-    .null \str
-    plq
 .endmacro
 
 .endif
