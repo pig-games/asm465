@@ -218,8 +218,7 @@ parseInstruction .proc
         sta ParseBuf,x
         inx
         ; update parse pos
-        tya
-        sta ParsePos
+        sty ParsePos
         ; update line type with instruction flag
         lda ParseBuf
         ora #LT_INST
@@ -294,26 +293,31 @@ searchInstruction .proc
     .ldxy mnemonics
     .stxy Ptr
 
-    ldy ParsePos
-    ldz #0
+    ;ldy ParsePos
+    ;ldz #0
     ldx #0
-
+    stx YStore  ; conveniently setting YStore to 0
 loop
     .dbg.setTag "SIInOut"
+    .dbg.only ldy ParsePos
     .dbg.only lda (InputLinePtr), y
     .dbg.infoReg "a", "input: ", "!n"
-    .dbg.only lda (Ptr), z
+    .dbg.only ldy YStore
+    .dbg.only lda (Ptr),y
+    .dbg.only ldy ParsePos
     .dbg.infoReg "a", "mnem:  ", "!n"
     .dbg.resetTag
     .dbg.setTag "searchInstruction"
 
-    lda (Ptr), z
+    ldy YStore
+    lda (Ptr),y
     beq notFound
-    cmp (InputLinePtr), y
+    ldy ParsePos
+    cmp (InputLinePtr),y
     bcc noMatch
     bne notFound
     iny
-
+    sty ParsePos
     lda (InputLinePtr),y
     cmp #' '
     beq found
@@ -325,8 +329,9 @@ loop
     cmp #>mn_end
     bcs notFound
 +
-    inz
-    cpz #5
+    inc YStore
+    ldy YStore
+    cpy #5
     beq found
 
     bra loop
@@ -339,17 +344,20 @@ noMatch
     adc Ptr+1
     sta Ptr+1
     
-    dez
+    dec YStore
+    ldy YStore
     bmi +
-    lda (Ptr),z
-    dey
+    lda (Ptr),y
+    dec ParsePos
+    ldy ParsePos
     cmp (InputLinePtr),y
     bne +
-    inz
-    iny
+    inc YStore
+    inc ParsePos
     bra loop
 +
-    ldz #0
+    ldy #0
+    sty YStore
     ldy ParsePos
     bra loop
 found

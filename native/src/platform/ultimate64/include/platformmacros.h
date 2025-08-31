@@ -50,10 +50,10 @@ phx .function
 .endfunction
 
 phy .function
-    lda AStore
+    sta AStore
     tya         ; save Y into A
     pha         ; save A
-    sta AStore
+    lda AStore
 .endfunction
 
 adq .function ptr

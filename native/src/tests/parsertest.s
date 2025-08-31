@@ -25,7 +25,9 @@
 
     .nl
     .dbg.info "end of parse!n"
-
+    .if ULTIMATE64
+    jmp *
+    .endif
     .nl
     .nl
     .dbg.Stats
