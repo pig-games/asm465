@@ -70,10 +70,14 @@ mul40 .proc
 .endproc
 
 setLowerCase .proc
+    lda #$17
+    sta vic2.CHARSET
     rts
 .endproc
 
 setUpperCase .proc
+    lda #$15
+    sta vic2.CHARSET
     rts
 .endproc
 
@@ -175,6 +179,7 @@ noN
     sty YStore
     lda (Ptr),y
 noCmd
+    sty YStore
     ldy PrtColumn
     sta (CurScreenPosPtr),y
     lda PrtColour

@@ -11,10 +11,11 @@ CIA2_BASE  = $DD00
 vic2 .namespace
     VIC_BASE   = $D000
     BORDERCOL  = $D020
-    SCREENCOL    = $D021
+    SCREENCOL  = $D021
     BGCOLOR0   = $D021
     RASTER     = $D012
     RASTERHI   = $D011
+    CHARSET    = $D018
 .endnamespace ; vic2
 
 ; KERNAL
