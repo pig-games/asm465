@@ -8,7 +8,7 @@
     .ClearScreen 1
     jsr setLowerCase
 
-    .dbg.info "unittest framework tests!n"
+    .dbg.info "Unittest framework tests!n"
 
     .nl
     .nl

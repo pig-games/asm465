@@ -43,10 +43,10 @@ INCLUDE_FLAGS := -I $(COMMON_INCLUDE) -I $(PLATFORM_INCLUDE)
 OPTS := -C -a -B $(INCLUDE_FLAGS)
 
 ifeq ($(TARGET),mega65)
-  OPTS += --m45gs02 -D MEGA65:=true -D ULTIMATE64:=false -D CROSS465:=false
+  OPTS += --m45gs02 -D MEGA65:=true
 endif
 ifeq ($(TARGET),ultimate64)
-  OPTS += --m6502 -D MEGA65:=false -D ULTIMATE64:=true
+  OPTS += --m6502 -D ULTIMATE64:=true
 endif
 ifeq ($(TARGET),cross465)
   OPTS += --m6502 -D CROSS465:=true
@@ -57,6 +57,7 @@ PLATFORM_SRC := platform/$(TARGET)
 
 # If you add a platform_prelude.s, put it first in CORE_SRC.
 CORE_SRC = \
+	src/include/core.h \
 	src/$(PLATFORM_SRC)/layout.s \
 	src/$(PLATFORM_SRC)/boot.s \
 	src/$(PLATFORM_SRC)/init.s \
@@ -70,11 +71,11 @@ DTEST_SRC = src/tests/debugtest.s
 UTEST_SRC = src/unittest.s src/tests/unittest.s
 
 # ---- Build targets ---------------------------------------------------------
-#parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
-#	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) \
-#		-o $(OUTDIR)/$@ \
-#		--list $(OUTDIR)/$@.lst \
-#		--labels=$(OUTDIR)/$@.lbl
+parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
 
 screentest: $(STEST_SRC) $(CORE_SRC) | $(OUTDIR)
 	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) \
@@ -88,13 +89,13 @@ debugtest: $(DTEST_SRC) $(CORE_SRC) | $(OUTDIR)
 		--list $(OUTDIR)/$@.lst \
 		--labels=$(OUTDIR)/$@.lbl
 
-#unittest: $(UTEST_SRC) $(CORE_SRC) | $(OUTDIR)
-#	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) \
-#		-o $(OUTDIR)/$@ \
-#		--list $(OUTDIR)/$@.lst \
-#		--labels=$(OUTDIR)/$@.lbl
+unittest: $(UTEST_SRC) $(CORE_SRC) | $(OUTDIR)
+	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) \
+		-o $(OUTDIR)/$@ \
+		--list $(OUTDIR)/$@.lst \
+		--labels=$(OUTDIR)/$@.lbl
 
-#all: parsertest screentest debugtest unittest
+all: parsertest screentest debugtest unittest
 
 # ---- Run / Upload (kept separate) -----------------------------------------
 run_%: %
@@ -109,10 +110,10 @@ else ifeq ($(TARGET),ultimate64)
 endif
 
 # Convenience wrappers (build then run)
-#run_ptest:   parsertest   run_parsertest
+run_ptest:   parsertest   run_parsertest
 run_stest:   screentest   run_screentest
 run_dtest:   debugtest    run_debugtest
-#run_utest:   unittest     run_unittest
+run_utest:   unittest     run_unittest
 
 # ---- Housekeeping ----------------------------------------------------------
 clean:

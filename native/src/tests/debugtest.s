@@ -48,8 +48,8 @@
     ldy #4
     .dbg.infoRegDec "y"
     .nl
-    .dbg.info "[.dbg.infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post!n{shift-2}] Z=5: "
     .if MEGA65
+        .dbg.info "[.dbg.infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post!n{shift-2}] Z=5: "
         ldz #5
         .dbg.infoRegDec "z", "pre:", ":post!n"
     .endif
@@ -70,8 +70,8 @@
     ldy #$a0
     .dbg.infoRegHex "y"
     .nl
-    .dbg.info "[.dbg.infoRegHex {shift-2}z{shift-2}] Z=$f9: "
     .if MEGA65
+        .dbg.info "[.dbg.infoRegHex {shift-2}z{shift-2}] Z=$f9: "
         ldz #$f9
         .dbg.infoRegHex "z"
         .nl
@@ -94,8 +94,8 @@
     ldy #4
     .dbg.infoCReg 4, "y"
     .nl
-    .dbg.info "[.dbg.infoCReg 4, {shift-2}z{shift-2}] Z=5: "
     .if MEGA65
+        .dbg.info "[.dbg.infoCReg 4, {shift-2}z{shift-2}] Z=5: "
         ldz #5
         .dbg.infoCReg 4, "z"
         .nl
