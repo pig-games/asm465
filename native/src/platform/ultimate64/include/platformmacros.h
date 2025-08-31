@@ -5,6 +5,10 @@ PLATFORMMACROS := true
 
 .include "platformdefs.h"
 
+bra .function label
+    jmp label
+.endfunction
+
 ; ---- push/pop “quad” (A,X,Y only on 6502) ---------------------------------
 phq .function
     sta AStore

@@ -232,16 +232,18 @@ parseInstruction .proc
         sta Ptr
         lda #0
         adc Ptr
-        ldz #0
-        lda (Ptr),z
+        sty YStore
+        ldy #0
+        lda (Ptr),y
         .dbg.infoRegHex "a", "Opcode base: $", "!n"
         sta ParseBuf,x ; store instruction
         inx
         stx ParseBufPos
 
         ; calc ptr in addr mode table
-        inz
-        lda (Ptr),z
+        iny
+        lda (Ptr),y
+        ldy YStore
         .dbg.infoRegDec "a", "Addr mode offset: ", "!n"
         phx
         phy
@@ -253,9 +255,9 @@ parseInstruction .proc
         tay
         .stxy Ptr
         plx
+        ldy #0
+        lda (Ptr),y
         ply
-        ldz #0
-        lda (Ptr),z
         .dbg.infoRegDec "a", "First addr mode: ", "!n"
 
         ; parse 

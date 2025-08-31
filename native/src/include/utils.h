@@ -2,7 +2,6 @@ UTILS :?= false
 .if !UTILS
 UTILS := true
 
-
 setJSRAddress .macro addr_jsr, addr_calc
         lda #<\addr_calc
         sta \addr_jsr + 1
