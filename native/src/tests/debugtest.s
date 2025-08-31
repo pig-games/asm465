@@ -11,9 +11,9 @@
     .dbg.info "Debug functions tests!n"
     .nl
 
+    .dbg.info "[.dbg.info {shift-2}...!!n{shift-2}]!n"
     .dbg.info "[.dbg.info {shift-2}...{shift-2}], "
     .dbg.infoC 4, "[.dbg.InfoC 4, {shift-2}...{shift-2}], "
-    .dbg.info "[.dbg.info {shift-2}...!!n{shift-2}]!n"
 
     .dbg.info "[.dbg.info {shift-2}...!!n{shift-2}] before proc!n"
     jsr inside
