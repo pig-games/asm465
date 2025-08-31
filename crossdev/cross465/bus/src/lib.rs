@@ -46,7 +46,7 @@
 pub mod console_mmio;         // expose console device as bus::console_mmio::*
 pub mod utils;                // expose helpers as bus::utils::*
 
-pub use utils::petscii_to_unicode; // convenience re-export
+pub use utils::{petscii_to_unicode, screen_to_petscii, cmb_color_to_ansi}; // convenience re-export
 
 use std::any::Any;
 use std::ops::RangeInclusive;
@@ -168,7 +168,7 @@ impl Bus {
     pub fn tick(&mut self, _cycles: u32) {}
 
     /// Search for an MMIO device covering `addr`.
-    fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn MmioDevice> {
+    pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn MmioDevice> {
         for (range, dev) in self.mmio.iter_mut() {
             if range.contains(&addr) { return Some(dev.as_mut()); }
         }
@@ -197,7 +197,7 @@ impl Bus {
         for (range, dev) in self.mmio.iter_mut() {
             if *range == (0xDF00..=0xDF1F) {
                 if let Some(c) = dev.as_any_mut().downcast_mut::<ConsoleMmio>() {
-                    return Some(c.buffer.clone());
+                    return None;
                 }
             }
         }

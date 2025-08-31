@@ -2,7 +2,7 @@ use bus::Bus;
 use clap::Parser;
 use core6502::Cpu;
 use std::{fs, path::PathBuf};
-
+use bus::console_mmio::ConsoleMmio;
 #[derive(Parser, Debug)]
 struct Args {
     prg: PathBuf,
@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     for _ in 0..5 {
         let pc = cpu.pc;
         let op = cpu.bus.read(pc);
-        println!(
+/*        println!(
             "PC={:04X} OP={:02X} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X}",
             pc,
             op,
@@ -42,11 +42,13 @@ fn main() -> anyhow::Result<()> {
             cpu.y,
             cpu.p.bits(),
             cpu.sp
-        );
+        );*/
         cpu.step();
     }
+    cpu.run_for(5_000_000u64);
 
-    cpu.run_for(args.max_cycles);
-    println!("Done cycles={}", cpu.cycles);
+    //let con = cpu.bus.find_mmio(0xDF00).unwrap().as_any_mut().downcast_mut::<ConsoleMmio>();
+
+    println!("Done cycles={}, x={}", cpu.cycles, cpu.bus.read(0xDF08));
     Ok(())
 }

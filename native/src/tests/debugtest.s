@@ -9,7 +9,6 @@
     jsr setLowerCase
 
     .dbg.info "Debug functions tests!n"
-    .nl
 
     .dbg.info "[.dbg.info {shift-2}...!!n{shift-2}]!n"
     .dbg.info "[.dbg.info {shift-2}...{shift-2}], "
@@ -31,7 +30,6 @@
     .dbg.errorPtr ErrorPtrStr
     .dbg.errorPtr ErrorPtrLnStr
 
-    .nl
     .dbg.info "[.dbg.infoRegDec] A=1: "
     lda #1
     .dbg.infoRegDec
@@ -49,11 +47,10 @@
     .dbg.infoRegDec "y"
     .nl
     .if MEGA65
-        .dbg.info "[.dbg.infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post!n{shift-2}] Z=5: "
+        .dbg.info "[.dbg.infoRegDec {shift-2}z{shift-2}, {shift-2}pre:{shift-2}, {shift-2}:post{shift-2}] Z=5: "
         ldz #5
         .dbg.infoRegDec "z", "pre:", ":post!n"
     .endif
-    .nl
     .dbg.info "[.dbg.infoRegHex] A=1: "
     lda #1
     .dbg.infoRegHex
@@ -77,7 +74,6 @@
         .nl
     .endif
 
-    .nl
     .dbg.info "[.dbg.infoCReg 4] A=1: "
     lda #1
     .dbg.infoCReg 4
@@ -95,7 +91,7 @@
     .dbg.infoCReg 4, "y"
     .nl
     .if MEGA65
-        .dbg.info "[.dbg.infoCReg 4, {shift-2}z{shift-2}] Z=5: "
+    .dbg.info "[.dbg.infoCReg 4, {shift-2}z{shift-2}] Z=5: "
         ldz #5
         .dbg.infoCReg 4, "z"
         .nl
