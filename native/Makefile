@@ -107,6 +107,8 @@ else ifeq ($(TARGET),ultimate64)
 		-H "Expect:" \
 		-H "Content-Length: $(shell stat -f%z $(OUTDIR)/$*)" \
 		--data-binary @$(OUTDIR)/$*
+else ifeq ($(TARGET),cross465)
+	cargo run --manifest-path ../crossdev/cross465/runner/Cargo.toml -- $(OUTDIR)/$*
 endif
 
 # Convenience wrappers (build then run)

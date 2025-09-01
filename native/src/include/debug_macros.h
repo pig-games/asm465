@@ -244,7 +244,7 @@ errorPtr .macro ptr
 .endmacro
 
 errorReg .macro reg="a", pre="", post=""
-    .dbg.infoCReg 8, \reg, \pre, \post
+    .dbg.infoCReg 9, \reg, \pre, \post
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
     .endif

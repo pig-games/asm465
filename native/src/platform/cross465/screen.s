@@ -91,12 +91,20 @@ setLocation .proc
 
 ; A: character
 cPutC .proc
+    sty YStore
+    ldy PrtColour
+    sty cross465.SETCOL
+    ldy YStore
     .PutC
     rts
 .endproc
 
 ; A: character
 cPrintC .proc
+    sty YStore
+    ldy PrtColour
+    sty cross465.SETCOL
+    ldy YStore
     .PutC
     rts
 .endproc
@@ -141,6 +149,9 @@ noN
     lda (Ptr),y
 noCmd
     sty YStore
+    ldy PrtColour
+    sty cross465.SETCOL
+    ldy YStore
     .PutC
 next
     inx
