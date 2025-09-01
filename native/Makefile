@@ -121,4 +121,37 @@ run_utest:   unittest     run_unittest
 clean:
 	@rm -rf build/*
 
-.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest
+# ===== Build/Run Matrix ======================================================
+BUILD_TARGETS ?= $(VALID_TARGETS)
+PROGRAMS ?= parsertest screentest debugtest unittest
+
+.PHONY: matrix_build
+matrix_build:
+	@echo ">> Building [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
+	@set -e; \
+	for T in $(BUILD_TARGETS); do \
+		echo "   - Target $$T"; \
+		for P in $(PROGRAMS); do \
+			$(MAKE) --no-print-directory TARGET=$$T $$P; \
+		done; \
+	done
+
+.PHONY: matrix_run
+matrix_run:
+	@echo ">> Building+Running [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
+	@set -e; \
+	for T in $(BUILD_TARGETS); do \
+		echo "   - Target $$T"; \
+		for P in $(PROGRAMS); do \
+			$(MAKE) --no-print-directory TARGET=$$T $$P; \
+			$(MAKE) --no-print-directory TARGET=$$T run_$$P; \
+		echo; \
+			if [ -z "$$NOPAUSE" ]; then \
+				read -p "Press [Enter] to continue..." dummy; \
+			fi; \
+		done; \
+	done
+
+ci: matrix_build matrix_run
+
+.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest matrix_build matrix_run ci
