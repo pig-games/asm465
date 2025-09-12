@@ -50,6 +50,7 @@ pub use utils::{petscii_to_unicode, screen_to_petscii, cmb_color_to_ansi}; // co
 
 use std::any::Any;
 use std::ops::RangeInclusive;
+use std::sync::{Arc, Mutex};
 
 use console_mmio::ConsoleMmio;
 
@@ -126,15 +127,16 @@ impl dyn MmioDevice {
 /// Reads/writes to addresses inside a mapped MMIO range are delegated to that device.
 /// Everything else goes to RAM.
 pub struct Bus {
-    ram: Memory,
+    ram: Arc<Mutex<Memory>>,
     mmio: Vec<(RangeInclusive<u16>, Box<dyn MmioDevice>)>,
 }
 
 impl Bus {
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
     pub fn new() -> Self {
-        let mut bus = Self { ram: Memory::new(), mmio: Vec::new() };
-        bus.map_mmio(0xDF00..=0xDF1F, Box::new(ConsoleMmio::new()));
+        let ram = Arc::new(Mutex::new(Memory::new()));
+        let mut bus = Self { ram: ram.clone(), mmio: Vec::new() };
+        bus.map_mmio(0xDF00..=0xDF1F, Box::new(ConsoleMmio::new(ram.clone())));
         bus
     }
 
@@ -144,7 +146,10 @@ impl Bus {
     }
 
     /// Load a contiguous slice into RAM starting at `at`.
-    pub fn load(&mut self, at: u16, bytes: &[u8]) { self.ram.load(at, bytes); }
+    pub fn load(&mut self, at: u16, bytes: &[u8]) { 
+        let mut mem = self.ram.lock().unwrap();
+        mem.load(at, bytes);
+    }
 
     /// Set the reset vector (`$FFFC/$FFFD`) to `addr`.
     pub fn set_reset_vector(&mut self, addr: u16) {
@@ -155,13 +160,15 @@ impl Bus {
     /// Read a byte from the bus (MMIO devices intercept their ranges).
     pub fn read(&mut self, addr: u16) -> u8 {
         if let Some(dev) = self.find_mmio(addr) { return dev.read(addr); }
-        self.ram.read(addr)
+        let mem = self.ram.lock().unwrap();
+        mem.read(addr)
     }
 
     /// Write a byte to the bus (MMIO devices intercept their ranges).
     pub fn write(&mut self, addr: u16, value: u8) {
         if let Some(dev) = self.find_mmio(addr) { dev.write(addr, value); return; }
-        self.ram.write(addr, value);
+        let mut mem = self.ram.lock().unwrap();
+        mem.write(addr, value);
     }
 
     /// Optional timing hook (no-op). Can be overridden to simulate cycles.
@@ -175,8 +182,8 @@ impl Bus {
         None
     }
 
-    /// Mutable access to the underlying RAM.
-    pub fn mem_mut(&mut self) -> &mut Memory { &mut self.ram }
+    /// Mutable access to the underlying RAM (returns a lock guard).
+    pub fn mem_mut(&self) -> std::sync::MutexGuard<'_, Memory> { self.ram.lock().unwrap() }
 
     // ===== Helpers for tests / host integration =====
 
@@ -197,6 +204,8 @@ impl Bus {
         for (range, dev) in self.mmio.iter_mut() {
             if *range == (0xDF00..=0xDF1F) {
                 if let Some(c) = dev.as_any_mut().downcast_mut::<ConsoleMmio>() {
+                    // ConsoleMmio currently doesn't keep a separate buffer string;
+                    // return None to indicate "no buffer available".
                     return None;
                 }
             }

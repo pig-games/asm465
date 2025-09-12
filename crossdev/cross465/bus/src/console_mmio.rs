@@ -18,12 +18,12 @@ use console::Term;
 use std::io::Write;
 use console::Color;
 use console::style;
+use crate::Memory;
+use std::sync::{Arc, Mutex};
+
 /// Console MMIO device for host-side text output.
-///
-/// The console mirrors to `stdout` **and** stores everything in an internal
-/// `buffer` so you can assert on it in tests via
-/// [`Bus::console_buffer`](crate::Bus::console_buffer).
 pub struct ConsoleMmio {
+    ram: Arc<Mutex<Memory>>,
     /// Accumulates printed output for inspection (tests, tooling, etc.).
     pub term: Term,
     /// If `true`, interpret bytes using a PETSCII‑ish mapping; otherwise a
@@ -32,15 +32,18 @@ pub struct ConsoleMmio {
     pub x: u8,
     pub y: u8,
     pub color: u8,
-    pub bg_color: u8
+    pub bg_color: u8,
+    pub lptr: u8,
+    pub hptr: u8,
+    pub plength: u8
 }
 
 impl ConsoleMmio {
     /// Create a new console device with an empty buffer and ASCII‑ish mode.
-    pub fn new() -> Self {
+    pub fn new(ram: Arc<Mutex<Memory>>) -> Self {
         let term = Term::stdout();
         term.style().force_styling(true);
-        Self { term: term, petscii_mode: true, x:0, y:0, color:7, bg_color:0 }
+        Self { ram, term: term, petscii_mode: true, x:0, y:0, color:7, bg_color:0, lptr:0, hptr:0, plength:0 }
     }
 
     /// Print a single character byte according to the current mode.
@@ -59,23 +62,16 @@ impl ConsoleMmio {
             }
         };
         write!(&self.term, "{}", &format!("{}", style(ch).fg(cmb_color_to_ansi(self.color)).bg(cmb_color_to_ansi(self.bg_color)))).unwrap();
-        //self.term.write(style(&[ch as u8]).fg(self.color)).unwrap();
-        //print!("{ch}");
-        //self.buffer.push(ch);
     }
 
     /// Print a newline (also pushes '\n' to the buffer).
     fn newline(&mut self) {
-        //println!();
-        //self.buffer.push('\n');
         self.term.write_line("").unwrap();
     }
 
     /// Print a byte as two hexadecimal digits (debugging helper).
     fn push_hex(&mut self, b: u8) {
         let s = format!("{b:02X}");
-        //print!("{s}");
-        //self.buffer.push_str(&s);
         self.term.write(&s.as_bytes()).unwrap();
     }
 
@@ -103,19 +99,70 @@ impl ConsoleMmio {
     pub fn set_bg_color(&mut self, b:u8) {
         self.bg_color = b;
     }
+
+    pub fn set_lptr(&mut self, b:u8) {
+        self.lptr = b;
+    }
+
+    pub fn set_hptr(&mut self, b:u8) {
+        self.hptr = b;
+    }
+
+    /// Read a NUL-terminated string from RAM at addr (u16) and print it.
+    pub fn print(&mut self, high: u8) {
+        // Compose 16-bit pointer from high/low registers
+        self.set_hptr(high);
+        let mut addr = (((self.hptr as u16) << 8) | (self.lptr as u16)) as u16;
+        let mut length = addr;
+        loop {
+            // limit RAM lock scope so we don't hold an immutable borrow across
+            // the mutable self.push_char(...) call
+            let b = {
+                let mem = self.ram.lock().unwrap();
+                mem.read(addr)
+            };
+            if b == 0 {
+                break;
+            }
+            match petscii_to_unicode(screen_to_petscii(b)) {
+                '!' => {
+                    addr = addr.wrapping_add(1);
+                    let c = {
+                        let mem = self.ram.lock().unwrap();
+                        mem.read(addr)
+                    };
+                    match petscii_to_unicode(screen_to_petscii(c)) {
+                        'n' => self.newline(),
+                        _ => self.push_char(c)
+                    }
+                }
+                _ => self.push_char(b)
+            }
+            addr = addr.wrapping_add(1);
+        }
+        self.set_lptr((addr & 0x00FF) as u8);
+        self.set_hptr((addr >> 8) as u8);
+        self.plength = ((addr - length) as u8);
+        //println!("length: {}", self.plength);
+    }
 }
 
 impl MmioDevice for ConsoleMmio {
     /// Returns 0 for all addresses; the registers are write‑only in this device.
     fn read(&mut self, addr: u16) -> u8 {
-        match addr & 0x001F {
+        let val = match addr & 0x001F {
             0x00 | 0x01 | 0x02 => 0, // write-only registers
             0x04 => self.x,
             0x05 => self.y,
             0x07 => self.color,
             0x08 => self.bg_color,
+            0x09 => self.lptr,
+            0x0a => self.hptr,
+            0x0b => self.plength,
             _ => 0,
-        }
+        };
+        //println!("ConsoleMmio: read {:#06x} => {}", addr, val);
+        val
     }
 
     /// Dispatch writes to the appropriate “register”.
@@ -130,6 +177,9 @@ impl MmioDevice for ConsoleMmio {
             0x06 => self.set_location(),
             0x07 => self.set_color(value),
             0x08 => self.set_bg_color(value),
+            0x09 => self.set_lptr(value),
+            0x0a => self.set_hptr(value),
+            0x0b => self.print(value),  // only requires previous call to set_lptr(val), the passed value is the high ptr for the text to be printed.
             _ => { /* reserved for future features (cursor, color, clear, etc.) */ }
         }
     }
