@@ -149,7 +149,6 @@
     ; Y: str ptr hi
     ; A: colour
     cPrint .proc
-        .stxy Ptr
         sta PrtColour
         jmp print
     .endproc

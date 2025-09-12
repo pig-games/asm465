@@ -14,6 +14,9 @@ cross465 .namespace
     SETLOC      = $DF06  ;        0x06 => self.set_location(),
     SETCOL      = $DF07  ;        0x07 => self.set_color(value),
     SETBGCOL    = $DF08  ;        0x08 => self.set_bg_color(value),
+    SETLPTR     = $DF09  ;        0x09 => self.set_lptr(value),
+    SETHPTR     = $DF0A  ;        0x0A => self.set_hptr(value),
+    PRINT       = $DF0B  ;        0x0B => self.print(value),
 .endnamespace ; cross465
 
 

@@ -122,45 +122,13 @@ setCPrintC .proc
 ; Y: str ptr hi
 print .proc
     .stxy Ptr
-
-    ldy #0            ; Y = string index
-
-loop
-    sty YStore
-    lda (Ptr),y
-    beq end
-    cmp #'!'
-    bne noCmd
-    iny
-    lda (Ptr),y
-    cmp #'!'
-    beq noCmd
-    cmp #'n'
-    bne noN
-    phy
-    jsr printNL
-    ply
-
-    iny
-    jmp loop
-noN
-    dey
-    sty YStore
-    lda (Ptr),y
-noCmd
     sty YStore
     ldy PrtColour
     sty cross465.SETCOL
     ldy YStore
-    .PutC
-next
-    inx
-    iny
-    sty PrtColumn
-    ldy YStore
-    iny
-    jmp loop
-end
+    stx cross465.SETLPTR
+    sty cross465.PRINT
+    ldy cross465.PRINT
     rts
 .endproc
 

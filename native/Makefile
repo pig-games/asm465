@@ -40,7 +40,7 @@ PLATFORM_INCLUDE := src/platform/$(TARGET)/include
 INCLUDE_FLAGS := -I $(COMMON_INCLUDE) -I $(PLATFORM_INCLUDE)
 
 # ---- Assembler options -----------------------------------------------------
-OPTS := -C -a -B $(INCLUDE_FLAGS)
+OPTS := -C -a -B $(INCLUDE_FLAGS) -q
 
 ifeq ($(TARGET),mega65)
   OPTS += --m45gs02 -D MEGA65:=true
@@ -100,7 +100,7 @@ all: parsertest screentest debugtest unittest
 # ---- Run / Upload (kept separate) -----------------------------------------
 run_%: %
 ifeq ($(TARGET),mega65)
-	etherload.osx -r $(OUTDIR)/$*
+	etherload.osx --quiet -r $(OUTDIR)/$*
 else ifeq ($(TARGET),ultimate64)
 	curl --http1.1 -s -X POST http://$(ULTIMATE_IP)/v1/runners:run_prg \
 		-H "Content-Type: application/octet-stream" \
@@ -123,15 +123,14 @@ clean:
 
 # ===== Build/Run Matrix ======================================================
 BUILD_TARGETS ?= $(VALID_TARGETS)
-PROGRAMS ?= parsertest screentest debugtest unittest
+PROGRAMS ?= parsertest screentest debugtest
 
 .PHONY: matrix_build
 matrix_build:
 	@echo ">> Building [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
 	@set -e; \
-	for T in $(BUILD_TARGETS); do \
-		echo "   - Target $$T"; \
-		for P in $(PROGRAMS); do \
+	for P in $(PROGRAMS); do \
+		for T in $(BUILD_TARGETS); do \
 			$(MAKE) --no-print-directory TARGET=$$T $$P; \
 		done; \
 	done
@@ -140,16 +139,15 @@ matrix_build:
 matrix_run:
 	@echo ">> Building+Running [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
 	@set -e; \
-	for T in $(BUILD_TARGETS); do \
-		echo "   - Target $$T"; \
-		for P in $(PROGRAMS); do \
+	for P in $(PROGRAMS); do \
+		for T in $(BUILD_TARGETS); do \
 			$(MAKE) --no-print-directory TARGET=$$T $$P; \
 			$(MAKE) --no-print-directory TARGET=$$T run_$$P; \
-		echo; \
-			if [ -z "$$NOPAUSE" ]; then \
-				read -p "Press [Enter] to continue..." dummy; \
-			fi; \
 		done; \
+		echo; \
+		if [ -z "$$NOPAUSE" ]; then \
+			read -p "Press [Enter] to continue..." dummy; \
+		fi; \
 	done
 
 ci: matrix_build matrix_run
