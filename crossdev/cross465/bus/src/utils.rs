@@ -20,8 +20,8 @@ pub fn petscii_to_unicode(b: u8) -> char {
         0x41..=0x5A => (b + 0x20) as char,
         0xc1..=0xdA => (b - 0x80) as char,
         0x5c => 0xa3 as char, // £,
-        0x5e => '\u{2191}', // ↑
-        0x5f => '\u{2190}', // ←
+        0x5e => '\u{2191}',   // ↑
+        0x5f => '\u{2190}',   // ←
         _ => '=',
     }
 }
@@ -48,15 +48,14 @@ pub fn cmb_color_to_ansi(c: u8) -> Color {
         5 => Color::Green,
         6 => Color::Blue,
         7 => Color::Yellow,
-        8 => Color::Color256(3), // Orange
-        9 => Color::Color256(88), // Brown
-        10 => Color::Color256(9), // Light red
+        8 => Color::Color256(3),   // Orange
+        9 => Color::Color256(88),  // Brown
+        10 => Color::Color256(9),  // Light red
         11 => Color::Color256(14), // Light cyan
         12 => Color::Color256(13), // Light magenta
         13 => Color::Color256(10), // Light green
         14 => Color::Color256(33), // Light blue
-        15 => Color::Color256(7), // Light gray
-        _ => Color::White // unreachable
+        15 => Color::Color256(7),  // Light gray
+        _ => Color::White,         // unreachable
     }
 }
-

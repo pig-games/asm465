@@ -1,8 +1,8 @@
+use bus::console_mmio::ConsoleMmio;
 use bus::Bus;
 use clap::Parser;
 use core6502::Cpu;
 use std::{fs, path::PathBuf};
-use bus::console_mmio::ConsoleMmio;
 #[derive(Parser, Debug)]
 struct Args {
     prg: PathBuf,

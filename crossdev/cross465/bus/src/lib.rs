@@ -2,7 +2,7 @@
 //!
 //! This module implements the system bus for a 6502-based virtual machine.
 //! It contains:
-//! 
+//!
 //! * [`Memory`] — a 64 KB RAM abstraction.
 //! * [`MmioDevice`] — a trait for memory-mapped I/O peripherals.
 //! * [`Bus`] — the actual 6502 bus, with RAM and pluggable MMIO devices.
@@ -43,10 +43,10 @@
 //! bus.write(0xDF01, 0); // newline
 //! ```
 
-pub mod console_mmio;         // expose console device as bus::console_mmio::*
-pub mod utils;                // expose helpers as bus::utils::*
+pub mod console_mmio; // expose console device as bus::console_mmio::*
+pub mod utils; // expose helpers as bus::utils::*
 
-pub use utils::{petscii_to_unicode, screen_to_petscii, cmb_color_to_ansi}; // convenience re-export
+pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii}; // convenience re-export
 
 use std::any::Any;
 use std::ops::RangeInclusive;
@@ -68,7 +68,9 @@ pub struct Memory {
 
 impl Memory {
     /// Create a new zero-initialized memory.
-    pub fn new() -> Self { Self { data: [0; 0x10000] } }
+    pub fn new() -> Self {
+        Self { data: [0; 0x10000] }
+    }
 
     /// Load a contiguous slice of bytes into memory starting at `start`.
     ///
@@ -84,15 +86,21 @@ impl Memory {
 
     /// Read a byte from memory at `addr`.
     #[inline]
-    pub fn read(&self, addr: u16) -> u8 { self.data[addr as usize] }
+    pub fn read(&self, addr: u16) -> u8 {
+        self.data[addr as usize]
+    }
 
     /// Write a byte to memory at `addr`.
     #[inline]
-    pub fn write(&mut self, addr: u16, val: u8) { self.data[addr as usize] = val; }
+    pub fn write(&mut self, addr: u16, val: u8) {
+        self.data[addr as usize] = val;
+    }
 }
 
 impl Default for Memory {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Trait for memory-mapped I/O devices.
@@ -113,9 +121,17 @@ pub trait MmioDevice: Any + Send {
 }
 
 impl dyn MmioDevice {
+    /// Downcast helper for `&dyn MmioDevice`.
+    #[inline]
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     /// Downcast helper for `&mut dyn MmioDevice`.
     #[inline]
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    pub fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 /// The main 6502 system bus: RAM plus pluggable MMIO devices.
@@ -135,7 +151,10 @@ impl Bus {
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
     pub fn new() -> Self {
         let ram = Arc::new(Mutex::new(Memory::new()));
-        let mut bus = Self { ram: ram.clone(), mmio: Vec::new() };
+        let mut bus = Self {
+            ram: ram.clone(),
+            mmio: Vec::new(),
+        };
         bus.map_mmio(0xDF00..=0xDF1F, Box::new(ConsoleMmio::new(ram.clone())));
         bus
     }
@@ -146,7 +165,7 @@ impl Bus {
     }
 
     /// Load a contiguous slice into RAM starting at `at`.
-    pub fn load(&mut self, at: u16, bytes: &[u8]) { 
+    pub fn load(&mut self, at: u16, bytes: &[u8]) {
         let mut mem = self.ram.lock().unwrap();
         mem.load(at, bytes);
     }
@@ -159,14 +178,19 @@ impl Bus {
 
     /// Read a byte from the bus (MMIO devices intercept their ranges).
     pub fn read(&mut self, addr: u16) -> u8 {
-        if let Some(dev) = self.find_mmio(addr) { return dev.read(addr); }
+        if let Some(dev) = self.find_mmio(addr) {
+            return dev.read(addr);
+        }
         let mem = self.ram.lock().unwrap();
         mem.read(addr)
     }
 
     /// Write a byte to the bus (MMIO devices intercept their ranges).
     pub fn write(&mut self, addr: u16, value: u8) {
-        if let Some(dev) = self.find_mmio(addr) { dev.write(addr, value); return; }
+        if let Some(dev) = self.find_mmio(addr) {
+            dev.write(addr, value);
+            return;
+        }
         let mut mem = self.ram.lock().unwrap();
         mem.write(addr, value);
     }
@@ -177,13 +201,17 @@ impl Bus {
     /// Search for an MMIO device covering `addr`.
     pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn MmioDevice> {
         for (range, dev) in self.mmio.iter_mut() {
-            if range.contains(&addr) { return Some(dev.as_mut()); }
+            if range.contains(&addr) {
+                return Some(dev.as_mut());
+            }
         }
         None
     }
 
     /// Mutable access to the underlying RAM (returns a lock guard).
-    pub fn mem_mut(&self) -> std::sync::MutexGuard<'_, Memory> { self.ram.lock().unwrap() }
+    pub fn mem_mut(&self) -> std::sync::MutexGuard<'_, Memory> {
+        self.ram.lock().unwrap()
+    }
 
     // ===== Helpers for tests / host integration =====
 
@@ -199,18 +227,22 @@ impl Bus {
         self
     }
 
-    /// Read back the console buffer (if present).
-    pub fn console_buffer(&mut self) -> Option<String> {
-        for (range, dev) in self.mmio.iter_mut() {
-            if *range == (0xDF00..=0xDF1F) {
-                if let Some(c) = dev.as_any_mut().downcast_mut::<ConsoleMmio>() {
-                    // ConsoleMmio currently doesn't keep a separate buffer string;
-                    // return None to indicate "no buffer available".
-                    return None;
+    /// Expose the console device's shared output buffer.
+    pub fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
+        for (range, dev) in self.mmio.iter() {
+            if range.contains(&0xDF00) {
+                if let Some(c) = dev.as_any().downcast_ref::<ConsoleMmio>() {
+                    return Some(c.output());
                 }
             }
         }
         None
+    }
+
+    /// Read back the console buffer (if present) as a snapshot string.
+    pub fn console_buffer(&self) -> Option<String> {
+        self.console_output_handle()
+            .and_then(|handle| handle.lock().ok().map(|guard| guard.to_plain_string()))
     }
 
     /// Clear the console buffer (if present).
