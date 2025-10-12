@@ -28,6 +28,8 @@ CROSS465_PORT ?= 7465
 CROSS465_WAIT ?= 2
 CROSS465_MAX_CYCLES   ?= 5000000
 CROSS465_HOST ?= 127.0.0.1
+CROSS465_WS_HOST ?= 127.0.0.1
+CROSS465_WS_PORT ?= 8800
 CROSS465_RETRIES ?= 10
 CROSS465_DELAY ?= 1
 ASM465_SERVICE_PID_FILE ?= build/cross465/asm465_service.pid
@@ -37,22 +39,22 @@ define ENSURE_ASM465_SERVICE
 	@if [ "$(CROSS465_HOST)" = "127.0.0.1" ] || [ "$(CROSS465_HOST)" = "localhost" ] || [ "$(CROSS465_HOST)" = "0.0.0.0" ] || [ "$(CROSS465_HOST)" = "::1" ]; then \
 		if [ ! -f $(ASM465_SERVICE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_SERVICE_PID_FILE)) 2>/dev/null; then \
 			mkdir -p $$(dirname $(ASM465_SERVICE_PID_FILE)); \
-			echo ">> Starting asm465 service on $(CROSS465_HOST):$(CROSS465_PORT)"; \
-			nohup cargo run --manifest-path ../crossdev/asm465/Cargo.toml -- --service-port $(CROSS465_PORT) --service-host $(CROSS465_HOST) --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_SERVICE_LOG) 2>&1 & \
+			echo ">> Starting asm465 bridge on tcp $(CROSS465_HOST):$(CROSS465_PORT) (ws $(CROSS465_WS_HOST):$(CROSS465_WS_PORT))"; \
+			nohup cargo run --manifest-path ../crossdev/asm465-server/Cargo.toml -- --tcp-host $(CROSS465_HOST) --tcp-port $(CROSS465_PORT) --ws-host $(CROSS465_WS_HOST) --ws-port $(CROSS465_WS_PORT) >$(ASM465_SERVICE_LOG) 2>&1 & \
 			echo $$! > $(ASM465_SERVICE_PID_FILE); \
 		fi; \
 	fi; \
-    if ! $(PYTHON) tools/wait_for_port.py --host "$(CROSS465_HOST)" --port "$(CROSS465_PORT)" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
-        echo 'ERROR: asm465 service did not become ready' >&2; \
-        if [ "$(CROSS465_HOST)" = "127.0.0.1" ] || [ "$(CROSS465_HOST)" = "localhost" ] || [ "$(CROSS465_HOST)" = "0.0.0.0" ] || [ "$(CROSS465_HOST)" = "::1" ]; then \
-            if [ -f $(ASM465_SERVICE_PID_FILE) ]; then \
-                PID=$$(cat $(ASM465_SERVICE_PID_FILE)); \
-                if kill -0 $$PID 2>/dev/null; then kill $$PID >/dev/null 2>&1 || true; fi; \
-                rm -f $(ASM465_SERVICE_PID_FILE); \
-            fi; \
-        fi; \
-        exit 1; \
-    fi
+	if ! $(PYTHON) tools/wait_for_port.py --host "$(CROSS465_HOST)" --port "$(CROSS465_PORT)" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+		echo 'ERROR: asm465 service did not become ready' >&2; \
+		if [ "$(CROSS465_HOST)" = "127.0.0.1" ] || [ "$(CROSS465_HOST)" = "localhost" ] || [ "$(CROSS465_HOST)" = "0.0.0.0" ] || [ "$(CROSS465_HOST)" = "::1" ]; then \
+			if [ -f $(ASM465_SERVICE_PID_FILE) ]; then \
+				PID=$$(cat $(ASM465_SERVICE_PID_FILE)); \
+				if kill -0 $$PID 2>/dev/null; then kill $$PID >/dev/null 2>&1 || true; fi; \
+				rm -f $(ASM465_SERVICE_PID_FILE); \
+			fi; \
+		fi; \
+		exit 1; \
+	fi
 endef
 
 define STOP_ASM465_SERVICE
@@ -121,25 +123,25 @@ UTEST_SRC = src/unittest.s src/tests/unittest.s
 # ---- Build targets ---------------------------------------------------------
 parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
 	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) \
-		-o $(OUTDIR)/$@ \
+		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET)),.prg) \
 		--list $(OUTDIR)/$@.lst \
 		--labels=$(OUTDIR)/$@.lbl
 
 screentest: $(STEST_SRC) $(CORE_SRC) | $(OUTDIR)
 	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) \
-		-o $(OUTDIR)/$@ \
+		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET)),.prg) \
 		--list $(OUTDIR)/$@.lst \
 		--labels=$(OUTDIR)/$@.lbl
 
 debugtest: $(DTEST_SRC) $(CORE_SRC) | $(OUTDIR)
 	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(DTEST_SRC) \
-		-o $(OUTDIR)/$@ \
+		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET)),.prg) \
 		--list $(OUTDIR)/$@.lst \
 		--labels=$(OUTDIR)/$@.lbl
 
 unittest: $(UTEST_SRC) $(CORE_SRC) | $(OUTDIR)
 	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) \
-		-o $(OUTDIR)/$@ \
+		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET)),.prg) \
 		--list $(OUTDIR)/$@.lst \
 		--labels=$(OUTDIR)/$@.lbl
 
@@ -157,7 +159,7 @@ else ifeq ($(TARGET),ultimate64)
 		--data-binary @$(OUTDIR)/$*
 else ifeq ($(TARGET),cross465)
 	$(ENSURE_ASM465_SERVICE)
-	$(PYTHON) tools/send_prg.py "$(OUTDIR)/$*" "$(CROSS465_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(CROSS465_HOST)" --embed --name "$*"
+	$(PYTHON) tools/send_prg.py "$(OUTDIR)/$*.prg" "$(CROSS465_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(CROSS465_HOST)" --embed --name "$*"
 endif
 
 # Convenience wrappers (build then run)
@@ -210,4 +212,11 @@ asm465-service-start:
 asm465-service-stop:
 	$(STOP_ASM465_SERVICE)
 
-.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest matrix_build matrix_run ci asm465-service-start asm465-service-stop
+.PHONY: wasm wasm-clean
+wasm:
+	@$(MAKE) -C ../crossdev/asm465-wasm build
+
+wasm-clean:
+	@$(MAKE) -C ../crossdev/asm465-wasm clean
+
+.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest matrix_build matrix_run ci asm465-service-start asm465-service-stop wasm wasm-clean
