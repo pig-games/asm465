@@ -25,11 +25,17 @@ PYTHON ?= python3
 
 # Service configuration for asm465 GUI / bridge
 CROSS465_PORT ?= 7465
+CROSS465_HOST ?= 127.0.0.1
+CROSS465_NATIVE_PORT ?= $(CROSS465_PORT)
+CROSS465_NATIVE_HOST ?= $(CROSS465_HOST)
+CROSS465_BRIDGE_PORT ?= 7565
+CROSS465_BRIDGE_HOST ?= $(CROSS465_HOST)
+CROSS465_WS_PORT ?= 8800
+CROSS465_WS_HOST ?= 127.0.0.1
+CROSS465_BRIDGE_WS_PORT ?= $(CROSS465_WS_PORT)
+CROSS465_BRIDGE_WS_HOST ?= $(CROSS465_WS_HOST)
 CROSS465_WAIT ?= 2
 CROSS465_MAX_CYCLES   ?= 5000000
-CROSS465_HOST ?= 127.0.0.1
-CROSS465_WS_HOST ?= 127.0.0.1
-CROSS465_WS_PORT ?= 8800
 CROSS465_RETRIES ?= 10
 CROSS465_DELAY ?= 1
 ASM465_NATIVE_PID_FILE ?= build/cross465/asm465_native.pid
@@ -46,46 +52,63 @@ ifeq ($(origin CROSS465_MODE),undefined)
   endif
 endif
 
+ifeq ($(TARGET),cross465web)
+  ASM465_SEND_HOST ?= $(CROSS465_BRIDGE_HOST)
+  ASM465_SEND_PORT ?= $(CROSS465_BRIDGE_PORT)
+else ifeq ($(TARGET),cross465)
+  ASM465_SEND_HOST ?= $(CROSS465_NATIVE_HOST)
+  ASM465_SEND_PORT ?= $(CROSS465_NATIVE_PORT)
+endif
+
 define ENSURE_ASM465_SERVICE
-	mode="$(strip $(CROSS465_MODE))"; \
-	[ -z "$$mode" ] && mode="native"; \
-	needs_native=0; needs_bridge=0; \
-	case " $$mode " in *" native "*) needs_native=1;; esac; \
-	case " $$mode " in *" bridge "*) needs_bridge=1;; esac; \
-	if [ $$needs_native -eq 1 ]; then \
-		if [ "$(CROSS465_HOST)" = "127.0.0.1" ] || [ "$(CROSS465_HOST)" = "localhost" ] || [ "$(CROSS465_HOST)" = "0.0.0.0" ] || [ "$(CROSS465_HOST)" = "::1" ]; then \
-			if [ ! -f $(ASM465_NATIVE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_NATIVE_PID_FILE)) 2>/dev/null; then \
-				mkdir -p $$(dirname $(ASM465_NATIVE_PID_FILE)); \
-				echo ">> Starting asm465 native UI on $(CROSS465_HOST):$(CROSS465_PORT)"; \
-				nohup cargo run --manifest-path ../crossdev/asm465/Cargo.toml -- --service-port $(CROSS465_PORT) --service-host $(CROSS465_HOST) --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
-				echo $$! > $(ASM465_NATIVE_PID_FILE); \
-				sleep $(CROSS465_WAIT); \
-			fi; \
-		fi; \
-	fi; \
-	if [ $$needs_bridge -eq 1 ]; then \
-		if [ "$(CROSS465_HOST)" = "127.0.0.1" ] || [ "$(CROSS465_HOST)" = "localhost" ] || [ "$(CROSS465_HOST)" = "0.0.0.0" ] || [ "$(CROSS465_HOST)" = "::1" ]; then \
-			if [ ! -f $(ASM465_BRIDGE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_BRIDGE_PID_FILE)) 2>/dev/null; then \
-				mkdir -p $$(dirname $(ASM465_BRIDGE_PID_FILE)); \
-				echo ">> Starting asm465 bridge on tcp $(CROSS465_HOST):$(CROSS465_PORT) (ws $(CROSS465_WS_HOST):$(CROSS465_WS_PORT))"; \
-				nohup cargo run --manifest-path ../crossdev/asm465-server/Cargo.toml -- --tcp-host $(CROSS465_HOST) --tcp-port $(CROSS465_PORT) --ws-host $(CROSS465_WS_HOST) --ws-port $(CROSS465_WS_PORT) >$(ASM465_BRIDGE_LOG) 2>&1 & \
-				echo $$! > $(ASM465_BRIDGE_PID_FILE); \
-				sleep $(CROSS465_WAIT); \
-			fi; \
-		fi; \
-	fi; \
-	if ! $(PYTHON) tools/wait_for_port.py --host "$(CROSS465_HOST)" --port "$(CROSS465_PORT)" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
-		echo 'ERROR: asm465 TCP service did not become ready' >&2; \
-		$(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
-		exit 1; \
-	fi; \
-	if [ $$needs_bridge -eq 1 ]; then \
-		if ! $(PYTHON) tools/wait_for_port.py --host "$(CROSS465_WS_HOST)" --port "$(CROSS465_WS_PORT)" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
-			echo 'ERROR: asm465 websocket bridge did not become ready' >&2; \
-			$(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
-			exit 1; \
-		fi; \
-	fi
+        @mode="$(strip $(CROSS465_MODE))"; \
+        [ -z "$$mode" ] && mode="native"; \
+        needs_native=0; needs_bridge=0; \
+        case " $$mode " in *" native "*) needs_native=1;; esac; \
+        case " $$mode " in *" bridge "*) needs_bridge=1;; esac; \
+        if [ $$needs_native -eq 1 ]; then \
+                host="$(CROSS465_NATIVE_HOST)"; \
+                port="$(CROSS465_NATIVE_PORT)"; \
+                if [ "$$host" = "127.0.0.1" ] || [ "$$host" = "localhost" ] || [ "$$host" = "0.0.0.0" ] || [ "$$host" = "::1" ]; then \
+                        if [ ! -f $(ASM465_NATIVE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_NATIVE_PID_FILE)) 2>/dev/null; then \
+                                mkdir -p $$(dirname $(ASM465_NATIVE_PID_FILE)); \
+                                echo ">> Starting asm465 native UI on $$host:$$port"; \
+                                nohup cargo run --manifest-path ../crossdev/asm465/Cargo.toml -- --service-port $$port --service-host $$host --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
+                                echo $$! > $(ASM465_NATIVE_PID_FILE); \
+                                sleep $(CROSS465_WAIT); \
+                        fi; \
+                fi; \
+                if ! $(PYTHON) tools/wait_for_port.py --host "$$host" --port "$$port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                        echo 'ERROR: asm465 native TCP service did not become ready' >&2; \
+                        $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
+                        exit 1; \
+                fi; \
+        fi; \
+        if [ $$needs_bridge -eq 1 ]; then \
+                tcp_host="$(CROSS465_BRIDGE_HOST)"; \
+                tcp_port="$(CROSS465_BRIDGE_PORT)"; \
+                ws_host="$(CROSS465_BRIDGE_WS_HOST)"; \
+                ws_port="$(CROSS465_BRIDGE_WS_PORT)"; \
+                if [ "$$tcp_host" = "127.0.0.1" ] || [ "$$tcp_host" = "localhost" ] || [ "$$tcp_host" = "0.0.0.0" ] || [ "$$tcp_host" = "::1" ]; then \
+                        if [ ! -f $(ASM465_BRIDGE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_BRIDGE_PID_FILE)) 2>/dev/null; then \
+                                mkdir -p $$(dirname $(ASM465_BRIDGE_PID_FILE)); \
+                                echo ">> Starting asm465 bridge on tcp $$tcp_host:$$tcp_port (ws $$ws_host:$$ws_port)"; \
+                                nohup cargo run --manifest-path ../crossdev/asm465-server/Cargo.toml -- --tcp-host $$tcp_host --tcp-port $$tcp_port --ws-host $$ws_host --ws-port $$ws_port >$(ASM465_BRIDGE_LOG) 2>&1 & \
+                                echo $$! > $(ASM465_BRIDGE_PID_FILE); \
+                                sleep $(CROSS465_WAIT); \
+                        fi; \
+                fi; \
+                if ! $(PYTHON) tools/wait_for_port.py --host "$$tcp_host" --port "$$tcp_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                        echo 'ERROR: asm465 bridge TCP service did not become ready' >&2; \
+                        $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
+                        exit 1; \
+                fi; \
+                if ! $(PYTHON) tools/wait_for_port.py --host "$$ws_host" --port "$$ws_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                        echo 'ERROR: asm465 websocket bridge did not become ready' >&2; \
+                        $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
+                        exit 1; \
+                fi; \
+        fi
 endef
 
 define STOP_ASM465_SERVICE
@@ -201,7 +224,7 @@ else ifeq ($(TARGET),ultimate64)
 		--data-binary @$(OUTDIR)/$*
 else ifeq ($(TARGET_ALIAS),cross465)
 	$(ENSURE_ASM465_SERVICE)
-	$(PYTHON) tools/send_prg.py "$(OUTDIR)/$*.prg" "$(CROSS465_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(CROSS465_HOST)" --embed --name "$*"
+	$(PYTHON) tools/send_prg.py "$(OUTDIR)/$*.prg" "$(ASM465_SEND_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(ASM465_SEND_HOST)" --embed --name "$*"
 endif
 
 # Convenience wrappers (build then run)
