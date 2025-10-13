@@ -112,7 +112,7 @@ define ENSURE_ASM465_SERVICE
 endef
 
 define STOP_ASM465_SERVICE
-	@if [ -f $(ASM465_NATIVE_PID_FILE) ]; then \
+	if [ -f $(ASM465_NATIVE_PID_FILE) ]; then \
 		PID=$$(cat $(ASM465_NATIVE_PID_FILE)); \
 		if kill -0 $$PID 2>/dev/null; then \
 			echo ">> Stopping asm465 native UI ($$PID)"; \
@@ -120,7 +120,7 @@ define STOP_ASM465_SERVICE
 		fi; \
 		rm -f $(ASM465_NATIVE_PID_FILE); \
 	fi; \
-	@if [ -f $(ASM465_BRIDGE_PID_FILE) ]; then \
+	if [ -f $(ASM465_BRIDGE_PID_FILE) ]; then \
 		PID=$$(cat $(ASM465_BRIDGE_PID_FILE)); \
 		if kill -0 $$PID 2>/dev/null; then \
 			echo ">> Stopping asm465 bridge ($$PID)"; \
