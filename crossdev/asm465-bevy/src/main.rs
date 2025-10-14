@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
 use bus::{unicode_to_screen, Bus};
 use clap::Parser;
@@ -151,26 +152,23 @@ impl EmulatorState {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct UiState {
     status: Option<String>,
+    console_open: bool,
 }
 
-#[derive(Component)]
-struct ConsoleText;
-
-#[derive(Component)]
-struct StatusText;
-
-#[derive(Component)]
-struct LoadButton;
-
-#[derive(Resource, Clone)]
-struct UiAssets {
-    font: Handle<Font>,
+impl UiState {
+    fn with_status(status: Option<String>) -> Self {
+        Self {
+            status,
+            console_open: true,
+        }
+    }
 }
 
-const CONSOLE_FONT_SIZE: f32 = 18.0;
+const CONSOLE_FONT_SIZE: f32 = 16.0;
+const PLACEHOLDER_SIZE: f32 = 180.0;
 
 fn main() {
     let args = Args::parse();
@@ -185,208 +183,100 @@ fn main() {
     let initial_status = emulator.status_message();
     let mut app = App::new();
     app.insert_non_send_resource(emulator);
-    app.insert_resource(UiState {
-        status: initial_status,
-    });
+    app.insert_resource(UiState::with_status(initial_status));
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "asm465 Bevy Console".to_string(),
+    app.insert_resource(ClearColor(Color::rgb(0.05, 0.05, 0.08)));
+
+    app.add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "asm465 Bevy Console".to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         }),
-        ..Default::default()
-    }))
-    .add_systems(Startup, setup_ui)
-    .add_systems(
-        Update,
-        (handle_load_button, update_status_text, update_console_text),
-    )
+        EguiPlugin,
+    ))
+    .add_systems(Startup, setup_scene)
+    .add_systems(Update, ui_system)
     .run();
 }
 
-fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup_scene(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 
-    let font = asset_server.load("fonts/Hack-Regular.ttf");
-    commands.insert_resource(UiAssets { font: font.clone() });
-    commands
-        .spawn(NodeBundle {
-            style: Style {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Stretch,
-                padding: UiRect::all(Val::Px(12.0)),
-                row_gap: Val::Px(8.0),
-                ..Default::default()
-            },
-            background_color: BackgroundColor(Color::rgba(0.05, 0.05, 0.08, 1.0)),
+    commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            color: Color::rgb(0.2, 0.4, 0.8),
+            custom_size: Some(Vec2::splat(PLACEHOLDER_SIZE)),
             ..Default::default()
-        })
-        .with_children(|parent| {
-            parent
-                .spawn((
-                    ButtonBundle {
-                        style: Style {
-                            width: Val::Px(160.0),
-                            height: Val::Px(32.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..Default::default()
-                        },
-                        background_color: BackgroundColor(Color::rgb(0.2, 0.4, 0.8)),
-                        ..Default::default()
-                    },
-                    LoadButton,
-                ))
-                .with_children(|button| {
-                    button.spawn(TextBundle::from_section(
-                        "Load PRG...",
-                        TextStyle {
-                            font: font.clone(),
-                            font_size: 18.0,
-                            color: Color::WHITE,
-                        },
-                    ));
-                });
-
-            parent.spawn((
-                TextBundle::from_section(
-                    "",
-                    TextStyle {
-                        font: font.clone(),
-                        font_size: 16.0,
-                        color: Color::rgb(0.9, 0.9, 0.6),
-                    },
-                ),
-                StatusText,
-            ));
-
-            parent.spawn((
-                TextBundle {
-                    text: Text::from_sections([TextSection {
-                        value: String::new(),
-                        style: TextStyle {
-                            font: font.clone(),
-                            font_size: CONSOLE_FONT_SIZE,
-                            color: Color::rgb(0.85, 0.85, 0.85),
-                        },
-                    }])
-                    .with_alignment(TextAlignment::Left),
-                    style: Style {
-                        flex_grow: 1.0,
-                        flex_shrink: 1.0,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                ConsoleText,
-            ));
-        });
+        },
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        ..Default::default()
+    });
 }
 
-fn handle_load_button(
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<LoadButton>),
-    >,
+fn ui_system(
+    mut contexts: EguiContexts,
     mut emulator: NonSendMut<EmulatorState>,
     mut ui_state: ResMut<UiState>,
 ) {
-    for (interaction, mut color) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                *color = BackgroundColor(Color::rgb(0.1, 0.3, 0.7));
-                if let Some(path) = FileDialog::new()
-                    .add_filter("PRG/BIN", &["prg", "bin"])
-                    .pick_file()
-                {
-                    let result =
-                        emulator.run_program(ProgramSource::File(path.clone()), None, None);
-                    ui_state.status = Some(match result {
-                        Ok(msg) => msg,
-                        Err(err) => err,
-                    });
+    let ctx = contexts.ctx_mut();
+
+    egui::TopBottomPanel::top("top_panel")
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("Load PRG...").clicked() {
+                    if let Some(path) = FileDialog::new()
+                        .add_filter("PRG/BIN", &["prg", "bin"])
+                        .pick_file()
+                    {
+                        let result =
+                            emulator.run_program(ProgramSource::File(path.clone()), None, None);
+                        ui_state.status = Some(match result {
+                            Ok(msg) => msg,
+                            Err(err) => err,
+                        });
+                    }
                 }
-            }
-            Interaction::Hovered => {
-                *color = BackgroundColor(Color::rgb(0.3, 0.5, 0.9));
-            }
-            Interaction::None => {
-                *color = BackgroundColor(Color::rgb(0.2, 0.4, 0.8));
-            }
-        }
-    }
-}
 
-fn update_status_text(mut query: Query<&mut Text, With<StatusText>>, ui_state: Res<UiState>) {
-    if let Ok(mut text) = query.get_single_mut() {
-        let content = ui_state.status.as_ref().map(|s| s.as_str()).unwrap_or("");
-        text.sections[0].value = content.to_string();
-    }
-}
+                if let Some(status) = &ui_state.status {
+                    ui.label(status);
+                }
 
-fn update_console_text(
-    mut query: Query<&mut Text, With<ConsoleText>>,
-    emulator: NonSend<EmulatorState>,
-    assets: Res<UiAssets>,
-) {
-    let Some(snapshot) = emulator.snapshot() else {
-        return;
-    };
-
-    if let Ok(mut text) = query.get_single_mut() {
-        text.sections = snapshot_to_sections(&snapshot, assets.font.clone());
-    }
-}
-
-fn snapshot_to_sections(snapshot: &ConsoleSnapshot, font: Handle<Font>) -> Vec<TextSection> {
-    let mut sections = Vec::with_capacity(snapshot.width * snapshot.height + snapshot.height);
-    for y in 0..snapshot.height {
-        for x in 0..snapshot.width {
-            let cell = snapshot.cell(x, y);
-            sections.push(TextSection {
-                value: cell.ch.to_string(),
-                style: TextStyle {
-                    font: font.clone(),
-                    font_size: CONSOLE_FONT_SIZE,
-                    color: palette_color(cell.fg),
-                },
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let toggle_label = if ui_state.console_open {
+                        "Hide Console"
+                    } else {
+                        "Show Console"
+                    };
+                    if ui.button(toggle_label).clicked() {
+                        ui_state.console_open = !ui_state.console_open;
+                    }
+                });
             });
-        }
-        if y + 1 < snapshot.height {
-            sections.push(TextSection {
-                value: "\n".to_string(),
-                style: TextStyle {
-                    font: font.clone(),
-                    font_size: CONSOLE_FONT_SIZE,
-                    color: palette_color(7),
-                },
-            });
-        }
-    }
-    sections
-}
+        });
 
-fn palette_color(index: u8) -> Color {
-    match index & 0x0F {
-        0x00 => Color::rgb_u8(0x00, 0x00, 0x00), // Black
-        0x01 => Color::rgb_u8(0xFF, 0xFF, 0xFF), // White
-        0x02 => Color::rgb_u8(0x88, 0x00, 0x00), // Red
-        0x03 => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Cyan
-        0x04 => Color::rgb_u8(0xCC, 0x44, 0xCC), // Magenta
-        0x05 => Color::rgb_u8(0x00, 0xCC, 0x55), // Green
-        0x06 => Color::rgb_u8(0x00, 0x00, 0xAA), // Blue
-        0x07 => Color::rgb_u8(0xEE, 0xEE, 0x77), // Yellow
-        0x08 => Color::rgb_u8(0xDD, 0x88, 0x55), // Orange
-        0x09 => Color::rgb_u8(0x66, 0x44, 0x00), // Brown
-        0x0A => Color::rgb_u8(0xFF, 0x77, 0x77), // Light red
-        0x0B => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Light cyan
-        0x0C => Color::rgb_u8(0xFF, 0xAA, 0xFF), // Light magenta
-        0x0D => Color::rgb_u8(0xAA, 0xFF, 0xAA), // Light green
-        0x0E => Color::rgb_u8(0xAA, 0xCC, 0xFF), // Light blue
-        _ => Color::rgb_u8(0xCC, 0xCC, 0xCC),    // Light gray
-    }
+    let console_snapshot = emulator.snapshot();
+
+    egui::TopBottomPanel::bottom("console_panel")
+        .resizable(true)
+        .default_height(220.0)
+        .min_height(120.0)
+        .show_animated(ctx, ui_state.console_open, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if let Some(snapshot) = &console_snapshot {
+                        let job = console_layout_job(snapshot);
+                        ui.label(job);
+                    } else {
+                        ui.label("Console unavailable");
+                    }
+                });
+        });
 }
 
 fn run_program_with_config(
@@ -437,4 +327,50 @@ fn write_console_line(bus: &mut Bus, line: &str) {
         }
     }
     bus.write(0xDF01, 0);
+}
+
+fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut buffer = [0u8; 4];
+    let font_id = egui::FontId::monospace(CONSOLE_FONT_SIZE);
+
+    for y in 0..snapshot.height {
+        for x in 0..snapshot.width {
+            let cell = snapshot.cell(x, y);
+            let glyph = cell.ch.encode_utf8(&mut buffer);
+            let mut format = egui::text::TextFormat::default();
+            format.font_id = font_id.clone();
+            format.color = palette_color(cell.fg);
+            job.append(glyph, 0.0, format);
+        }
+        if y + 1 < snapshot.height {
+            let mut format = egui::text::TextFormat::default();
+            format.font_id = font_id.clone();
+            format.color = palette_color(7);
+            job.append("\n", 0.0, format);
+        }
+    }
+
+    job
+}
+
+fn palette_color(index: u8) -> egui::Color32 {
+    match index & 0x0F {
+        0x00 => egui::Color32::from_rgb(0x00, 0x00, 0x00), // Black
+        0x01 => egui::Color32::from_rgb(0xFF, 0xFF, 0xFF), // White
+        0x02 => egui::Color32::from_rgb(0x88, 0x00, 0x00), // Red
+        0x03 => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Cyan
+        0x04 => egui::Color32::from_rgb(0xCC, 0x44, 0xCC), // Magenta
+        0x05 => egui::Color32::from_rgb(0x00, 0xCC, 0x55), // Green
+        0x06 => egui::Color32::from_rgb(0x00, 0x00, 0xAA), // Blue
+        0x07 => egui::Color32::from_rgb(0xEE, 0xEE, 0x77), // Yellow
+        0x08 => egui::Color32::from_rgb(0xDD, 0x88, 0x55), // Orange
+        0x09 => egui::Color32::from_rgb(0x66, 0x44, 0x00), // Brown
+        0x0A => egui::Color32::from_rgb(0xFF, 0x77, 0x77), // Light red
+        0x0B => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Light cyan
+        0x0C => egui::Color32::from_rgb(0xFF, 0xAA, 0xFF), // Light magenta
+        0x0D => egui::Color32::from_rgb(0xAA, 0xFF, 0xAA), // Light green
+        0x0E => egui::Color32::from_rgb(0xAA, 0xCC, 0xFF), // Light blue
+        _ => egui::Color32::from_rgb(0xCC, 0xCC, 0xCC),    // Light gray
+    }
 }
