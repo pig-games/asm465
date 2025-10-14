@@ -10,15 +10,12 @@ use core6502::Cpu;
 #[cfg(feature = "native-file-dialog")]
 use rfd::FileDialog;
 
-#[cfg(feature = "native-service")]
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-#[cfg(feature = "native-service")]
 use base64::Engine;
 #[cfg(feature = "native-service")]
 use clap::Parser;
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
-#[cfg(feature = "native-service")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "native-service")]
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -30,6 +27,12 @@ use std::thread;
 const WELCOME_MESSAGE: &str = "Welcome to the asm465 bevy console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
 const PLACEHOLDER_SIZE: f32 = 180.0;
+
+#[cfg(target_arch = "wasm32")]
+mod web;
+
+#[cfg(target_arch = "wasm32")]
+pub use web::start_web_app;
 
 #[cfg(feature = "native-service")]
 #[derive(Parser, Debug)]
@@ -60,7 +63,7 @@ pub struct Args {
     pub program: Option<PathBuf>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ProgramSource {
     File(PathBuf),
     Inline { name: Option<String>, data: Vec<u8> },
@@ -69,8 +72,11 @@ pub enum ProgramSource {
 impl ProgramSource {
     fn load_bytes(&self) -> Result<Vec<u8>, String> {
         match self {
+            #[cfg(any(feature = "native-file-dialog", feature = "native-service"))]
             ProgramSource::File(path) => std::fs::read(path)
                 .map_err(|err| format!("Failed to read {}: {err}", path.display())),
+            #[cfg(not(any(feature = "native-file-dialog", feature = "native-service")))]
+            ProgramSource::File(_) => Err("File sources are not supported on this platform".into()),
             ProgramSource::Inline { data, .. } => Ok(data.clone()),
         }
     }
@@ -90,6 +96,107 @@ pub struct StartupConfig {
     pub source: ProgramSource,
     pub max_cycles: u64,
     pub start: Option<u16>,
+}
+
+#[derive(Debug)]
+pub enum ServiceCommand {
+    RunProgram {
+        source: ProgramSource,
+        max_cycles: Option<u64>,
+        start: Option<u16>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceResponseMessage {
+    pub status: ServiceStatus,
+    pub message: String,
+}
+
+impl ServiceResponseMessage {
+    pub fn ok(message: impl Into<String>) -> Self {
+        Self {
+            status: ServiceStatus::Ok,
+            message: message.into(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: ServiceStatus::Error,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceStatus {
+    Ok,
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum ServiceRequestPayload {
+    RunPrg {
+        path: String,
+        #[serde(default)]
+        max_cycles: Option<u64>,
+        #[serde(default)]
+        start: Option<u16>,
+    },
+    RunPrgData {
+        data: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        max_cycles: Option<u64>,
+        #[serde(default)]
+        start: Option<u16>,
+    },
+}
+
+impl ServiceRequestPayload {
+    pub fn into_command(self) -> Result<ServiceCommand, String> {
+        match self {
+            ServiceRequestPayload::RunPrg {
+                path,
+                max_cycles,
+                start,
+            } => {
+                if path.is_empty() {
+                    return Err("run_prg requires a non-empty path".into());
+                }
+                Ok(ServiceCommand::RunProgram {
+                    source: ProgramSource::File(PathBuf::from(path)),
+                    max_cycles,
+                    start,
+                })
+            }
+            ServiceRequestPayload::RunPrgData {
+                data,
+                name,
+                max_cycles,
+                start,
+            } => {
+                if data.trim().is_empty() {
+                    return Err("run_prg_data requires a non-empty base64 payload".into());
+                }
+                let decoded = BASE64_STANDARD
+                    .decode(data.as_bytes())
+                    .map_err(|err| format!("invalid base64 payload for run_prg_data: {err}"))?;
+                Ok(ServiceCommand::RunProgram {
+                    source: ProgramSource::Inline {
+                        name,
+                        data: decoded,
+                    },
+                    max_cycles,
+                    start,
+                })
+            }
+        }
+    }
 }
 
 pub struct AppConfig {
@@ -131,6 +238,7 @@ pub fn run_native() -> Result<(), String> {
 }
 
 pub fn run_app(config: AppConfig) {
+    #[allow(unused_mut)]
     let mut emulator = EmulatorState::new(config.startup, config.default_max_cycles);
 
     #[cfg(feature = "native-service")]
@@ -153,11 +261,8 @@ pub fn run_app(config: AppConfig) {
         }
     }
 
-    let initial_status = emulator.status_message();
-
     let mut app = App::new();
     app.insert_non_send_resource(emulator);
-    app.insert_resource(UiState::with_status(initial_status));
     app.insert_resource(ClearColor(Color::rgb(0.05, 0.05, 0.08)));
 
     #[cfg(feature = "native-service")]
@@ -165,12 +270,41 @@ pub fn run_app(config: AppConfig) {
         app.insert_resource(listener);
     }
 
+    #[cfg(target_arch = "wasm32")]
+    let web_status = web::configure_app(&mut app);
+
+    let initial_status = app
+        .world
+        .get_non_send_resource::<EmulatorState>()
+        .and_then(EmulatorState::status_message);
+
+    let mut ui_state = UiState::with_status(initial_status);
+
+    #[cfg(target_arch = "wasm32")]
+    if let Some(status) = web_status {
+        ui_state.status = Some(match ui_state.status.take() {
+            Some(existing) => format!("{existing} | {status}"),
+            None => status,
+        });
+    }
+
+    app.insert_resource(ui_state);
+
+    #[allow(unused_mut)]
+    let mut window = Window {
+        title: "asm465 Bevy Console".to_string(),
+        ..Default::default()
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        window.canvas = Some(web::canvas_id().to_string());
+        window.fit_canvas_to_parent = true;
+    }
+
     app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "asm465 Bevy Console".to_string(),
-                ..Default::default()
-            }),
+            primary_window: Some(window),
             ..Default::default()
         }),
         EguiPlugin,
@@ -266,7 +400,6 @@ impl EmulatorState {
             .ok()
     }
 
-    #[cfg(feature = "native-service")]
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
         match command {
             ServiceCommand::RunProgram {
@@ -285,6 +418,7 @@ impl EmulatorState {
 struct UiState {
     status: Option<String>,
     console_open: bool,
+    bridge_connected: Option<bool>,
 }
 
 impl UiState {
@@ -292,6 +426,7 @@ impl UiState {
         Self {
             status,
             console_open: true,
+            bridge_connected: None,
         }
     }
 }
@@ -312,9 +447,10 @@ fn setup_scene(mut commands: Commands) {
 
 fn ui_system(
     mut contexts: EguiContexts,
-    mut emulator: NonSendMut<EmulatorState>,
+    #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
     mut ui_state: ResMut<UiState>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
+    #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
 ) {
     #[cfg(feature = "native-service")]
     if let Some(listener) = service_listener {
@@ -323,6 +459,39 @@ fn ui_system(
             ui_state.status = Some(response.message.clone());
             let _ = envelope.respond_to.send(response);
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    let mut wasm_bridge_connected = false;
+
+    #[cfg(target_arch = "wasm32")]
+    if let Some(service) = web_service {
+        wasm_bridge_connected = true;
+        for command in service.drain_commands() {
+            let response = emulator.handle_service_command(command);
+            ui_state.status = Some(response.message.clone());
+            service.send_response(response);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    for (data, name) in web::drain_pending_files() {
+        let source = ProgramSource::Inline { name, data };
+        let result = emulator.run_program(source, None, None);
+        ui_state.status = Some(match result {
+            Ok(msg) => msg,
+            Err(err) => err,
+        });
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        ui_state.bridge_connected = Some(wasm_bridge_connected);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui_state.bridge_connected = None;
     }
 
     let ctx = contexts.ctx_mut();
@@ -348,13 +517,30 @@ fn ui_system(
                     }
                 }
 
-                #[cfg(not(feature = "native-file-dialog"))]
+                #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-file-dialog")))]
                 {
                     ui.add_enabled(false, egui::Button::new("Load PRG..."));
                 }
 
+                #[cfg(all(target_arch = "wasm32", not(feature = "native-file-dialog")))]
+                {
+                    if ui.button("Load PRG...").clicked() {
+                        web::request_file_dialog();
+                    }
+                }
+
                 if let Some(status) = &ui_state.status {
                     ui.label(status);
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                if let Some(connected) = ui_state.bridge_connected {
+                    let text = if connected {
+                        "Bridge: connected"
+                    } else {
+                        "Bridge: offline"
+                    };
+                    ui.label(text);
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -494,115 +680,9 @@ struct ServiceListener {
 }
 
 #[cfg(feature = "native-service")]
-enum ServiceCommand {
-    RunProgram {
-        source: ProgramSource,
-        max_cycles: Option<u64>,
-        start: Option<u16>,
-    },
-}
-
-#[cfg(feature = "native-service")]
 struct ServiceEnvelope {
     command: ServiceCommand,
     respond_to: Sender<ServiceResponseMessage>,
-}
-
-#[cfg(feature = "native-service")]
-#[derive(Serialize)]
-struct ServiceResponseMessage {
-    status: ServiceStatus,
-    message: String,
-}
-
-#[cfg(feature = "native-service")]
-impl ServiceResponseMessage {
-    fn ok(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Ok,
-            message: message.into(),
-        }
-    }
-
-    fn error(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Error,
-            message: message.into(),
-        }
-    }
-}
-
-#[cfg(feature = "native-service")]
-#[derive(Serialize)]
-#[serde(rename_all = "lowercase")]
-enum ServiceStatus {
-    Ok,
-    Error,
-}
-
-#[cfg(feature = "native-service")]
-#[derive(Deserialize)]
-#[serde(tag = "cmd", rename_all = "snake_case")]
-enum ServiceRequestPayload {
-    RunPrg {
-        path: String,
-        #[serde(default)]
-        max_cycles: Option<u64>,
-        #[serde(default)]
-        start: Option<u16>,
-    },
-    RunPrgData {
-        data: String,
-        #[serde(default)]
-        name: Option<String>,
-        #[serde(default)]
-        max_cycles: Option<u64>,
-        #[serde(default)]
-        start: Option<u16>,
-    },
-}
-
-#[cfg(feature = "native-service")]
-impl ServiceRequestPayload {
-    fn into_command(self) -> Result<ServiceCommand, String> {
-        match self {
-            ServiceRequestPayload::RunPrg {
-                path,
-                max_cycles,
-                start,
-            } => {
-                if path.is_empty() {
-                    return Err("run_prg requires a non-empty path".into());
-                }
-                Ok(ServiceCommand::RunProgram {
-                    source: ProgramSource::File(PathBuf::from(path)),
-                    max_cycles,
-                    start,
-                })
-            }
-            ServiceRequestPayload::RunPrgData {
-                data,
-                name,
-                max_cycles,
-                start,
-            } => {
-                if data.trim().is_empty() {
-                    return Err("run_prg_data requires a non-empty base64 payload".into());
-                }
-                let decoded = BASE64_STANDARD
-                    .decode(data.as_bytes())
-                    .map_err(|err| format!("invalid base64 payload for run_prg_data: {err}"))?;
-                Ok(ServiceCommand::RunProgram {
-                    source: ProgramSource::Inline {
-                        name,
-                        data: decoded,
-                    },
-                    max_cycles,
-                    start,
-                })
-            }
-        }
-    }
 }
 
 #[cfg(feature = "native-service")]
