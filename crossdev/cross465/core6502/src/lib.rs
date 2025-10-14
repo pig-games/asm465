@@ -816,6 +816,9 @@ impl Cpu {
     pub fn run_for(&mut self, max_cycles: u64) {
         let mut spent = 0u64;
         while spent < max_cycles {
+            if self.bus.read(self.pc) == 0x00 { // BRK
+                break;
+            }
             let c = self.step() as u64;
             spent += c;
             self.cycles += c;

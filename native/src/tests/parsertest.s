@@ -32,6 +32,7 @@
     .nl
     .dbg.Stats
 
+    brk
     jmp *
     .endwith
 .endsection ; main

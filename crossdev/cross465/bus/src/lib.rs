@@ -46,7 +46,7 @@
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod utils; // expose helpers as bus::utils::*
 
-pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii}; // convenience re-export
+pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
 
 use std::any::Any;
 use std::ops::RangeInclusive;

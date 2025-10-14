@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
-use bus::Bus;
+use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
 use eframe::egui::{self, text::LayoutJob, text::TextFormat, Color32, Context, FontId};
 use serde::{Deserialize, Serialize};
@@ -461,8 +461,13 @@ impl eframe::App for Asm465App {
 
 /// Push a line of host text through the MMIO console path.
 fn write_console_line(bus: &mut Bus, line: &str) {
-    for byte in line.as_bytes() {
-        bus.write(0xDF00, *byte);
+    for ch in line.chars() {
+        let screen_code = unicode_to_screen(ch);
+        if screen_code == b'\n' {
+            bus.write(0xDF01, 0);
+        } else {
+            bus.write(0xDF00, screen_code);
+        }
     }
     bus.write(0xDF01, 0);
 }

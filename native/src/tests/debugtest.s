@@ -135,7 +135,7 @@
     .nl
     .nl
     .dbg.Stats
-    jmp *
+    rts
 
 inside .proc
     .dbg.warning "[.dbg.warning {shift-2}...{shift-2}] inside, "

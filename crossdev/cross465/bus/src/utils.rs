@@ -5,6 +5,37 @@
 //! extend this with full PETSCII tables and case/graphics modes later.
 
 use console::Color;
+
+/// Translate a Unicode scalar into the corresponding C64 screen code.
+///
+/// The mapping mirrors [`screen_to_petscii`]:
+///
+/// - Printable ASCII characters in the range space (`' '`) through question
+///   mark (`'?'`) map directly to their byte value.
+/// - Uppercase ASCII letters use their byte value so the PETSCII
+///   translation emits the same glyph.
+/// - Lowercase ASCII letters are offset into the `$A0–$BF` band so the
+///   round-trip through [`screen_to_petscii`] and [`petscii_to_unicode`]
+///   preserves their case.
+/// - A handful of legacy glyphs (`@`, `[`, `]`, `£`, `↑`, `←`) land on their
+///   historical screen codes so host text mirrors terminal output.
+/// - Unsupported characters fall back to a plain space to keep the console
+///   legible.
+pub fn unicode_to_screen(ch: char) -> u8 {
+    match ch {
+        '\n' | '\r' => b'\n',
+        ' '..='?' => ch as u8,
+        '@' => 0x00,
+        'A'..='Z' => ch as u8,
+        '[' => 0x1B,
+        ']' => 0x1D,
+        'a'..='z' => (ch as u8) + 0x40,
+        '£' => 0x1C,
+        '↑' => 0x1E,
+        '←' => 0x1F,
+        _ => 0x20,
+    }
+}
 /// Minimal PETSCII-ish mapping to Unicode.
 ///
 /// * `$0D` (CR) is mapped to newline for convenience.
@@ -57,5 +88,20 @@ pub fn cmb_color_to_ansi(c: u8) -> Color {
         14 => Color::Color256(33), // Light blue
         15 => Color::Color256(7),  // Light gray
         _ => Color::White,         // unreachable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_screen_round_trip_basic_text() {
+        let sample = "Welcome to the asm465 console viewer!";
+        for ch in sample.chars() {
+            let screen = unicode_to_screen(ch);
+            let round_trip = petscii_to_unicode(screen_to_petscii(screen));
+            assert_eq!(round_trip, ch, "character {ch:?} failed to round-trip");
+        }
     }
 }

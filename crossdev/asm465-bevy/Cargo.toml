@@ -1,0 +1,17 @@
+[package]
+name = "asm465-bevy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = "0.11"
+bus = { path = "../cross465/bus" }
+core6502 = { path = "../cross465/core6502" }
+clap = { version = "4", features = ["derive"] }
+rfd = "0.14"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3

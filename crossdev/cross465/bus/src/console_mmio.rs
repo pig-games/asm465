@@ -54,7 +54,7 @@ pub struct ConsoleSnapshot {
     /// Snapshot height in characters.
     pub height: usize,
     /// Row-major cell data backing this snapshot.
-   pub cells: Vec<ConsoleCell>,
+    pub cells: Vec<ConsoleCell>,
 }
 
 impl ConsoleSnapshot {
