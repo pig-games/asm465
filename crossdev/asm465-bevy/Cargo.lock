@@ -297,12 +297,16 @@ dependencies = [
 name = "asm465-bevy"
 version = "0.1.0"
 dependencies = [
+ "base64 0.21.7",
  "bevy",
  "bevy_egui",
  "bus",
  "clap",
  "core6502",
+ "crossbeam-channel",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
