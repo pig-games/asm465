@@ -32,7 +32,8 @@ gloo-net = { version = "0.5", features = ["websocket"] }
 gloo-file = "0.2"
 futures = "0.3"
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["Window", "Document", "HtmlButtonElement", "HtmlInputElement", "Url", "UrlSearchParams", "Event"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlButtonElement", "HtmlInputElement", "Url", "UrlSearchParams", "Event", "DomException"] }
+js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [profile.dev]

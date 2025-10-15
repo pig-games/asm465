@@ -239,6 +239,7 @@ dependencies = [
  "getrandom 0.3.3",
  "gloo-file",
  "gloo-net",
+ "js-sys",
  "log",
  "serde",
  "serde_json",

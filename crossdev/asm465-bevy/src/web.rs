@@ -9,10 +9,11 @@ use gloo_file::callbacks::read_as_bytes;
 use gloo_file::File;
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
+use js_sys::{Array, Function, Promise, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::spawn_local;
-use web_sys::{HtmlInputElement, UrlSearchParams};
+use wasm_bindgen_futures::{spawn_local, JsFuture};
+use web_sys::{HtmlButtonElement, HtmlElement, HtmlInputElement, UrlSearchParams};
 
 use crate::{
     run_app, AppConfig, ProgramSource, ServiceCommand, ServiceRequestPayload,
@@ -25,6 +26,7 @@ const CANVAS_ID: &str = "#asm465-canvas";
 
 thread_local! {
     static FILE_QUEUE: RefCell<Vec<(Vec<u8>, Option<String>)>> = RefCell::new(Vec::new());
+    static FILE_INPUT: RefCell<Option<HtmlInputElement>> = RefCell::new(None);
 }
 
 fn extend_status(status: &mut Option<String>, message: String) {
@@ -136,82 +138,20 @@ pub fn configure_app(app: &mut App) -> Option<String> {
 }
 
 pub fn request_file_dialog() {
-    let Some(window) = web_sys::window() else {
-        log::error!("request_file_dialog: missing window");
+    if try_show_open_file_picker() {
         return;
-    };
-    let Some(document) = window.document() else {
-        log::error!("request_file_dialog: missing document");
-        return;
-    };
-
-    let Ok(input_el) = document.create_element("input") else {
-        log::error!("request_file_dialog: failed to create input element");
-        return;
-    };
-
-    let Ok(input) = input_el.dyn_into::<HtmlInputElement>() else {
-        log::error!("request_file_dialog: failed to cast element to HtmlInputElement");
-        return;
-    };
-
-    input.set_type("file");
-    input.set_accept(".prg,.bin,*/*");
-    let style = input.style();
-        let _ = style.set_property("display", "none");
-
-    if let Some(body) = document.body() {
-        let _ = body.append_child(&input);
     }
 
-    let input_ref = Rc::new(input);
-    let change_input = input_ref.clone();
-    let change_closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-        if let Some(files) = change_input.files() {
-            for idx in 0..files.length() {
-                if let Some(file) = files.get(idx) {
-                    let name = file.name();
-                    let file = File::from(file);
-                    let reader_state: Rc<RefCell<Option<_>>> = Rc::new(RefCell::new(None));
-                    let reader_state_clone = reader_state.clone();
-                    let name_clone = if name.is_empty() {
-                        None
-                    } else {
-                        Some(name.clone())
-                    };
-                    let reader = read_as_bytes(&file, move |result| {
-                        match result {
-                            Ok(bytes) => {
-                                FILE_QUEUE.with(|queue| {
-                                    queue.borrow_mut().push((bytes, name_clone.clone()));
-                                });
-                            }
-                            Err(err) => {
-                                log::error!("failed to read file: {err}");
-                            }
-                        }
-                        reader_state_clone.borrow_mut().take();
-                    });
-                    *reader_state.borrow_mut() = Some(reader);
-                }
-            }
-        }
+    FILE_INPUT.with(|slot| {
+        let binding = slot.borrow();
+        let Some(input) = binding.as_ref() else {
+            log::error!("request_file_dialog: file input not initialised");
+            return;
+        };
 
-        if let Some(parent) = change_input.parent_node() {
-            let node: &web_sys::Node = change_input.as_ref().unchecked_ref();
-            let _ = parent.remove_child(node);
-        }
-    }) as Box<dyn FnMut(_)>);
-
-    if input_ref
-        .add_event_listener_with_callback("change", change_closure.as_ref().unchecked_ref())
-        .is_err()
-    {
-        log::warn!("request_file_dialog: failed to register change listener");
-    }
-    change_closure.forget();
-
-    input_ref.click()
+        let element: &HtmlElement = input.unchecked_ref::<HtmlElement>();
+        element.click();
+    });
 }
 
 pub fn drain_pending_files() -> Vec<(Vec<u8>, Option<String>)> {
@@ -240,12 +180,167 @@ fn setup_file_loader() -> Result<(), JsValue> {
     let document = window
         .document()
         .ok_or_else(|| JsValue::from_str("missing document"))?;
+    let input_el = document
+        .get_element_by_id("prg-input")
+        .ok_or_else(|| JsValue::from_str("missing #prg-input"))?;
+    let button_el = document
+        .get_element_by_id("load-prg-btn")
+        .ok_or_else(|| JsValue::from_str("missing #load-prg-btn"))?;
+    let input: HtmlInputElement = input_el.dyn_into()?;
+    let button: HtmlButtonElement = button_el.dyn_into()?;
 
-    document
-        .body()
-        .ok_or_else(|| JsValue::from_str("missing document body"))?;
+    FILE_INPUT.with(|slot| {
+        *slot.borrow_mut() = Some(input.clone());
+    });
+
+    let trigger_input = input.clone();
+    let click_closure = Closure::wrap(Box::new(move || {
+        let element: &HtmlElement = trigger_input.unchecked_ref::<HtmlElement>();
+        element.click();
+    }) as Box<dyn FnMut()>);
+    button.add_event_listener_with_callback("click", click_closure.as_ref().unchecked_ref())?;
+    click_closure.forget();
+
+    let input_for_change = input.clone();
+    let change_closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+        if let Some(files) = input_for_change.files() {
+            for idx in 0..files.length() {
+                if let Some(file) = files.get(idx) {
+                    let name = file.name();
+                    let file = File::from(file);
+                    let reader_state: Rc<RefCell<Option<_>>> = Rc::new(RefCell::new(None));
+                    let reader_state_clone = reader_state.clone();
+                    let name_clone = if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.clone())
+                    };
+                    let reader = read_as_bytes(&file, move |result| {
+                        match result {
+                            Ok(bytes) => {
+                                FILE_QUEUE.with(|queue| {
+                                    queue.borrow_mut().push((bytes, name_clone.clone()));
+                                });
+                            }
+                            Err(err) => {
+                                log::error!("failed to read file: {err}");
+                            }
+                        }
+                        reader_state_clone.borrow_mut().take();
+                    });
+                    *reader_state.borrow_mut() = Some(reader);
+                }
+            }
+        }
+        input_for_change.set_value("");
+    }) as Box<dyn FnMut(_)>);
+    input.add_event_listener_with_callback("change", change_closure.as_ref().unchecked_ref())?;
+    change_closure.forget();
 
     Ok(())
+}
+
+fn try_show_open_file_picker() -> bool {
+    let window = match web_sys::window() {
+        Some(window) => window,
+        None => return false,
+    };
+
+    let show_picker = match Reflect::get(&window, &JsValue::from_str("showOpenFilePicker")) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+
+    let function = match show_picker.dyn_into::<Function>() {
+        Ok(func) => func,
+        Err(_) => return false,
+    };
+
+    let promise_value = match function.call0(&JsValue::from(window.clone())) {
+        Ok(value) => value,
+        Err(err) => {
+            log::error!("showOpenFilePicker call failed: {err:?}");
+            return false;
+        }
+    };
+
+    let promise = match promise_value.dyn_into::<Promise>() {
+        Ok(promise) => promise,
+        Err(_) => return false,
+    };
+
+    spawn_local(async move {
+        match JsFuture::from(promise).await {
+            Ok(handles_value) => {
+                let handles = Array::from(&handles_value);
+                for handle_value in handles.iter() {
+                    let get_file = match Reflect::get(&handle_value, &JsValue::from_str("getFile"))
+                    {
+                        Ok(value) => value,
+                        Err(err) => {
+                            log::error!("getFile missing on handle: {err:?}");
+                            continue;
+                        }
+                    };
+                    let get_file_fn = match get_file.dyn_into::<Function>() {
+                        Ok(func) => func,
+                        Err(_) => continue,
+                    };
+
+                    let file_promise_value = match get_file_fn.call0(&handle_value) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            log::error!("getFile call failed: {err:?}");
+                            continue;
+                        }
+                    };
+
+                    let file_promise = match file_promise_value.dyn_into::<Promise>() {
+                        Ok(promise) => promise,
+                        Err(_) => continue,
+                    };
+
+                    let file_value = match JsFuture::from(file_promise).await {
+                        Ok(value) => value,
+                        Err(err) => {
+                            log::error!("getFile promise rejected: {err:?}");
+                            continue;
+                        }
+                    };
+
+                    let web_file = match file_value.dyn_into::<web_sys::File>() {
+                        Ok(file) => file,
+                        Err(_) => continue,
+                    };
+
+                    let display_name = if web_file.name().is_empty() {
+                        None
+                    } else {
+                        Some(web_file.name())
+                    };
+
+                    let buffer_value = match JsFuture::from(web_file.array_buffer()).await {
+                        Ok(buffer) => buffer,
+                        Err(err) => {
+                            log::error!("array_buffer failed: {err:?}");
+                            continue;
+                        }
+                    };
+
+                    let array = Uint8Array::new(&buffer_value);
+                    let mut bytes = vec![0u8; array.length() as usize];
+                    array.copy_to(&mut bytes);
+
+                    FILE_QUEUE.with(|queue| queue.borrow_mut().push((bytes, display_name)));
+                }
+            }
+            Err(err) => {
+                log::error!("showOpenFilePicker promise rejected: {err:?}");
+            }
+        }
+    });
+
+    true
 }
 
 fn resolve_ws_url() -> Option<String> {
