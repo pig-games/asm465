@@ -5,15 +5,14 @@ use std::rc::Rc;
 
 use bevy::prelude::App;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gloo_file::callbacks::read_as_bytes;
-use gloo_file::File;
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
 use js_sys::{Array, Function, Promise, Reflect, Uint8Array};
+use rfd::AsyncFileDialog;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
-use web_sys::{HtmlInputElement, UrlSearchParams};
+use web_sys::UrlSearchParams;
 
 use crate::{run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
 
@@ -23,7 +22,6 @@ const CANVAS_ID: &str = "#asm465-canvas";
 
 thread_local! {
     static FILE_QUEUE: RefCell<Vec<(Vec<u8>, Option<String>)>> = RefCell::new(Vec::new());
-    static FILE_INPUT: RefCell<Option<HtmlInputElement>> = RefCell::new(None);
 }
 
 fn extend_status(status: &mut Option<String>, message: String) {
@@ -139,10 +137,26 @@ pub fn request_file_dialog() {
         return;
     }
 
-    match ensure_file_input() {
-        Ok(input) => input.click(),
-        Err(err) => log::error!("request_file_dialog: failed to prepare input: {err:?}"),
-    }
+    spawn_local(async move {
+        if let Some(handle) = AsyncFileDialog::new()
+            .add_filter("PRG", &["prg", "bin"])
+            .pick_file()
+            .await
+        {
+            let file_name = handle.file_name();
+            let bytes = handle.read().await;
+            FILE_QUEUE.with(|queue| {
+                queue.borrow_mut().push((
+                    bytes,
+                    if file_name.is_empty() {
+                        None
+                    } else {
+                        Some(file_name)
+                    },
+                ));
+            });
+        }
+    });
 }
 
 pub fn drain_pending_files() -> Vec<(Vec<u8>, Option<String>)> {
@@ -167,76 +181,7 @@ pub fn canvas_id() -> &'static str {
 }
 
 fn setup_file_loader() -> Result<(), JsValue> {
-    ensure_file_input().map(|_| ())
-}
-
-fn ensure_file_input() -> Result<HtmlInputElement, JsValue> {
-    FILE_INPUT.with(|slot| -> Result<HtmlInputElement, JsValue> {
-        {
-            let existing = slot.borrow();
-            if let Some(input) = existing.as_ref() {
-                return Ok(input.clone());
-            }
-        }
-
-        let window = web_sys::window().ok_or_else(|| JsValue::from_str("missing window"))?;
-        let document = window
-            .document()
-            .ok_or_else(|| JsValue::from_str("missing document"))?;
-        let body = document
-            .body()
-            .ok_or_else(|| JsValue::from_str("missing document body"))?;
-
-        let element = document.create_element("input")?;
-        let input: HtmlInputElement = element.dyn_into()?;
-        input.set_attribute("type", "file")?;
-        input.set_attribute("accept", ".prg,.bin,*/*")?;
-        input.set_attribute(
-            "style",
-            "position:fixed;left:-1000px;top:-1000px;width:1px;height:1px;opacity:0;pointer-events:none;",
-        )?;
-        body.append_child(input.as_ref())?;
-
-        let change_input = input.clone();
-        let change_closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
-            if let Some(files) = change_input.files() {
-                for idx in 0..files.length() {
-                    if let Some(file) = files.get(idx) {
-                        let name = file.name();
-                        let file = File::from(file);
-                        let reader_state: Rc<RefCell<Option<_>>> = Rc::new(RefCell::new(None));
-                        let reader_state_clone = reader_state.clone();
-                        let name_clone = if name.is_empty() {
-                            None
-                        } else {
-                            Some(name.clone())
-                        };
-                        let reader = read_as_bytes(&file, move |result| {
-                            match result {
-                                Ok(bytes) => {
-                                    FILE_QUEUE.with(|queue| {
-                                        queue.borrow_mut().push((bytes, name_clone.clone()));
-                                    });
-                                }
-                                Err(err) => {
-                                    log::error!("failed to read file: {err}");
-                                }
-                            }
-                            reader_state_clone.borrow_mut().take();
-                        });
-                        *reader_state.borrow_mut() = Some(reader);
-                    }
-                }
-            }
-            change_input.set_value("");
-        }) as Box<dyn FnMut(_)>);
-        input
-            .add_event_listener_with_callback("change", change_closure.as_ref().unchecked_ref())?;
-        change_closure.forget();
-
-        slot.borrow_mut().replace(input.clone());
-        Ok(input)
-    })
+    Ok(())
 }
 
 fn try_show_open_file_picker() -> bool {

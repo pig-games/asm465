@@ -7,7 +7,7 @@ use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
 
-#[cfg(feature = "native-file-dialog")]
+#[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -500,7 +500,14 @@ fn ui_system(
         .resizable(false)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                #[cfg(feature = "native-file-dialog")]
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if ui.button("Load PRG...").clicked() {
+                        web::request_file_dialog();
+                    }
+                }
+
+                #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
                 {
                     if ui.button("Load PRG...").clicked() {
                         if let Some(path) = FileDialog::new()
@@ -520,13 +527,6 @@ fn ui_system(
                 #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-file-dialog")))]
                 {
                     ui.add_enabled(false, egui::Button::new("Load PRG..."));
-                }
-
-                #[cfg(all(target_arch = "wasm32", not(feature = "native-file-dialog")))]
-                {
-                    if ui.button("Load PRG...").clicked() {
-                        web::request_file_dialog();
-                    }
                 }
 
                 if let Some(status) = &ui_state.status {
