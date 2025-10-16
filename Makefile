@@ -14,7 +14,8 @@ endif
 
 # ---- Network config (for Ultimate64 uploads) --------------------------------
 ULTIMATE_IP ?= 192.168.0.188
--include config.mk   # optional local overrides (git-ignored)
+-include native/config.mk   # optional local overrides (legacy path)
+-include config.mk          # optional local overrides (git-ignored)
 
 # ---- Project basics --------------------------------------------------------
 NAME    := asm465
@@ -38,10 +39,10 @@ CROSS465_WAIT ?= 2
 CROSS465_MAX_CYCLES   ?= 5000000
 CROSS465_RETRIES ?= 10
 CROSS465_DELAY ?= 1
-ASM465_NATIVE_PID_FILE ?= build/cross465/asm465_native.pid
-ASM465_NATIVE_LOG ?= build/cross465/asm465_native.log
-ASM465_BRIDGE_PID_FILE ?= build/cross465/asm465_bridge.pid
-ASM465_BRIDGE_LOG ?= build/cross465/asm465_bridge.log
+ASM465_NATIVE_PID_FILE ?= native/build/cross465/asm465_native.pid
+ASM465_NATIVE_LOG ?= native/build/cross465/asm465_native.log
+ASM465_BRIDGE_PID_FILE ?= native/build/cross465/asm465_bridge.pid
+ASM465_BRIDGE_LOG ?= native/build/cross465/asm465_bridge.log
 
 ifeq ($(origin CROSS465_MODE),undefined)
   ifeq ($(TARGET),cross465)
@@ -73,12 +74,12 @@ define ENSURE_ASM465_SERVICE
                         if [ ! -f $(ASM465_NATIVE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_NATIVE_PID_FILE)) 2>/dev/null; then \
                                 mkdir -p $$(dirname $(ASM465_NATIVE_PID_FILE)); \
 				echo ">> Starting asm465-bevy native UI on $$host:$$port"; \
-				nohup cargo run --manifest-path ../crossdev/asm465-bevy/Cargo.toml -- --service-port $$port --service-host $$host --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
+                                nohup cargo run --manifest-path crossdev/asm465-bevy/Cargo.toml -- --service-port $$port --service-host $$host --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
                                 echo $$! > $(ASM465_NATIVE_PID_FILE); \
                                 sleep $(CROSS465_WAIT); \
                         fi; \
                 fi; \
-                if ! $(PYTHON) tools/wait_for_port.py --host "$$host" --port "$$port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                if ! $(PYTHON) native/tools/wait_for_port.py --host "$$host" --port "$$port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
                         echo 'ERROR: asm465 native TCP service did not become ready' >&2; \
                         $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
                         exit 1; \
@@ -93,17 +94,17 @@ define ENSURE_ASM465_SERVICE
                         if [ ! -f $(ASM465_BRIDGE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_BRIDGE_PID_FILE)) 2>/dev/null; then \
                                 mkdir -p $$(dirname $(ASM465_BRIDGE_PID_FILE)); \
                                 echo ">> Starting asm465 bridge on tcp $$tcp_host:$$tcp_port (ws $$ws_host:$$ws_port)"; \
-                                nohup cargo run --manifest-path ../crossdev/asm465-server/Cargo.toml -- --tcp-host $$tcp_host --tcp-port $$tcp_port --ws-host $$ws_host --ws-port $$ws_port >$(ASM465_BRIDGE_LOG) 2>&1 & \
+                                nohup cargo run --manifest-path crossdev/asm465-server/Cargo.toml -- --tcp-host $$tcp_host --tcp-port $$tcp_port --ws-host $$ws_host --ws-port $$ws_port >$(ASM465_BRIDGE_LOG) 2>&1 & \
                                 echo $$! > $(ASM465_BRIDGE_PID_FILE); \
                                 sleep $(CROSS465_WAIT); \
                         fi; \
                 fi; \
-                if ! $(PYTHON) tools/wait_for_port.py --host "$$tcp_host" --port "$$tcp_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                if ! $(PYTHON) native/tools/wait_for_port.py --host "$$tcp_host" --port "$$tcp_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
                         echo 'ERROR: asm465 bridge TCP service did not become ready' >&2; \
                         $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
                         exit 1; \
                 fi; \
-                if ! $(PYTHON) tools/wait_for_port.py --host "$$ws_host" --port "$$ws_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
+                if ! $(PYTHON) native/tools/wait_for_port.py --host "$$ws_host" --port "$$ws_port" --retries $(CROSS465_RETRIES) --delay $(CROSS465_DELAY); then \
                         echo 'ERROR: asm465 websocket bridge did not become ready' >&2; \
                         $(MAKE) --no-print-directory asm465-service-stop >/dev/null 2>&1 || true; \
                         exit 1; \
@@ -131,11 +132,11 @@ define STOP_ASM465_SERVICE
 endef
 
 # Per-target output dir (watch out for tabs here!)
-OUTDIR := build/$(TARGET)
+OUTDIR := native/build/$(TARGET)
 
 # Fail fast if OUTDIR is somehow empty (whitespace/tab issues etc.)
 ifeq ($(strip $(OUTDIR)),)
-  $(error OUTDIR is empty; expected something like build/$(TARGET))
+  $(error OUTDIR is empty; expected something like native/build/$(TARGET))
 endif
 
 # Create OUTDIR on demand (order-only prereq will trigger this)
@@ -143,13 +144,13 @@ $(OUTDIR):
 	@mkdir -p $(OUTDIR)
 
 # ---- Include paths for headers/macros -------------------------------------
-COMMON_INCLUDE   := src/include
+COMMON_INCLUDE   := native/src/include
 TARGET_ALIAS := $(TARGET)
 ifeq ($(TARGET),cross465web)
   TARGET_ALIAS := cross465
 endif
 
-PLATFORM_INCLUDE := src/platform/$(TARGET_ALIAS)/include
+PLATFORM_INCLUDE := native/src/platform/$(TARGET_ALIAS)/include
 
 # Use --include-dir (portable). These only affect `.include "..."` resolution.
 INCLUDE_FLAGS := -I $(COMMON_INCLUDE) -I $(PLATFORM_INCLUDE)
@@ -172,18 +173,18 @@ PLATFORM_SRC := platform/$(TARGET_ALIAS)
 
 # If you add a platform_prelude.s, put it first in CORE_SRC.
 CORE_SRC = \
-	src/include/core.h \
-	src/$(PLATFORM_SRC)/layout.s \
-	src/$(PLATFORM_SRC)/boot.s \
-	src/$(PLATFORM_SRC)/init.s \
-	src/$(PLATFORM_SRC)/screen.s \
-	src/screen.s \
-	src/util.s
+        native/src/include/core.h \
+        native/src/$(PLATFORM_SRC)/layout.s \
+        native/src/$(PLATFORM_SRC)/boot.s \
+        native/src/$(PLATFORM_SRC)/init.s \
+        native/src/$(PLATFORM_SRC)/screen.s \
+        native/src/screen.s \
+        native/src/util.s
 
-PTEST_SRC = src/tests/parsertest.s src/parser.s
-STEST_SRC = src/tests/screentest.s
-DTEST_SRC = src/tests/debugtest.s
-UTEST_SRC = src/unittest.s src/tests/unittest.s
+PTEST_SRC = native/src/tests/parsertest.s native/src/parser.s
+STEST_SRC = native/src/tests/screentest.s
+DTEST_SRC = native/src/tests/debugtest.s
+UTEST_SRC = native/src/unittest.s native/src/tests/unittest.s
 
 # ---- Build targets ---------------------------------------------------------
 parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
@@ -224,7 +225,7 @@ else ifeq ($(TARGET),ultimate64)
 		--data-binary @$(OUTDIR)/$*
 else ifeq ($(TARGET_ALIAS),cross465)
 	$(ENSURE_ASM465_SERVICE)
-	$(PYTHON) tools/send_prg.py "$(OUTDIR)/$*.prg" "$(ASM465_SEND_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(ASM465_SEND_HOST)" --embed --name "$*"
+	$(PYTHON) native/tools/send_prg.py "$(OUTDIR)/$*.prg" "$(ASM465_SEND_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(ASM465_SEND_HOST)" --embed --name "$*"
 endif
 
 # Convenience wrappers (build then run)
@@ -235,7 +236,7 @@ run_utest:   unittest     run_unittest
 
 # ---- Housekeeping ----------------------------------------------------------
 clean:
-	@rm -rf build/*
+	@rm -rf native/build/*
 
 # ===== Build/Run Matrix ======================================================
 BUILD_TARGETS ?= $(VALID_TARGETS)
@@ -276,9 +277,9 @@ asm465-service-stop:
 
 .PHONY: wasm wasm-clean
 wasm:
-	@$(MAKE) -C ../crossdev/asm465-wasm build
+	@$(MAKE) -C crossdev/asm465-wasm build
 
 wasm-clean:
-	@$(MAKE) -C ../crossdev/asm465-wasm clean
+	@$(MAKE) -C crossdev/asm465-wasm clean
 
 .PHONY: all clean run_% run_ptest run_stest run_dtest run_utest matrix_build matrix_run ci asm465-service-start asm465-service-stop wasm wasm-clean
