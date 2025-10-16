@@ -289,7 +289,7 @@ pub fn run_app(config: AppConfig) {
         .get_non_send_resource::<EmulatorState>()
         .and_then(EmulatorState::status_message);
 
-    let mut ui_state = UiState::with_status(initial_status);
+    let ui_state = UiState::with_status(initial_status);
 
     #[cfg(target_arch = "wasm32")]
     if let Some(status) = web_status {
