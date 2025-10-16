@@ -7,5 +7,5 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-asm465-bevy = { path = "../asm465-bevy", default-features = false }
+asm465 = { path = "../asm465", default-features = false }
 wasm-bindgen = "0.2"

@@ -1,62 +1,78 @@
+//! Bevy/egui front-end for the asm465 cross-development tooling.
+//!
+//! This crate hosts the “desktop” viewer: it embeds the 6502 core, connects to
+//! the cross465 [bus] crate, renders the screen/console, and exposes file &
+//! service APIs for loading programs at runtime.  The same crate also backs the
+//! wasm build (via [`web::start_web_app`]), so as much logic as possible lives
+//! in platform-neutral modules.
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine;
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
-use eframe::egui::{self, text::LayoutJob, text::TextFormat, Color32, Context, FontId};
-use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "native-file-dialog")]
+#[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
 
-#[cfg(feature = "native-service")]
-use std::{
-    fs,
-    io::{BufRead, BufReader, BufWriter, Write},
-    net::{TcpListener, TcpStream},
-    thread,
-};
-
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 #[cfg(feature = "native-service")]
 use clap::Parser;
-
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "native-service")]
+use std::io::{BufRead, BufReader, BufWriter, Write};
+#[cfg(feature = "native-service")]
+use std::net::{TcpListener, TcpStream};
+#[cfg(feature = "native-service")]
+use std::thread;
+
+const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
+const CONSOLE_FONT_SIZE: f32 = 16.0;
+const PLACEHOLDER_SIZE: f32 = 180.0;
+
+#[cfg(target_arch = "wasm32")]
+mod web;
+
+#[cfg(target_arch = "wasm32")]
+pub use web::start_web_app;
 
 #[cfg(feature = "native-service")]
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Optional 6502 PRG to execute before the console window opens.
+#[command(author, version, about = "Bevy-hosted asm465 console viewer", long_about = None)]
+pub struct Args {
+    /// Optional 6502 PRG to execute before the window opens.
     #[arg(long)]
-    prg: Option<PathBuf>,
+    pub prg: Option<PathBuf>,
 
     /// Maximum number of CPU cycles to run the startup program for.
     #[arg(long, default_value_t = 5_000_000u64)]
-    max_cycles: u64,
+    pub max_cycles: u64,
 
     /// Optional address to jump to instead of the PRG's load address.
     #[arg(long)]
-    start: Option<u16>,
+    pub start: Option<u16>,
 
     /// Optional TCP port to expose the JSON service API on.
     #[arg(long)]
-    service_port: Option<u16>,
+    pub service_port: Option<u16>,
 
     /// Host/interface to bind the JSON service API on.
     #[arg(long, default_value = "127.0.0.1")]
-    service_host: String,
+    pub service_host: String,
 
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
-    program: Option<PathBuf>,
+    pub program: Option<PathBuf>,
 }
 
-/// Source for a PRG to be executed.
-#[derive(Clone)]
+/// Source for a PRG payload that should be executed by the emulator.
+#[derive(Debug, Clone)]
 pub enum ProgramSource {
     File(PathBuf),
     Inline { name: Option<String>, data: Vec<u8> },
@@ -65,11 +81,10 @@ pub enum ProgramSource {
 impl ProgramSource {
     fn load_bytes(&self) -> Result<Vec<u8>, String> {
         match self {
-            #[cfg(feature = "native-service")]
-            ProgramSource::File(path) => {
-                fs::read(path).map_err(|err| format!("Failed to read {}: {err}", path.display()))
-            }
-            #[cfg(not(feature = "native-service"))]
+            #[cfg(any(feature = "native-file-dialog", feature = "native-service"))]
+            ProgramSource::File(path) => std::fs::read(path)
+                .map_err(|err| format!("Failed to read {}: {err}", path.display())),
+            #[cfg(not(any(feature = "native-file-dialog", feature = "native-service")))]
             ProgramSource::File(_) => Err("File sources are not supported on this platform".into()),
             ProgramSource::Inline { data, .. } => Ok(data.clone()),
         }
@@ -85,18 +100,16 @@ impl ProgramSource {
     }
 }
 
-/// Arguments controlling automatic execution at startup.
+/// Configuration used when pre-loading a PRG before the Bevy app renders.
 #[derive(Clone)]
 pub struct StartupConfig {
-    /// Program source (file path or inline bytes).
     pub source: ProgramSource,
-    /// How many CPU cycles to execute before presenting the window.
     pub max_cycles: u64,
-    /// Optional override for the program counter after reset.
     pub start: Option<u16>,
 }
 
-/// Commands that can be issued via the external service API.
+/// Command variants exchanged with the external service API.
+#[derive(Debug)]
 pub enum ServiceCommand {
     RunProgram {
         source: ProgramSource,
@@ -105,16 +118,36 @@ pub enum ServiceCommand {
     },
 }
 
-/// Envelope sent from the service listener into the UI thread.
-#[cfg(feature = "native-service")]
-#[cfg(feature = "native-service")]
-struct ServiceEnvelope {
-    command: ServiceCommand,
-    respond_to: Sender<ServiceResponseMessage>,
+#[derive(Debug, Serialize)]
+pub struct ServiceResponseMessage {
+    pub status: ServiceStatus,
+    pub message: String,
 }
 
-/// JSON payload accepted by the service listener.
-#[derive(Deserialize)]
+impl ServiceResponseMessage {
+    pub fn ok(message: impl Into<String>) -> Self {
+        Self {
+            status: ServiceStatus::Ok,
+            message: message.into(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            status: ServiceStatus::Error,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceStatus {
+    Ok,
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum ServiceRequestPayload {
     RunPrg {
@@ -177,175 +210,165 @@ impl ServiceRequestPayload {
     }
 }
 
-/// Response shape returned to service clients.
-#[derive(Serialize)]
-pub struct ServiceResponseMessage {
-    pub status: ServiceStatus,
-    pub message: String,
-}
-
-impl ServiceResponseMessage {
-    pub fn ok(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Ok,
-            message: message.into(),
-        }
-    }
-
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Error,
-            message: message.into(),
-        }
-    }
-}
-
-/// Response status indicator (serialises to `"ok"` or `"error"`).
-#[derive(Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ServiceStatus {
-    Ok,
-    Error,
-}
-
-/// egui application responsible for rendering the mirrored console.
-pub struct Asm465App {
-    /// Owning bus instance so we can forward MMIO writes.
-    bus: Bus,
-    /// Shared console surface mirrored from the MMIO device.
-    console_output: Arc<Mutex<ConsoleOutput>>,
-    /// Current text the user is preparing to send.
-    input_buffer: String,
-    /// Optional one-shot status banner (startup summary/error).
-    status_message: Option<String>,
-    /// Default cycle budget for program execution (used when commands omit it).
-    default_max_cycles: u64,
-    /// Optional receiver for service API commands.
+pub struct AppConfig {
+    pub startup: Option<StartupConfig>,
+    pub default_max_cycles: u64,
     #[cfg(feature = "native-service")]
-    service_rx: Option<Receiver<ServiceEnvelope>>,
-    /// egui context so background work can trigger repaints.
-    egui_ctx: Context,
+    pub service: Option<ServiceConfig>,
 }
 
-impl Asm465App {
-    pub fn new(
-        cc: &eframe::CreationContext<'_>,
-        startup: Option<StartupConfig>,
-        default_max_cycles: u64,
-        service_host: String,
-        service_port: Option<u16>,
-    ) -> Self {
-        let mut bus = Bus::new();
-        let mut status_message = None;
-        let egui_ctx = cc.egui_ctx.clone();
+#[cfg(feature = "native-service")]
+pub struct ServiceConfig {
+    pub host: String,
+    pub port: u16,
+}
 
-        if let Some(config) = startup {
-            match run_startup_program(bus, &config) {
+#[cfg(feature = "native-service")]
+pub fn run_native() -> Result<(), String> {
+    let args = Args::parse();
+    let startup_path = args.prg.clone().or_else(|| args.program.clone());
+    let startup = startup_path.map(|path| StartupConfig {
+        source: ProgramSource::File(path),
+        max_cycles: args.max_cycles,
+        start: args.start,
+    });
+
+    let service = args.service_port.map(|port| ServiceConfig {
+        host: args.service_host.clone(),
+        port,
+    });
+
+    run_app(AppConfig {
+        startup,
+        default_max_cycles: args.max_cycles,
+        #[cfg(feature = "native-service")]
+        service,
+    });
+
+    Ok(())
+}
+
+pub fn run_app(config: AppConfig) {
+    #[allow(unused_mut)]
+    let mut emulator = EmulatorState::new(config.startup, config.default_max_cycles);
+
+    #[cfg(feature = "native-service")]
+    let mut service_listener: Option<ServiceListener> = None;
+
+    #[cfg(feature = "native-service")]
+    if let Some(service_cfg) = config.service {
+        match start_service_listener(&service_cfg.host, service_cfg.port) {
+            Ok(receiver) => {
+                service_listener = Some(ServiceListener { receiver });
+            }
+            Err(err) => {
+                let msg = format!(
+                    "Failed to start service listener on {}:{}: {err}",
+                    service_cfg.host, service_cfg.port
+                );
+                emulator.status_message = Some(msg.clone());
+                write_console_line(&mut emulator.bus, &msg);
+            }
+        }
+    }
+
+    let mut app = App::new();
+    app.insert_non_send_resource(emulator);
+    app.insert_resource(ClearColor(Color::rgb(0.05, 0.05, 0.08)));
+
+    #[cfg(feature = "native-service")]
+    if let Some(listener) = service_listener {
+        app.insert_resource(listener);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    let web_status = web::configure_app(&mut app);
+
+    let initial_status = app
+        .world
+        .get_non_send_resource::<EmulatorState>()
+        .and_then(EmulatorState::status_message);
+
+    let mut ui_state = UiState::with_status(initial_status);
+
+    #[cfg(target_arch = "wasm32")]
+    if let Some(status) = web_status {
+        ui_state.status = Some(match ui_state.status.take() {
+            Some(existing) => format!("{existing} | {status}"),
+            None => status,
+        });
+    }
+
+    app.insert_resource(ui_state);
+
+    #[allow(unused_mut)]
+    let mut window = Window {
+        title: "asm465 Bevy Console".to_string(),
+        ..Default::default()
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        window.canvas = Some(web::canvas_id().to_string());
+        window.fit_canvas_to_parent = true;
+    }
+
+    app.add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(window),
+            ..Default::default()
+        }),
+        EguiPlugin,
+    ))
+    .add_systems(Startup, setup_scene)
+    .add_systems(Update, ui_system)
+    .run();
+}
+
+struct EmulatorState {
+    bus: Bus,
+    console_output: Arc<Mutex<ConsoleOutput>>,
+    default_max_cycles: u64,
+    status_message: Option<String>,
+}
+
+impl EmulatorState {
+    fn new(startup: Option<StartupConfig>, default_max_cycles: u64) -> Self {
+        let mut bus = Bus::new();
+        let status_message = if let Some(config) = startup {
+            match run_program_with_config(bus, &config) {
                 Ok((new_bus, msg)) => {
-                    status_message = Some(msg);
                     bus = new_bus;
+                    Some(msg)
                 }
                 Err((mut new_bus, msg)) => {
                     write_console_line(&mut new_bus, &msg);
-                    status_message = Some(msg);
                     bus = new_bus;
+                    Some(msg)
                 }
             }
         } else {
-            write_console_line(&mut bus, "Welcome to the asm465 console viewer!");
-        }
+            write_console_line(&mut bus, WELCOME_MESSAGE);
+            Some(WELCOME_MESSAGE.to_string())
+        };
 
         let console_output = bus
             .console_output_handle()
             .expect("default console MMIO not found on bus");
 
-        #[cfg(feature = "native-service")]
-        let service_rx = match service_port {
-            Some(port) => match start_service_listener(&service_host, port, egui_ctx.clone()) {
-                Ok(rx) => Some(rx),
-                Err(err) => {
-                    let msg =
-                        format!("Failed to start service listener on {service_host}:{port}: {err}");
-                    write_console_line(&mut bus, &msg);
-                    status_message = Some(msg);
-                    None
-                }
-            },
-            None => None,
-        };
-
-        #[cfg(not(feature = "native-service"))]
-        let _ = (service_host, service_port);
-
         Self {
             bus,
             console_output,
-            input_buffer: String::new(),
-            status_message,
             default_max_cycles,
-            egui_ctx,
-            #[cfg(feature = "native-service")]
-            service_rx,
+            status_message,
         }
     }
 
-    /// Helper for pushing a line of host text through the MMIO console path.
-    fn write_line(&mut self, line: &str) {
-        write_console_line(&mut self.bus, line);
+    fn status_message(&self) -> Option<String> {
+        self.status_message.clone()
     }
 
-    #[cfg(feature = "native-service")]
-    fn process_service_messages(&mut self) {
-        let Some(rx_ref) = self.service_rx.as_ref() else {
-            return;
-        };
-        let rx = rx_ref.clone();
-        let mut handled = false;
-        while let Ok(envelope) = rx.try_recv() {
-            self.handle_service_envelope(envelope);
-            handled = true;
-        }
-        if handled {
-            self.egui_ctx.request_repaint();
-        }
-    }
-
-    #[cfg(not(feature = "native-service"))]
-    fn process_service_messages(&mut self) {}
-
-    #[cfg(feature = "native-service")]
-    fn handle_service_envelope(&mut self, envelope: ServiceEnvelope) {
-        let ServiceEnvelope {
-            command,
-            respond_to,
-        } = envelope;
-        let response = self.handle_service_command(command);
-        let _ = respond_to.send(response);
-    }
-
-    pub fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
-        match command {
-            ServiceCommand::RunProgram {
-                source,
-                max_cycles,
-                start,
-            } => match self.execute_program(source, max_cycles, start) {
-                Ok(msg) => ServiceResponseMessage::ok(msg),
-                Err(err) => ServiceResponseMessage::error(err),
-            },
-        }
-    }
-
-    pub fn run_program(
-        &mut self,
-        source: ProgramSource,
-        max_cycles: Option<u64>,
-        start: Option<u16>,
-    ) -> Result<String, String> {
-        self.execute_program(source, max_cycles, start)
-    }
-
-    fn execute_program(
+    fn run_program(
         &mut self,
         source: ProgramSource,
         max_cycles: Option<u64>,
@@ -358,108 +381,251 @@ impl Asm465App {
             start,
         };
         let bus = std::mem::replace(&mut self.bus, Bus::new());
-        match run_startup_program(bus, &config) {
+        match run_program_with_config(bus, &config) {
             Ok((new_bus, msg)) => {
-                self.status_message = Some(msg.clone());
                 self.bus = new_bus;
                 self.console_output = self
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
-                self.egui_ctx.request_repaint();
+                self.status_message = Some(msg.clone());
                 Ok(msg)
             }
             Err((mut new_bus, msg)) => {
                 write_console_line(&mut new_bus, &msg);
-                self.status_message = Some(msg.clone());
                 self.bus = new_bus;
                 self.console_output = self
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
-                self.egui_ctx.request_repaint();
+                self.status_message = Some(msg.clone());
                 Err(msg)
             }
         }
     }
+
+    fn snapshot(&self) -> Option<ConsoleSnapshot> {
+        self.console_output
+            .lock()
+            .map(|output| output.snapshot())
+            .ok()
+    }
+
+    fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
+        match command {
+            ServiceCommand::RunProgram {
+                source,
+                max_cycles,
+                start,
+            } => match self.run_program(source, max_cycles, start) {
+                Ok(msg) => ServiceResponseMessage::ok(msg),
+                Err(err) => ServiceResponseMessage::error(err),
+            },
+        }
+    }
 }
 
-impl Asm465App {
-    pub fn update_frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(feature = "native-service")]
-        self.process_service_messages();
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Console Output");
+#[derive(Resource)]
+struct UiState {
+    status: Option<String>,
+    console_open: bool,
+    bridge_connected: Option<bool>,
+}
 
-            #[cfg(feature = "native-file-dialog")]
-            if ui.button("Load PRG...").clicked() {
-                if let Some(path) = FileDialog::new()
-                    .add_filter("PRG/BIN", &["prg", "bin"])
-                    .pick_file()
-                {
-                    match self.run_program(
-                        ProgramSource::File(path.clone()),
-                        Some(self.default_max_cycles),
-                        None,
-                    ) {
-                        Ok(msg) => self.status_message = Some(msg),
-                        Err(err) => self.status_message = Some(err),
-                    }
-                }
-            }
+impl UiState {
+    fn with_status(status: Option<String>) -> Self {
+        Self {
+            status,
+            console_open: true,
+            bridge_connected: None,
+        }
+    }
+}
 
-            if let Some(msg) = &self.status_message {
-                ui.label(msg);
-                ui.separator();
-            }
+fn setup_scene(mut commands: Commands) {
+    commands.spawn(Camera2dBundle::default());
 
-            let snapshot = self.console_output.lock().map(|out| out.snapshot()).ok();
+    commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            color: Color::rgb(0.2, 0.4, 0.8),
+            custom_size: Some(Vec2::splat(PLACEHOLDER_SIZE)),
+            ..Default::default()
+        },
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        ..Default::default()
+    });
+}
 
-            if let Some(snapshot) = snapshot {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let job = snapshot_to_layout(&snapshot);
-                        ui.label(job);
-                    });
-            }
+fn ui_system(
+    mut contexts: EguiContexts,
+    #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
+    mut ui_state: ResMut<UiState>,
+    #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
+    #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
+) {
+    #[cfg(feature = "native-service")]
+    if let Some(listener) = service_listener {
+        while let Ok(envelope) = listener.receiver.try_recv() {
+            let response = emulator.handle_service_command(envelope.command);
+            ui_state.status = Some(response.message.clone());
+            let _ = envelope.respond_to.send(response);
+        }
+    }
 
-            ui.separator();
+    #[cfg(target_arch = "wasm32")]
+    let mut wasm_bridge_connected = false;
 
-            ui.horizontal(|ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.input_buffer)
-                        .hint_text("Type text to send to the console"),
-                );
+    #[cfg(target_arch = "wasm32")]
+    if let Some(service) = web_service {
+        wasm_bridge_connected = true;
+        for command in service.drain_commands() {
+            let response = emulator.handle_service_command(command);
+            ui_state.status = Some(response.message.clone());
+            service.send_response(response);
+        }
+    }
 
-                let enter_pressed =
-                    response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-
-                if enter_pressed || ui.button("Send").clicked() {
-                    let line = self.input_buffer.trim_end_matches('\n').to_owned();
-                    if !line.is_empty() {
-                        self.write_line(&line);
-                    }
-                    self.input_buffer.clear();
-                    ui.ctx().request_repaint();
-                }
-
-                if ui.button("Clear").clicked() {
-                    self.bus.clear_console_buffer();
-                    ui.ctx().request_repaint();
-                }
-            });
+    #[cfg(target_arch = "wasm32")]
+    for (data, name) in web::drain_pending_files() {
+        let source = ProgramSource::Inline { name, data };
+        let result = emulator.run_program(source, None, None);
+        ui_state.status = Some(match result {
+            Ok(msg) => msg,
+            Err(err) => err,
         });
     }
-}
 
-impl eframe::App for Asm465App {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.update_frame(ctx, frame);
+    #[cfg(target_arch = "wasm32")]
+    {
+        ui_state.bridge_connected = Some(wasm_bridge_connected);
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui_state.bridge_connected = None;
+    }
+
+    let ctx = contexts.ctx_mut();
+
+    egui::TopBottomPanel::top("top_panel")
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    if ui.button("Load PRG...").clicked() {
+                        web::request_file_dialog();
+                    }
+                }
+
+                #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
+                {
+                    if ui.button("Load PRG...").clicked() {
+                        if let Some(path) = FileDialog::new()
+                            .add_filter("PRG/BIN", &["prg", "bin"])
+                            .pick_file()
+                        {
+                            let result =
+                                emulator.run_program(ProgramSource::File(path.clone()), None, None);
+                            ui_state.status = Some(match result {
+                                Ok(msg) => msg,
+                                Err(err) => err,
+                            });
+                        }
+                    }
+                }
+
+                #[cfg(all(not(target_arch = "wasm32"), not(feature = "native-file-dialog")))]
+                {
+                    ui.add_enabled(false, egui::Button::new("Load PRG..."));
+                }
+
+                if let Some(status) = &ui_state.status {
+                    ui.label(status);
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                if let Some(connected) = ui_state.bridge_connected {
+                    let text = if connected {
+                        "Bridge: connected"
+                    } else {
+                        "Bridge: offline"
+                    };
+                    ui.label(text);
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let toggle_label = if ui_state.console_open {
+                        "Hide Console"
+                    } else {
+                        "Show Console"
+                    };
+                    if ui.button(toggle_label).clicked() {
+                        ui_state.console_open = !ui_state.console_open;
+                    }
+                });
+            });
+        });
+
+    let console_snapshot = emulator.snapshot();
+
+    egui::TopBottomPanel::bottom("console_panel")
+        .resizable(true)
+        .default_height(220.0)
+        .min_height(120.0)
+        .show_animated(ctx, ui_state.console_open, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if let Some(snapshot) = &console_snapshot {
+                        let job = console_layout_job(snapshot);
+                        ui.label(job);
+                    } else {
+                        ui.label("Console unavailable");
+                    }
+                });
+        });
 }
 
-/// Push a line of host text through the MMIO console path.
+fn run_program_with_config(
+    bus: Bus,
+    config: &StartupConfig,
+) -> Result<(Bus, String), (Bus, String)> {
+    let label = config.source.label();
+    let data = match config.source.load_bytes() {
+        Ok(bytes) => bytes,
+        Err(err) => return Err((bus, err)),
+    };
+
+    if data.len() < 2 {
+        return Err((
+            bus,
+            format!("Program {label} is too small to contain a load address"),
+        ));
+    }
+
+    let load_addr = u16::from_le_bytes([data[0], data[1]]);
+    let body = &data[2..];
+    let mut bus = bus;
+    bus.load(load_addr, body);
+    let start = config.start.unwrap_or(load_addr);
+    bus.set_reset_vector(start);
+
+    let mut cpu = Cpu::new(bus);
+    cpu.reset();
+    cpu.run_for(config.max_cycles);
+    let cycles = cpu.cycles;
+    let bus = cpu.bus;
+
+    let summary = format!(
+        "Loaded {label} at ${:04X} and ran for {} cycles (start=${:04X})",
+        load_addr, cycles, start
+    );
+
+    Ok((bus, summary))
+}
+
 fn write_console_line(bus: &mut Bus, line: &str) {
     for ch in line.chars() {
         let screen_code = unicode_to_screen(ch);
@@ -472,64 +638,70 @@ fn write_console_line(bus: &mut Bus, line: &str) {
     bus.write(0xDF01, 0);
 }
 
-/// Convert a console snapshot into an egui layout that preserves colour/spacing.
-fn snapshot_to_layout(snapshot: &ConsoleSnapshot) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    let font = FontId::monospace(16.0);
-    let mut newline_format = TextFormat::default();
-    newline_format.font_id = font.clone();
+fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut buffer = [0u8; 4];
+    let font_id = egui::FontId::monospace(CONSOLE_FONT_SIZE);
 
     for y in 0..snapshot.height {
         for x in 0..snapshot.width {
             let cell = snapshot.cell(x, y);
-            let mut format = TextFormat::default();
-            format.font_id = font.clone();
+            let glyph = cell.ch.encode_utf8(&mut buffer);
+            let mut format = egui::text::TextFormat::default();
+            format.font_id = font_id.clone();
             format.color = palette_color(cell.fg);
-            format.background = palette_color(cell.bg);
-            let text = cell.ch.to_string();
-            job.append(&text, 0.0, format);
+            job.append(glyph, 0.0, format);
         }
         if y + 1 < snapshot.height {
-            job.append("\n", 0.0, newline_format.clone());
+            let mut format = egui::text::TextFormat::default();
+            format.font_id = font_id.clone();
+            format.color = palette_color(7);
+            job.append("\n", 0.0, format);
         }
     }
 
     job
 }
 
-/// Translate a cross465 colour index into an egui `Color32`.
-fn palette_color(index: u8) -> Color32 {
-    const PALETTE: [Color32; 16] = [
-        Color32::from_rgb(0x00, 0x00, 0x00), // Black
-        Color32::from_rgb(0xFF, 0xFF, 0xFF), // White
-        Color32::from_rgb(0x88, 0x00, 0x00), // Red
-        Color32::from_rgb(0xAA, 0xFF, 0xEE), // Cyan
-        Color32::from_rgb(0xCC, 0x44, 0xCC), // Magenta
-        Color32::from_rgb(0x00, 0xCC, 0x55), // Green
-        Color32::from_rgb(0x00, 0x00, 0xAA), // Blue
-        Color32::from_rgb(0xEE, 0xEE, 0x77), // Yellow
-        Color32::from_rgb(0xDD, 0x88, 0x55), // Orange
-        Color32::from_rgb(0x66, 0x44, 0x00), // Brown
-        Color32::from_rgb(0xFF, 0x77, 0x77), // Light red
-        Color32::from_rgb(0xAA, 0xFF, 0xEE), // Light cyan
-        Color32::from_rgb(0xFF, 0xAA, 0xFF), // Light magenta
-        Color32::from_rgb(0xAA, 0xFF, 0xAA), // Light green
-        Color32::from_rgb(0xAA, 0xCC, 0xFF), // Light blue
-        Color32::from_rgb(0xCC, 0xCC, 0xCC), // Light gray
-    ];
-    PALETTE[index as usize & 0x0F]
+fn palette_color(index: u8) -> egui::Color32 {
+    match index & 0x0F {
+        0x00 => egui::Color32::from_rgb(0x00, 0x00, 0x00), // Black
+        0x01 => egui::Color32::from_rgb(0xFF, 0xFF, 0xFF), // White
+        0x02 => egui::Color32::from_rgb(0x88, 0x00, 0x00), // Red
+        0x03 => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Cyan
+        0x04 => egui::Color32::from_rgb(0xCC, 0x44, 0xCC), // Magenta
+        0x05 => egui::Color32::from_rgb(0x00, 0xCC, 0x55), // Green
+        0x06 => egui::Color32::from_rgb(0x00, 0x00, 0xAA), // Blue
+        0x07 => egui::Color32::from_rgb(0xEE, 0xEE, 0x77), // Yellow
+        0x08 => egui::Color32::from_rgb(0xDD, 0x88, 0x55), // Orange
+        0x09 => egui::Color32::from_rgb(0x66, 0x44, 0x00), // Brown
+        0x0A => egui::Color32::from_rgb(0xFF, 0x77, 0x77), // Light red
+        0x0B => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Light cyan
+        0x0C => egui::Color32::from_rgb(0xFF, 0xAA, 0xFF), // Light magenta
+        0x0D => egui::Color32::from_rgb(0xAA, 0xFF, 0xAA), // Light green
+        0x0E => egui::Color32::from_rgb(0xAA, 0xCC, 0xFF), // Light blue
+        _ => egui::Color32::from_rgb(0xCC, 0xCC, 0xCC),    // Light gray
+    }
 }
 
 #[cfg(feature = "native-service")]
-fn start_service_listener(
-    host: &str,
-    port: u16,
-    ctx: Context,
-) -> std::io::Result<Receiver<ServiceEnvelope>> {
+#[derive(Resource)]
+struct ServiceListener {
+    receiver: Receiver<ServiceEnvelope>,
+}
+
+#[cfg(feature = "native-service")]
+struct ServiceEnvelope {
+    command: ServiceCommand,
+    respond_to: Sender<ServiceResponseMessage>,
+}
+
+#[cfg(feature = "native-service")]
+fn start_service_listener(host: &str, port: u16) -> std::io::Result<Receiver<ServiceEnvelope>> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let listener = TcpListener::bind((host, port))?;
     thread::spawn(move || {
-        if let Err(err) = run_service_listener(listener, tx, ctx) {
+        if let Err(err) = run_service_listener(listener, tx) {
             eprintln!("service listener error: {err}");
         }
     });
@@ -537,18 +709,13 @@ fn start_service_listener(
 }
 
 #[cfg(feature = "native-service")]
-fn run_service_listener(
-    listener: TcpListener,
-    tx: Sender<ServiceEnvelope>,
-    ctx: Context,
-) -> std::io::Result<()> {
+fn run_service_listener(listener: TcpListener, tx: Sender<ServiceEnvelope>) -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let tx = tx.clone();
-                let ctx = ctx.clone();
                 thread::spawn(move || {
-                    if let Err(err) = handle_service_connection(stream, tx, ctx) {
+                    if let Err(err) = handle_service_connection(stream, tx) {
                         eprintln!("service client error: {err}");
                     }
                 });
@@ -563,7 +730,6 @@ fn run_service_listener(
 fn handle_service_connection(
     stream: TcpStream,
     tx: Sender<ServiceEnvelope>,
-    ctx: Context,
 ) -> std::io::Result<()> {
     let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
@@ -609,7 +775,6 @@ fn handle_service_connection(
             )?;
             break;
         }
-        ctx.request_repaint();
         match resp_rx.recv() {
             Ok(response) => {
                 write_service_response(&mut writer, response)?;
@@ -637,71 +802,4 @@ fn write_service_response<W: Write>(
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
     writer.write_all(b"\n")?;
     writer.flush()
-}
-
-/// Load a PRG, execute it for a fixed cycle budget, and return a status summary.
-fn run_startup_program(
-    mut bus: Bus,
-    config: &StartupConfig,
-) -> Result<(Bus, String), (Bus, String)> {
-    let label = config.source.label();
-    let data = match config.source.load_bytes() {
-        Ok(bytes) => bytes,
-        Err(err) => return Err((bus, err)),
-    };
-
-    if data.len() < 2 {
-        return Err((
-            bus,
-            format!("Program {label} is too small to contain a load address"),
-        ));
-    }
-
-    let load_addr = u16::from_le_bytes([data[0], data[1]]);
-    let body = &data[2..];
-    bus.load(load_addr, body);
-    let start = config.start.unwrap_or(load_addr);
-    bus.set_reset_vector(start);
-
-    let mut cpu = Cpu::new(bus);
-    cpu.reset();
-    cpu.run_for(config.max_cycles);
-    let bus = cpu.bus;
-
-    let summary = format!(
-        "Loaded {label} at ${:04X} and ran for {} cycles (start=${:04X})",
-        load_addr, config.max_cycles, start
-    );
-
-    Ok((bus, summary))
-}
-
-#[cfg(feature = "native-service")]
-pub fn run_native() -> eframe::Result<()> {
-    let args = Args::parse();
-    let startup_path = args.prg.clone().or_else(|| args.program.clone());
-    let startup = startup_path.map(|path| StartupConfig {
-        source: ProgramSource::File(path),
-        max_cycles: args.max_cycles,
-        start: args.start,
-    });
-    let default_max_cycles = args.max_cycles;
-    let service_port = args.service_port;
-    let service_host = args.service_host.clone();
-
-    let options = eframe::NativeOptions::default();
-    let startup_cfg = startup.clone();
-    eframe::run_native(
-        "asm465 Console",
-        options,
-        Box::new(move |cc| {
-            Box::new(Asm465App::new(
-                cc,
-                startup_cfg.clone(),
-                default_max_cycles,
-                service_host.clone(),
-                service_port,
-            ))
-        }),
-    )
 }

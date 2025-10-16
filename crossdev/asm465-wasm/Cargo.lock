@@ -244,7 +244,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "asm465-bevy"
+name = "asm465"
 version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
@@ -271,7 +271,7 @@ dependencies = [
 name = "asm465-wasm"
 version = "0.1.0"
 dependencies = [
- "asm465-bevy",
+ "asm465",
  "wasm-bindgen",
 ]
 

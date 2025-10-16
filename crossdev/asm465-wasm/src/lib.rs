@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 //! WASM entry point for the Bevy viewer.
 //!
-//! The bulk of the implementation lives inside `asm465-bevy`; this crate simply
+//! The bulk of the implementation lives inside `asm465`; this crate simply
 //! exposes the `wasm_bindgen` start hook so the generated JavaScript can spin up
 //! the app with minimal glue.
 
@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
 /// Initialise the Bevy wasm app. This is invoked by the generated JS glue code
-/// and forwards straight into [`asm465_bevy::start_web_app`].
+/// and forwards straight into [`asm465::start_web_app`].
 pub fn start() -> Result<(), JsValue> {
-    asm465_bevy::start_web_app()
+    asm465::start_web_app()
 }
