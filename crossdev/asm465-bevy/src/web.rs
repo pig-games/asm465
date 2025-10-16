@@ -1,4 +1,13 @@
 #![cfg(target_arch = "wasm32")]
+//! WASM-specific plumbing for the Bevy viewer.
+//!
+//! The WASM build mirrors the native desktop app but swaps the file-picker and
+//! bridge integrations for browser-friendly equivalents.  In particular we:
+//! - expose [`request_file_dialog`] which uses `rfd::AsyncFileDialog` under the
+//!   hood so Safari/Chrome/Firefox all open the picker in response to the egui
+//!   button click;
+//! - maintain a list of pending service commands gathered from the websocket
+//!   bridge so the main Bevy systems can drain them each frame.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -31,6 +40,8 @@ fn extend_status(status: &mut Option<String>, message: String) {
     }
 }
 
+/// Shared state used to bridge websocket commands/responses between the async
+/// browser tasks and the Bevy schedule.
 pub struct WebSocketBridge {
     pending: Rc<RefCell<Vec<ServiceCommand>>>,
     response_tx: mpsc::UnboundedSender<ServiceResponseMessage>,
@@ -99,6 +110,8 @@ impl WebSocketBridge {
     }
 }
 
+/// Install browser-specific resources (file picker + websocket bridge) into
+/// the Bevy app, returning a status message that can be displayed in the UI.
 pub fn configure_app(app: &mut App) -> Option<String> {
     let mut status = None;
 
@@ -132,6 +145,8 @@ pub fn configure_app(app: &mut App) -> Option<String> {
     status
 }
 
+/// Prompt the user for a PRG via the browser's file picker and enqueue the
+/// result for the emulator thread.
 pub fn request_file_dialog() {
     if try_show_open_file_picker() {
         return;
@@ -159,6 +174,8 @@ pub fn request_file_dialog() {
     });
 }
 
+/// Drain any files selected since the last frame. Each tuple contains the raw
+/// bytes plus an optional display name reported by the host platform.
 pub fn drain_pending_files() -> Vec<(Vec<u8>, Option<String>)> {
     FILE_QUEUE.with(|queue| queue.borrow_mut().drain(..).collect())
 }
@@ -184,6 +201,8 @@ fn setup_file_loader() -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Attempt to open the modern `showOpenFilePicker` API, returning `true` if a
+/// picker was launched (even if no file was ultimately selected).
 fn try_show_open_file_picker() -> bool {
     let window = match web_sys::window() {
         Some(window) => window,

@@ -1,3 +1,11 @@
+//! Bevy/egui front-end for the asm465 cross-development tooling.
+//!
+//! This crate hosts the “desktop” viewer: it embeds the 6502 core, connects to
+//! the cross465 [bus] crate, renders the screen/console, and exposes file &
+//! service APIs for loading programs at runtime.  The same crate also backs the
+//! wasm build (via [`web::start_web_app`]), so as much logic as possible lives
+//! in platform-neutral modules.
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -63,6 +71,7 @@ pub struct Args {
     pub program: Option<PathBuf>,
 }
 
+/// Source for a PRG payload that should be executed by the emulator.
 #[derive(Debug, Clone)]
 pub enum ProgramSource {
     File(PathBuf),
@@ -91,6 +100,7 @@ impl ProgramSource {
     }
 }
 
+/// Configuration used when pre-loading a PRG before the Bevy app renders.
 #[derive(Clone)]
 pub struct StartupConfig {
     pub source: ProgramSource,
@@ -98,6 +108,7 @@ pub struct StartupConfig {
     pub start: Option<u16>,
 }
 
+/// Command variants exchanged with the external service API.
 #[derive(Debug)]
 pub enum ServiceCommand {
     RunProgram {

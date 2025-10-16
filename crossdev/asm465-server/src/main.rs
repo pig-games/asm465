@@ -1,3 +1,11 @@
+//! Bridge server that lets external tooling talk to the asm465 Bevy/wgpu
+//! frontend.
+//!
+//! The binary fans out commands from a local TCP socket to all connected
+//! websocket clients (e.g. the wasm viewer) and ships responses back to the
+//! originator. This mirrors the behaviour implemented in the original asm465
+//! desktop UI which exposed a JSON service API.
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -31,16 +39,20 @@ struct Opts {
     ws_port: u16,
 }
 
+/// Shared state tracking all currently-connected websocket clients.
 #[derive(Default)]
 struct ServerState {
     clients: Mutex<Vec<mpsc::UnboundedSender<String>>>,
 }
 
 impl ServerState {
+    /// Register a freshly connected client.
     fn add_client(&self, tx: mpsc::UnboundedSender<String>) {
         self.clients.lock().unwrap().push(tx);
     }
 
+    /// Broadcast a message to every client, pruning dropped connections and
+    /// returning the number of recipients that successfully consumed the text.
     fn broadcast(&self, msg: &str) -> usize {
         let mut clients = self.clients.lock().unwrap();
         let mut alive = Vec::with_capacity(clients.len());
@@ -89,6 +101,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Accept newline-delimited JSON commands over TCP, pushing them into the
+/// websocket fan-out and replying with a short status payload.
 async fn run_tcp_listener(addr: &str, state: Arc<ServerState>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     loop {
@@ -102,6 +116,7 @@ async fn run_tcp_listener(addr: &str, state: Arc<ServerState>) -> anyhow::Result
     }
 }
 
+/// Handle a single TCP client session, streaming commands until EOF.
 async fn handle_tcp_connection(
     stream: TcpStream,
     peer: SocketAddr,
@@ -154,6 +169,7 @@ async fn handle_tcp_connection(
     Ok(())
 }
 
+/// Accept websocket clients and register them with the shared [`ServerState`].
 async fn run_ws_listener(addr: &str, state: Arc<ServerState>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     loop {
@@ -167,6 +183,7 @@ async fn run_ws_listener(addr: &str, state: Arc<ServerState>) -> anyhow::Result<
     }
 }
 
+/// Handle one websocket peer, relaying broadcast messages until it disconnects.
 async fn handle_ws_connection(
     stream: TcpStream,
     peer: SocketAddr,

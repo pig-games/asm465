@@ -1,13 +1,24 @@
+//! Minimal command-line runner for the cross465 6502 core.
+//!
+//! This binary mirrors the “load PRG + run” behaviour provided by the Bevy UI
+//! but without a window. It is convenient for quick smoke tests or for
+//! integrating into shell scripts.
+
 use bus::console_mmio::ConsoleMmio;
 use bus::Bus;
 use clap::Parser;
 use core6502::Cpu;
 use std::{fs, path::PathBuf};
+
+/// Command-line arguments accepted by the runner.
 #[derive(Parser, Debug)]
 struct Args {
+    /// Path to the PRG file to execute.
     prg: PathBuf,
+    /// Maximum number of CPU cycles to execute.
     #[arg(long, default_value_t = 5_000_000u64)]
     max_cycles: u64,
+    /// Optional override for the start address; defaults to the PRG's load address.
     #[arg(long)]
     start: Option<u16>,
 }

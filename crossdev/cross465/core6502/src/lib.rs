@@ -124,6 +124,11 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    /// Construct a CPU bound to the provided [`Bus`].
+    ///
+    /// The core immediately owns the bus; call [`reset`](Cpu::reset) before
+    /// executing instructions so the program counter is initialised from the
+    /// reset vector.
     pub fn new(bus: Bus) -> Self {
         Self {
             a: 0,
@@ -813,6 +818,12 @@ impl Cpu {
         cyc
     }
 
+    /// Execute instructions until either `max_cycles` have elapsed or a `BRK`
+    /// opcode is encountered at the current program counter.
+    ///
+    /// The cycle count accumulated by [`step`](Cpu::step) is added to
+    /// [`Cpu::cycles`], allowing callers to measure aggregate CPU time without
+    /// manually summing return values.
     pub fn run_for(&mut self, max_cycles: u64) {
         let mut spent = 0u64;
         while spent < max_cycles {
