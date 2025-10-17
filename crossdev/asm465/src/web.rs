@@ -30,6 +30,7 @@ const DEFAULT_WS_PORT: u16 = 8_800;
 #[cfg(feature = "dev-loopback")]
 const DEV_LOOPBACK_WS_URL: &str = "ws://127.0.0.1:8800";
 const CANVAS_ID: &str = "#asm465-canvas";
+const DEFAULT_LOOPBACK_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 
 thread_local! {
     static FILE_QUEUE: RefCell<Vec<(Vec<u8>, Option<String>)>> = RefCell::new(Vec::new());
@@ -324,6 +325,12 @@ fn resolve_ws_urls() -> Vec<String> {
         None => return urls,
     };
     let location = window.location();
+
+    fn push_url(urls: &mut Vec<String>, url: String) {
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
 
     if let Ok(search) = location.search() {
         if let Some(url) = parse_ws_override(&search) {
