@@ -11,3 +11,4 @@ build
 .vscode
 **/target
 **/web-dist
+/native/src/platform/c64os

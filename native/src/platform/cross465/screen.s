@@ -13,10 +13,6 @@ CA_REV   = %0010_0000
 CA_ULINE = %1000_0000
 
 .section bp
-    ScreenPtr       .word 0
-    ColPtr          .word 0
-    CurScreenPosPtr .word 0
-    CurColourPosPtr .word 0
     Ptr             .word 0
     AStore          .byte 0
     XStore          .byte 0

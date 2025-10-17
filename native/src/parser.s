@@ -55,6 +55,11 @@ parser .namespace
 
 ; base page pointers
 .section bp
+    InputLinePtr    .word 0
+    Ptr             .word 0
+.endsection ; bp
+
+.section data
     ParsePos        .byte 0
     ParseLineType   .byte 0
     ParseLineLen    .byte 0
@@ -69,10 +74,7 @@ parser .namespace
     ParseSize       .byte 0
     ParseBufPos     .byte 0
     ParsePC         .word 0
-    InputLinePtr    .word 0
-    Ptr             .word 0
-    LPtr            .dword 0
-.endsection ; bp
+.endsection ; data
 
     mnemsize = (mn_end - mnemonics) / 6
 
@@ -619,19 +621,19 @@ mn_plz      .text "plz@"
             .byte $FB, gr08-addrm_groups
 mn_rmb0     .text "rmb0"
             .byte $07, gr0c-addrm_groups
-mn_rmb1     .text "rmb0"
+mn_rmb1     .text "rmb1"
             .byte $07, gr0c-addrm_groups
-mn_rmb2     .text "rmb0"
+mn_rmb2     .text "rmb2"
             .byte $17, gr0c-addrm_groups
-mn_rmb3     .text "rmb0"
+mn_rmb3     .text "rmb3"
             .byte $27, gr0c-addrm_groups
-mn_rmb4     .text "rmb0"
+mn_rmb4     .text "rmb4"
             .byte $37, gr0c-addrm_groups
-mn_rmb5     .text "rmb0"
+mn_rmb5     .text "rmb5"
             .byte $47, gr0c-addrm_groups
-mn_rmb6     .text "rmb0"
+mn_rmb6     .text "rmb6"
             .byte $57, gr0c-addrm_groups
-mn_rmb7     .text "rmb0"
+mn_rmb7     .text "rmb7"
             .byte $67, gr0c-addrm_groups
 mn_rol      .text "rol@"
             .byte $26, gr02-addrm_groups
@@ -657,19 +659,19 @@ mn_sei      .text "sei@"
             .byte $78, gr08-addrm_groups
 mn_smb0     .text "rmb0"
             .byte $87, gr0c-addrm_groups
-mn_smb1     .text "rmb0"
+mn_smb1     .text "rmb1"
             .byte $97, gr0c-addrm_groups
-mn_smb2     .text "rmb0"
+mn_smb2     .text "rmb2"
             .byte $a7, gr0c-addrm_groups
-mn_smb3     .text "rmb0"
+mn_smb3     .text "rmb3"
             .byte $b7, gr0c-addrm_groups
-mn_smb4     .text "rmb0"
+mn_smb4     .text "rmb4"
             .byte $c7, gr0c-addrm_groups
-mn_smb5     .text "rmb0"
+mn_smb5     .text "rmb5"
             .byte $d7, gr0c-addrm_groups
-mn_smb6     .text "rmb0"
+mn_smb6     .text "rmb6"
             .byte $e7, gr0c-addrm_groups
-mn_smb7     .text "rmb0"
+mn_smb7     .text "rmb7"
             .byte $f7, gr0c-addrm_groups
 mn_sta      .text "sta@"
             .byte $81, gr17-addrm_groups
