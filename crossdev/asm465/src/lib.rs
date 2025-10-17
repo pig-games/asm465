@@ -44,7 +44,7 @@ pub use web::start_web_app;
 
 #[cfg(feature = "native-service")]
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Bevy-hosted asm465 console viewer", long_about = None)]
+#[command(author, version, about = "Asm465 console viewer", long_about = None)]
 pub struct Args {
     /// Optional 6502 PRG to execute before the window opens.
     #[arg(long)]
@@ -100,7 +100,7 @@ impl ProgramSource {
     }
 }
 
-/// Configuration used when pre-loading a PRG before the Bevy app renders.
+/// Configuration used when pre-loading a PRG before the app renders.
 #[derive(Clone)]
 pub struct StartupConfig {
     pub source: ProgramSource,
@@ -303,7 +303,7 @@ pub fn run_app(config: AppConfig) {
 
     #[allow(unused_mut)]
     let mut window = Window {
-        title: "asm465 Bevy Console".to_string(),
+        title: "asm465 Console".to_string(),
         ..Default::default()
     };
 

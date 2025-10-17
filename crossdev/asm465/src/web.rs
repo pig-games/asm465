@@ -334,16 +334,15 @@ fn resolve_ws_urls() -> Vec<String> {
 
     if let Ok(search) = location.search() {
         if let Some(url) = parse_ws_override(&search) {
-            push_url(&mut urls, url);
+            urls.push(url);
             return urls;
         }
     }
 
-    let protocol = location.protocol().ok();
-    if let Some(protocol) = protocol.as_ref() {
+    if let Ok(protocol) = location.protocol() {
         if let Ok(host) = location.host() {
             if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
-                push_url(&mut urls, url);
+                urls.push(url);
             }
         }
 
@@ -355,7 +354,9 @@ fn resolve_ws_urls() -> Vec<String> {
         if let Some(host) = hostname.as_deref() {
             if let Some(authority) = combine_host_port(host, port.as_deref()) {
                 if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
-                    push_url(&mut urls, url);
+                    if !urls.contains(&url) {
+                        urls.push(url);
+                    }
                 }
             }
 
@@ -363,29 +364,10 @@ fn resolve_ws_urls() -> Vec<String> {
             if port.as_deref() != Some(default_port.as_str()) {
                 if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
                     if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
-                        push_url(&mut urls, url);
+                        if !urls.contains(&url) {
+                            urls.push(url);
+                        }
                     }
-                }
-            }
-        }
-    }
-
-    let fallback_protocol = match protocol.as_deref() {
-        Some("https:") | Some("wss:") => "wss:",
-        Some("http:") | Some("ws:") => "ws:",
-        _ => "ws:",
-    };
-
-    let default_port = DEFAULT_WS_PORT.to_string();
-    for host in DEFAULT_LOOPBACK_HOSTS {
-        if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
-            if let Some(url) = derive_ws_url(fallback_protocol, &authority) {
-                push_url(&mut urls, url);
-            }
-
-            if fallback_protocol == "wss:" {
-                if let Some(url) = derive_ws_url("ws:", &authority) {
-                    push_url(&mut urls, url);
                 }
             }
         }
