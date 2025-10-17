@@ -74,7 +74,7 @@ define ENSURE_ASM465_SERVICE
                         if [ ! -f $(ASM465_NATIVE_PID_FILE) ] || ! kill -0 $$(cat $(ASM465_NATIVE_PID_FILE)) 2>/dev/null; then \
                                 mkdir -p $$(dirname $(ASM465_NATIVE_PID_FILE)); \
 				echo ">> Starting asm465 native UI on $$host:$$port"; \
-				nohup cargo run --manifest-path ../crossdev/asm465/Cargo.toml -- --service-port $$port --service-host $$host --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
+				nohup cargo run --manifest-path crossdev/asm465/Cargo.toml -- --service-port $$port --service-host $$host --max-cycles $(CROSS465_MAX_CYCLES) >$(ASM465_NATIVE_LOG) 2>&1 & \
                                 echo $$! > $(ASM465_NATIVE_PID_FILE); \
                                 sleep $(CROSS465_WAIT); \
                         fi; \
