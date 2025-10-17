@@ -1,5 +1,5 @@
 use bus::Bus;
-use core6502::{Cpu, P};
+use core6502::Cpu;
 
 fn cpu_with_program(code: &[u8], load_addr: u16) -> Cpu {
     let mut bus = Bus::new();
@@ -19,4 +19,20 @@ fn lda_and_sta() {
     assert_eq!(cpu.a, 0x42);
     cpu.step();
     assert_eq!(cpu.bus.mem_mut().data[0xC123], 0x42);
+}
+
+#[test]
+fn run_for_executes_brk_instruction() {
+    let mut cpu = cpu_with_program(&[0x00], 0x0200);
+    cpu.bus.write(0xFFFE, 0x00);
+    cpu.bus.write(0xFFFF, 0x40); // BRK should vector to $4000.
+
+    cpu.run_for(10);
+
+    assert_eq!(cpu.pc, 0x4000);
+    assert_eq!(cpu.sp, 0xFA);
+    let mem = cpu.bus.mem_mut();
+    assert_eq!(mem.data[0x01FD], 0x02); // PC high byte pushed first.
+    assert_eq!(mem.data[0x01FC], 0x02); // PC low byte pushed second.
+    assert_eq!(mem.data[0x01FB], 0x34); // Status with B and U flags set.
 }
