@@ -4,7 +4,6 @@
 //! but without a window. It is convenient for quick smoke tests or for
 //! integrating into shell scripts.
 
-use bus::console_mmio::ConsoleMmio;
 use bus::Bus;
 use clap::Parser;
 use core6502::Cpu;
@@ -23,9 +22,7 @@ struct Args {
     start: Option<u16>,
 }
 
-fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let data = fs::read(&args.prg)?;
+fn run_program(data: &[u8], max_cycles: u64, start_override: Option<u16>) -> anyhow::Result<Cpu> {
     if data.len() < 2 {
         anyhow::bail!("PRG too small");
     }
@@ -34,13 +31,35 @@ fn main() -> anyhow::Result<()> {
 
     let mut bus = Bus::new();
     bus.load(load_addr, body);
-    let start = args.start.unwrap_or(load_addr);
+    let start = start_override.unwrap_or(load_addr);
     bus.write(0xFFFC, (start & 0xFF) as u8);
     bus.write(0xFFFD, (start >> 8) as u8);
 
     let mut cpu = Cpu::new(bus);
     cpu.reset();
+    cpu.run_for(max_cycles);
+    Ok(cpu)
+}
 
-    cpu.run_for(5_000_000u64);
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let data = fs::read(&args.prg)?;
+    let _cpu = run_program(&data, args.max_cycles, args.start)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn honors_cycle_budget() {
+        // Load address $0600 followed by NOP, NOP, BRK.
+        let prg = [0x00, 0x06, 0xEA, 0xEA, 0x00];
+        let cpu = run_program(&prg, 4, None).expect("runner executes program");
+
+        assert_eq!(cpu.cycles, 4);
+        // Two NOPs executed; PC should now point to the third byte ($0602).
+        assert_eq!(cpu.pc, 0x0602);
+    }
 }

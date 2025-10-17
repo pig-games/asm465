@@ -26,7 +26,8 @@ use web_sys::UrlSearchParams;
 use crate::{run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
 
 const DEFAULT_MAX_CYCLES: u64 = 5_000_000;
-const DEFAULT_WS_URL: &str = "ws://127.0.0.1:8800";
+#[cfg(feature = "dev-loopback")]
+const DEV_LOOPBACK_WS_URL: &str = "ws://127.0.0.1:8800";
 const CANVAS_ID: &str = "#asm465-canvas";
 
 thread_local! {
@@ -309,14 +310,95 @@ fn try_show_open_file_picker() -> bool {
 fn resolve_ws_url() -> Option<String> {
     let window = web_sys::window()?;
     let location = window.location();
+
     if let Ok(search) = location.search() {
-        if !search.is_empty() {
-            if let Ok(params) = UrlSearchParams::new_with_str(&search) {
-                if let Some(url) = params.get("ws") {
-                    return Some(url);
-                }
-            }
+        if let Some(url) = parse_ws_override(&search) {
+            return Some(url);
         }
     }
-    Some(DEFAULT_WS_URL.to_string())
+
+    if let (Ok(protocol), Ok(host)) = (location.protocol(), location.host()) {
+        if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
+            return Some(url);
+        }
+    }
+
+    #[cfg(feature = "dev-loopback")]
+    {
+        return Some(DEV_LOOPBACK_WS_URL.to_string());
+    }
+
+    #[cfg(not(feature = "dev-loopback"))]
+    {
+        None
+    }
+}
+
+fn parse_ws_override(search: &str) -> Option<String> {
+    if search.is_empty() {
+        return None;
+    }
+    let params = UrlSearchParams::new_with_str(search)
+        .or_else(|_| UrlSearchParams::new_with_str(search.trim_start_matches('?')))
+        .ok()?;
+    let url = params.get("ws")?;
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
+}
+
+fn derive_ws_url(protocol: &str, host: &str) -> Option<String> {
+    let scheme = match protocol {
+        "https:" | "wss:" => "wss",
+        "http:" | "ws:" => "ws",
+        other => {
+            if let Some(stripped) = other.strip_suffix(':') {
+                return derive_ws_url(stripped, host);
+            }
+            return None;
+        }
+    };
+
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+
+    Some(format!("{scheme}://{host}"))
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::derive_ws_url;
+
+    #[test]
+    fn maps_http_locations_to_ws() {
+        assert_eq!(
+            derive_ws_url("http:", "example.com"),
+            Some("ws://example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn maps_https_locations_to_wss() {
+        assert_eq!(
+            derive_ws_url("https:", "example.com:443"),
+            Some("wss://example.com:443".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_for_unknown_protocol() {
+        assert_eq!(derive_ws_url("file:", ""), None);
+    }
+
+    #[test]
+    fn trims_trailing_colon_variants() {
+        assert_eq!(
+            derive_ws_url("https", "example.com"),
+            Some("wss://example.com".to_string())
+        );
+    }
 }

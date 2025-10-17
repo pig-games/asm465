@@ -21,6 +21,7 @@ rfd = "0.14"
 default = ["native-service", "native-file-dialog"]
 native-service = ["clap", "crossbeam-channel"]
 native-file-dialog = []
+dev-loopback = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]
