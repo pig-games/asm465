@@ -26,9 +26,11 @@ use web_sys::UrlSearchParams;
 use crate::{run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
 
 const DEFAULT_MAX_CYCLES: u64 = 5_000_000;
+const DEFAULT_WS_PORT: u16 = 8_800;
 #[cfg(feature = "dev-loopback")]
 const DEV_LOOPBACK_WS_URL: &str = "ws://127.0.0.1:8800";
 const CANVAS_ID: &str = "#asm465-canvas";
+const DEFAULT_LOOPBACK_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 
 thread_local! {
     static FILE_QUEUE: RefCell<Vec<(Vec<u8>, Option<String>)>> = RefCell::new(Vec::new());
@@ -122,25 +124,34 @@ pub fn configure_app(app: &mut App) -> Option<String> {
         extend_status(&mut status, message);
     }
 
-    match resolve_ws_url() {
-        Some(url) => match WebSocketBridge::connect(&url) {
+    let urls = resolve_ws_urls();
+    if urls.is_empty() {
+        let message = "Bridge disabled".to_string();
+        log::warn!("{message}");
+        extend_status(&mut status, message);
+        return status;
+    }
+
+    let mut last_error: Option<String> = None;
+    for url in urls {
+        match WebSocketBridge::connect(&url) {
             Ok(service) => {
                 let message = format!("Bridge connected ({url})");
                 log::info!("{message}");
                 app.insert_non_send_resource(service);
                 extend_status(&mut status, message);
+                return status;
             }
             Err(err) => {
-                let message = format!("Bridge connection failed: {err:?}");
+                let message = format!("Bridge connection failed for {url}: {err:?}");
                 log::error!("{message}");
-                extend_status(&mut status, message);
+                last_error = Some(message);
             }
-        },
-        None => {
-            let message = "Bridge disabled".to_string();
-            log::warn!("{message}");
-            extend_status(&mut status, message);
         }
+    }
+
+    if let Some(message) = last_error {
+        extend_status(&mut status, message);
     }
 
     status
@@ -307,31 +318,87 @@ fn try_show_open_file_picker() -> bool {
     true
 }
 
-fn resolve_ws_url() -> Option<String> {
-    let window = web_sys::window()?;
+fn resolve_ws_urls() -> Vec<String> {
+    let mut urls = Vec::new();
+    let window = match web_sys::window() {
+        Some(window) => window,
+        None => return urls,
+    };
     let location = window.location();
 
-    if let Ok(search) = location.search() {
-        if let Some(url) = parse_ws_override(&search) {
-            return Some(url);
+    fn push_url(urls: &mut Vec<String>, url: String) {
+        if !urls.contains(&url) {
+            urls.push(url);
         }
     }
 
-    if let (Ok(protocol), Ok(host)) = (location.protocol(), location.host()) {
-        if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
-            return Some(url);
+    if let Ok(search) = location.search() {
+        if let Some(url) = parse_ws_override(&search) {
+            push_url(&mut urls, url);
+            return urls;
+        }
+    }
+
+    let protocol = location.protocol().ok();
+    if let Some(protocol) = protocol.as_ref() {
+        if let Ok(host) = location.host() {
+            if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
+                push_url(&mut urls, url);
+            }
+        }
+
+        let hostname = location.hostname().ok();
+        let port = location.port().ok();
+        let hostname = hostname.filter(|value| !value.is_empty());
+        let port = port.filter(|value| !value.is_empty());
+
+        if let Some(host) = hostname.as_deref() {
+            if let Some(authority) = combine_host_port(host, port.as_deref()) {
+                if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
+                    push_url(&mut urls, url);
+                }
+            }
+
+            let default_port = DEFAULT_WS_PORT.to_string();
+            if port.as_deref() != Some(default_port.as_str()) {
+                if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
+                    if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
+                        push_url(&mut urls, url);
+                    }
+                }
+            }
+        }
+    }
+
+    let fallback_protocol = match protocol.as_deref() {
+        Some("https:") | Some("wss:") => "wss:",
+        Some("http:") | Some("ws:") => "ws:",
+        _ => "ws:",
+    };
+
+    let default_port = DEFAULT_WS_PORT.to_string();
+    for host in DEFAULT_LOOPBACK_HOSTS {
+        if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
+            if let Some(url) = derive_ws_url(fallback_protocol, &authority) {
+                push_url(&mut urls, url);
+            }
+
+            if fallback_protocol == "wss:" {
+                if let Some(url) = derive_ws_url("ws:", &authority) {
+                    push_url(&mut urls, url);
+                }
+            }
         }
     }
 
     #[cfg(feature = "dev-loopback")]
     {
-        return Some(DEV_LOOPBACK_WS_URL.to_string());
+        if !urls.iter().any(|url| url == DEV_LOOPBACK_WS_URL) {
+            urls.push(DEV_LOOPBACK_WS_URL.to_string());
+        }
     }
 
-    #[cfg(not(feature = "dev-loopback"))]
-    {
-        None
-    }
+    urls
 }
 
 fn parse_ws_override(search: &str) -> Option<String> {
@@ -367,6 +434,24 @@ fn derive_ws_url(protocol: &str, host: &str) -> Option<String> {
     }
 
     Some(format!("{scheme}://{host}"))
+}
+
+fn combine_host_port(host: &str, port: Option<&str>) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+
+    let formatted_host = if host.contains(':') && !host.starts_with('[') && !host.ends_with(']') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+
+    match port {
+        Some(port) if !port.is_empty() => Some(format!("{formatted_host}:{port}")),
+        _ => Some(formatted_host),
+    }
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
