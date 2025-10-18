@@ -209,6 +209,13 @@ pub struct ConsoleMmio {
     pub lptr: u8,
     pub hptr: u8,
     pub plength: u8,
+    pub spr_select: u8, // sprite select
+    pub spr_num: u8, // sprite num (0 disable)
+    pub spr_anim: u8, // sprite anim num
+    pub spr_xhi: u8, // sprite xhi
+    pub spr_xlo: u8, // sprite xlo
+    pub spr_yhi: u8, // sprite yhi
+    pub spr_ylo: u8, // sprite ylo
     output: Arc<Mutex<ConsoleOutput>>,
 }
 
@@ -228,6 +235,13 @@ impl ConsoleMmio {
             lptr: 0,
             hptr: 0,
             plength: 0,
+            spr_select: 0, // sprite select
+            spr_num: 0, // sprite num (0 disable)
+            spr_anim: 0, // sprite anim num
+            spr_xhi: 0, // sprite xhi
+            spr_xlo: 0, // sprite xlo
+            spr_yhi: 0, // sprite yhi
+            spr_ylo: 0, // sprite ylo
             output: Arc::new(Mutex::new(ConsoleOutput::default())),
         }
     }
@@ -360,6 +374,34 @@ impl ConsoleMmio {
         //println!("length: {}", self.plength);
     }
 
+    pub fn set_spr_select(&mut self, value: u8) {
+        self.spr_select = value;
+    }
+
+    pub fn set_spr_num(&mut self, value: u8) {
+        self.spr_num = value;
+    }
+
+    pub fn set_spr_anim(&mut self, value: u8) {
+        self.spr_anim = value;
+    }
+
+    pub fn set_spr_xhi(&mut self, value: u8) {
+        self.spr_xhi = value;
+    }
+
+    pub fn set_spr_xlo(&mut self, value: u8) {
+        self.spr_xlo = value;
+    }
+
+    pub fn set_spr_yhi(&mut self, value: u8) {
+        self.spr_yhi = value;
+    }
+
+    pub fn set_spr_ylo(&mut self, value: u8) {
+        self.spr_ylo = value;
+    }
+
     /// Shared output buffer handle for host integrations.
     pub fn output(&self) -> Arc<Mutex<ConsoleOutput>> {
         Arc::clone(&self.output)
@@ -378,6 +420,13 @@ impl MmioDevice for ConsoleMmio {
             0x09 => self.lptr,
             0x0a => self.hptr,
             0x0b => self.plength,
+            0x10 => self.spr_select,
+            0x11 => self.spr_num,
+            0x12 => self.spr_anim,
+            0x13 => self.spr_xhi,
+            0x14 => self.spr_xlo,
+            0x15 => self.spr_yhi,
+            0x16 => self.spr_xlo,
             _ => 0,
         };
         //println!("ConsoleMmio: read {:#06x} => {}", addr, val);
@@ -399,6 +448,13 @@ impl MmioDevice for ConsoleMmio {
             0x09 => self.set_lptr(value),
             0x0a => self.set_hptr(value),
             0x0b => self.print(value), // only requires previous call to set_lptr(val), the passed value is the high ptr for the text to be printed.
+            0x10 => self.set_spr_select(value), // set sprite select
+            0x11 => self.set_spr_num(value), // set sprite num (0 disable)
+            0x12 => self.set_spr_anim(value), // set sprite anim num
+            0x13 => self.set_spr_xhi(value), // set sprite xhi
+            0x14 => self.set_spr_xlo(value), // set sprite xlo
+            0x15 => self.set_spr_yhi(value), // set sprite yhi
+            0x16 => self.set_spr_ylo(value), // set sprite ylo
             _ => { /* reserved for future features (cursor, color, clear, etc.) */ }
         }
     }

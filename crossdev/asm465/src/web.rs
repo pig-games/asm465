@@ -340,35 +340,43 @@ fn resolve_ws_urls() -> Vec<String> {
     }
 
     if let Ok(protocol) = location.protocol() {
-        if let Ok(host) = location.host() {
-            if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
-                urls.push(url);
-            }
-        }
-
+        let default_port = DEFAULT_WS_PORT.to_string();
         let hostname = location.hostname().ok();
         let port = location.port().ok();
         let hostname = hostname.filter(|value| !value.is_empty());
         let port = port.filter(|value| !value.is_empty());
 
         if let Some(host) = hostname.as_deref() {
-            if let Some(authority) = combine_host_port(host, port.as_deref()) {
-                if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
-                    if !urls.contains(&url) {
-                        urls.push(url);
+            let is_loopback = DEFAULT_LOOPBACK_HOSTS
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(host));
+
+            if is_loopback {
+                if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
+                    if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
+                        push_url(&mut urls, url);
                     }
                 }
             }
 
-            let default_port = DEFAULT_WS_PORT.to_string();
-            if port.as_deref() != Some(default_port.as_str()) {
+            if let Some(authority) = combine_host_port(host, port.as_deref()) {
+                if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
+                    push_url(&mut urls, url);
+                }
+            }
+
+            if !is_loopback && port.as_deref() != Some(default_port.as_str()) {
                 if let Some(authority) = combine_host_port(host, Some(default_port.as_str())) {
                     if let Some(url) = derive_ws_url(protocol.as_ref(), &authority) {
-                        if !urls.contains(&url) {
-                            urls.push(url);
-                        }
+                        push_url(&mut urls, url);
                     }
                 }
+            }
+        }
+
+        if let Ok(host) = location.host() {
+            if let Some(url) = derive_ws_url(protocol.as_ref(), host.as_ref()) {
+                push_url(&mut urls, url);
             }
         }
     }
