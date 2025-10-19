@@ -39,7 +39,8 @@ The desktop/wasm viewer in `crossdev/asm465` exposes several flags for tuning th
 - The guest can override the viewer colours at runtime by writing the graphics
   MMIO border/background registers; the viewer converts the 4-bit palette into
   modern RGB values automatically.
-- Personality selection: `--personality <name>` swaps MMIO layouts; use
+- Personality selection: `--personality <name>` swaps MMIO layouts (e.g.
+  `modern-retro`, `c64-compat`); use
   `--list-personalities` to inspect the built-in options.
 
 These flags apply to both the native binary and the wasm wrapper so games/tools can match the behaviour of their target hardware.

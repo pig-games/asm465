@@ -73,7 +73,7 @@
 - A personality is a combination of default values for display setup and a set of specifically mapped MMIO modules.
 - Personalities allow easy implementation of different types of runtime feature sets.
 - Our current setup allows the use of the console, display and sprite MMIO interface at specific address ranges. For different applications where the cross465 runtime is used different combination of existing or newly developed MMIO's can be configured and packaged up into a new personality. Some personalities will be specific to a single application, while some personalities may be developed to be reused by many different games/applications.
-- A `Personality` descriptor now lives in the `cross465` crate; the current “Modern Retro” layout is expressed as the default personality and the bus can be constructed from it (`Bus::with_personality`).
+- A `Personality` descriptor now lives in the `cross465` crate; the current “Modern Retro” layout is expressed as the default personality and the bus can be constructed from it (`Bus::with_personality`). A scaffold `c64-compat` personality is also available to experiment with C64-flavoured addresses while we iterate on the compatibility layer.
 - The desktop CLI now exposes `--personality` / `--list-personalities` so tooling can select a layout without code changes.
 - Examples of personalities:
   - C64 personality. This personality mirrors the MMIO layout of the C64 as much as possible. This would allow for games with very little changes to the code on both c64 and modern hardware. This could also be a good porting tool.
