@@ -1,8 +1,49 @@
 .include "platformmacros.h"
+.include "debug_macros.h"
 
 .section init
     ; No VIC‑IV setup here; keep it minimal so Mega65/U64 stay parallel.
     ; Initialize screen/color base pointers and cursor defaults,
     ; mirroring semantics from the Mega65 side (but 16‑bit).
 
+    .cpr 3, "Sprite tests!n"
+    lda #1
+    sta cross465.SPRSEL
+    lda #0
+    sta cross465.SPRYHI
+    sta cross465.SPRXHI
+    sta cross465.SPRANIM
+    lda #0
+    sta cross465.SPRYLO
+    sta cross465.SPRXLO
+    lda #1
+    sta cross465.SPRNUM
+
+    lda #2
+    sta cross465.SPRSEL
+    lda #50
+    sta cross465.SPRYHI
+    sta cross465.SPRXHI
+    sta cross465.SPRANIM
+    lda #0
+    sta cross465.SPRYLO
+    lda #100
+    sta cross465.SPRXLO
+    lda #2
+    sta cross465.SPRNUM
+
+    lda #3
+    sta cross465.SPRSEL
+    lda #100
+    sta cross465.SPRYHI
+    sta cross465.SPRXHI
+    sta cross465.SPRANIM
+    lda #0
+    sta cross465.SPRYLO
+    lda #200
+    sta cross465.SPRXLO
+    lda #3
+    sta cross465.SPRNUM
+
+    brk
 .endsection

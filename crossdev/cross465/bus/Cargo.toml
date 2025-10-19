@@ -8,3 +8,4 @@ testhooks = []
 
 [dependencies]
 console = "0.16.0"
+log = "0.4"

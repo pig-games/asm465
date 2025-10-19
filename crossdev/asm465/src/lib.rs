@@ -10,8 +10,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
+use bevy::render::camera::ScalingMode;
+use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
+use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot, ConsoleSprite, CONSOLE_SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
 
@@ -34,7 +36,14 @@ use std::thread;
 
 const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
-const PLACEHOLDER_SIZE: f32 = 180.0;
+const SPRITE_BASE_WIDTH: f32 = 96.0;
+const SPRITE_BASE_HEIGHT: f32 = 128.0;
+const SPRITE_SCALE: f32 = 1.25;
+const SPRITE_TEXTURE_PATHS: &[&str] = &[
+    "sprites/knight.png",
+    "sprites/knight_crimson.png",
+    "sprites/knight_glacial.png",
+];
 
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -65,6 +74,14 @@ pub struct Args {
     /// Host/interface to bind the JSON service API on.
     #[arg(long, default_value = "127.0.0.1")]
     pub service_host: String,
+
+    /// Virtual sprite canvas width used for MMIO coordinate scaling.
+    #[arg(long, default_value_t = 320u32)]
+    pub virtual_width: u32,
+
+    /// Virtual sprite canvas height used for MMIO coordinate scaling.
+    #[arg(long, default_value_t = 256u32)]
+    pub virtual_height: u32,
 
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
@@ -213,6 +230,7 @@ impl ServiceRequestPayload {
 pub struct AppConfig {
     pub startup: Option<StartupConfig>,
     pub default_max_cycles: u64,
+    pub virtual_resolution: VirtualResolution,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -221,6 +239,27 @@ pub struct AppConfig {
 pub struct ServiceConfig {
     pub host: String,
     pub port: u16,
+}
+
+#[derive(Clone, Copy)]
+pub struct VirtualResolution {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl VirtualResolution {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+}
+
+impl Default for VirtualResolution {
+    fn default() -> Self {
+        Self {
+            width: 320,
+            height: 256,
+        }
+    }
 }
 
 #[cfg(feature = "native-service")]
@@ -241,6 +280,7 @@ pub fn run_native() -> Result<(), String> {
     run_app(AppConfig {
         startup,
         default_max_cycles: args.max_cycles,
+        virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
         #[cfg(feature = "native-service")]
         service,
     });
@@ -249,14 +289,22 @@ pub fn run_native() -> Result<(), String> {
 }
 
 pub fn run_app(config: AppConfig) {
+    let AppConfig {
+        startup,
+        default_max_cycles,
+        virtual_resolution,
+        #[cfg(feature = "native-service")]
+        service,
+    } = config;
+
     #[allow(unused_mut)]
-    let mut emulator = EmulatorState::new(config.startup, config.default_max_cycles);
+    let mut emulator = EmulatorState::new(startup, default_max_cycles);
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
 
     #[cfg(feature = "native-service")]
-    if let Some(service_cfg) = config.service {
+    if let Some(service_cfg) = service {
         match start_service_listener(&service_cfg.host, service_cfg.port) {
             Ok(receiver) => {
                 service_listener = Some(ServiceListener { receiver });
@@ -289,6 +337,7 @@ pub fn run_app(config: AppConfig) {
         .get_non_send_resource::<EmulatorState>()
         .and_then(EmulatorState::status_message);
 
+    #[allow(unused_mut)]
     let mut ui_state = UiState::with_status(initial_status);
 
     #[cfg(target_arch = "wasm32")]
@@ -300,6 +349,7 @@ pub fn run_app(config: AppConfig) {
     }
 
     app.insert_resource(ui_state);
+    app.insert_resource(SpriteVirtualResolution::new(virtual_resolution));
 
     #[allow(unused_mut)]
     let mut window = Window {
@@ -321,7 +371,7 @@ pub fn run_app(config: AppConfig) {
         EguiPlugin,
     ))
     .add_systems(Startup, setup_scene)
-    .add_systems(Update, ui_system)
+    .add_systems(Update, (update_sprite_viewport, ui_system))
     .run();
 }
 
@@ -442,24 +492,137 @@ impl UiState {
     }
 }
 
-fn setup_scene(mut commands: Commands) {
-    commands.spawn(Camera2dBundle::default());
+#[derive(Component)]
+struct SpriteSlot {
+    index: usize,
+}
 
-    commands.spawn(SpriteBundle {
-        sprite: Sprite {
-            color: Color::rgb(0.2, 0.4, 0.8),
-            custom_size: Some(Vec2::splat(PLACEHOLDER_SIZE)),
-            ..Default::default()
-        },
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
-        ..Default::default()
+#[derive(Resource)]
+struct SpriteCatalog {
+    handles: Vec<Handle<Image>>,
+}
+
+#[derive(Resource, Clone, Copy)]
+struct SpriteVirtualResolution {
+    width: f32,
+    height: f32,
+}
+
+impl SpriteVirtualResolution {
+    /// Construct from the user-supplied virtual resolution. Values are
+    /// clamped to at least 1 so later divisions are well-defined.
+    fn new(resolution: VirtualResolution) -> Self {
+        Self {
+            width: resolution.width.max(1) as f32,
+            height: resolution.height.max(1) as f32,
+        }
+    }
+
+    /// Virtual canvas width (pixels in guest space).
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// Virtual canvas height (pixels in guest space).
+    fn height(&self) -> f32 {
+        self.height
+    }
+}
+
+#[derive(Resource, Clone, Copy)]
+struct SpriteViewport {
+    width: f32,
+    height: f32,
+}
+
+impl SpriteViewport {
+    /// Snapshot the current Bevy window dimensions (host space).
+    fn new(window_width: f32, window_height: f32) -> Self {
+        Self {
+            width: window_width,
+            height: window_height,
+        }
+    }
+
+    /// Refresh the cached window dimensions whenever the window resizes.
+    fn update_window(&mut self, width: f32, height: f32) {
+        self.width = width;
+        self.height = height;
+    }
+
+    /// Host-space width in logical pixels (never < 1).
+    fn window_width(&self) -> f32 {
+        self.width.max(1.0)
+    }
+
+    /// Host-space height in logical pixels (never < 1).
+    fn window_height(&self) -> f32 {
+        self.height.max(1.0)
+    }
+}
+
+fn setup_scene(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+) {
+    let mut camera = Camera2dBundle::default();
+    camera.projection.scaling_mode = ScalingMode::WindowSize(1.0);
+    commands.spawn(camera);
+
+    let window = window_query
+        .get_single()
+        .expect("primary window not available during setup");
+    commands.insert_resource(SpriteViewport::new(window.width(), window.height()));
+
+    let handles: Vec<Handle<Image>> = SPRITE_TEXTURE_PATHS
+        .iter()
+        .map(|path| asset_server.load(*path))
+        .collect();
+    let default_texture = handles
+        .first()
+        .cloned()
+        .expect("sprite texture list must not be empty");
+
+    commands.insert_resource(SpriteCatalog {
+        handles: handles.clone(),
     });
+
+    for index in 0..CONSOLE_SPRITE_SLOTS {
+        commands.spawn((
+            SpriteBundle {
+                texture: default_texture.clone(),
+                sprite: Sprite {
+                    color: Color::WHITE,
+                    custom_size: Some(Vec2::new(
+                        SPRITE_BASE_WIDTH * SPRITE_SCALE,
+                        SPRITE_BASE_HEIGHT * SPRITE_SCALE,
+                    )),
+                    ..Default::default()
+                },
+                transform: Transform::from_xyz(0.0, 0.0, 1.0 + index as f32 * 0.01),
+                visibility: Visibility::Hidden,
+                ..Default::default()
+            },
+            SpriteSlot { index },
+        ));
+    }
 }
 
 fn ui_system(
     mut contexts: EguiContexts,
     #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
     mut ui_state: ResMut<UiState>,
+    sprite_catalog: Res<SpriteCatalog>,
+    sprite_viewport: Res<SpriteViewport>,
+    sprite_virtual: Res<SpriteVirtualResolution>,
+    mut sprite_query: Query<(
+        &SpriteSlot,
+        &mut Transform,
+        &mut Visibility,
+        &mut Sprite,
+        &mut Handle<Image>,
+    )>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
     #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
 ) {
@@ -569,6 +732,51 @@ fn ui_system(
 
     let console_snapshot = emulator.snapshot();
 
+    let snapshot_ref = console_snapshot.as_ref();
+    for (slot, mut transform, mut visibility, mut sprite, mut texture) in sprite_query.iter_mut() {
+        let state = snapshot_ref.and_then(|snapshot| snapshot.sprite(slot.index));
+        if let Some(state) = state {
+            if state.number == 0 {
+                *visibility = Visibility::Hidden;
+                continue;
+            }
+            *visibility = Visibility::Visible;
+            let decoded_x = state.x as f32 / 256.0;
+            let decoded_y = state.y as f32 / 256.0;
+            log::trace!(
+                "sprite slot {} raw position ({:04X}, {:04X}) → ({:.3}, {:.3})",
+                slot.index,
+                state.x,
+                state.y,
+                decoded_x,
+                decoded_y
+            );
+            let position = sprite_world_position(state, &sprite_viewport, &sprite_virtual);
+            log::trace!(
+                "sprite slot {} world position ({:.2}, {:.2})",
+                slot.index,
+                position.x,
+                position.y
+            );
+            transform.translation.x = position.x;
+            transform.translation.y = position.y;
+            let texture_index = (state.number.saturating_sub(1)) as usize;
+            let desired_texture = sprite_catalog
+                .handles
+                .get(texture_index)
+                .cloned()
+                .or_else(|| sprite_catalog.handles.first().cloned());
+            if let Some(handle) = desired_texture {
+                if *texture != handle {
+                    *texture = handle;
+                }
+            }
+            sprite.color = Color::WHITE;
+        } else {
+            *visibility = Visibility::Hidden;
+        }
+    }
+
     egui::TopBottomPanel::bottom("console_panel")
         .resizable(true)
         .default_height(220.0)
@@ -636,6 +844,160 @@ fn write_console_line(bus: &mut Bus, line: &str) {
         }
     }
     bus.write(0xDF01, 0);
+}
+
+fn sprite_world_position(
+    sprite: &ConsoleSprite,
+    viewport: &SpriteViewport,
+    virtual_resolution: &SpriteVirtualResolution,
+) -> Vec2 {
+    // Intentional behaviour (current implementation still under investigation):
+    //
+    // - Treat the 16-bit MMIO values written by the guest as coordinates inside
+    //   a configurable “virtual resolution” (default 320×256, but overridable).
+    // - Normalise those values to the [0.0, 1.0] range, clamping anything
+    //   outside the virtual canvas to the edges.
+    // - Map the normalised coordinates onto the host window so sprites travel
+    //   the full width/height when the window is resized.
+    // - Offset by half of the window and the sprite’s own size so the sprite’s
+    //   top-left corner aligns with the virtual coordinate.
+    //
+    // The end result should be that:
+    //   (spr_x, spr_y) = (0, 0)      → sprite’s top-left is at the window origin.
+    //   (spr_x, spr_y) = (max, max)  → sprite’s bottom-right is aligned with the
+    //                                  bottom-right corner of the window.
+    //
+    // NOTE: At the moment sprites still appear clustered near the origin,
+    // indicating the scale or offset math above is incorrect.  See plan below
+    // for how we intend to resolve this.
+    let window_width = viewport.window_width();
+    let window_height = viewport.window_height();
+    let half_width = window_width * 0.5;
+    let half_height = window_height * 0.5;
+    let sprite_half_width = SPRITE_BASE_WIDTH * SPRITE_SCALE * 0.5;
+    let sprite_half_height = SPRITE_BASE_HEIGHT * SPRITE_SCALE * 0.5;
+    let sprite_width = sprite_half_width * 2.0;
+    let sprite_height = sprite_half_height * 2.0;
+
+    let virtual_width = virtual_resolution.width().max(1.0);
+    let virtual_height = virtual_resolution.height().max(1.0);
+
+    // Step 1: clamp the raw 16-bit register values so we do not overflow the
+    // virtual canvas (i.e. cap them to the range [0, virtual_width/height]).
+    // These values are still expressed in “guest pixels”.
+    // The MMIO registers use 8.8 fixed-point: high byte is the integer portion,
+    // low byte the fractional portion. Convert to host-space floats before
+    // applying the virtual canvas clamp.
+    let raw_x = (sprite.x as f32) / 256.0;
+    let raw_y = (sprite.y as f32) / 256.0;
+
+    let clamped_x = raw_x.clamp(0.0, virtual_width);
+    let clamped_y = raw_y.clamp(0.0, virtual_height);
+
+    // Step 2: convert the guest-space coordinates into normalised [0.0, 1.0]
+    // units.  This provides the scale factor we later apply to the window size.
+    let normalized_x = if virtual_width <= f32::EPSILON {
+        0.0
+    } else {
+        (clamped_x / virtual_width).min(1.0)
+    };
+    let normalized_y = if virtual_height <= f32::EPSILON {
+        0.0
+    } else {
+        (clamped_y / virtual_height).min(1.0)
+    };
+
+    // Step 3: scale the normalised values up to the host window dimensions,
+    // leaving enough slack so the sprite’s size is fully visible at the edges.
+    let available_width = (window_width - sprite_width).max(0.0);
+    let available_height = (window_height - sprite_height).max(0.0);
+
+    let offset_x = normalized_x * available_width;
+    let offset_y = normalized_y * available_height;
+
+    // Step 4: translate the offsets into Bevy world space.  The camera places
+    // (0,0) at the centre of the window, so we subtract half the window size
+    // and then add half the sprite size to align the sprite’s top-left corner
+    // with the computed offset.
+    Vec2::new(
+        -half_width + offset_x + sprite_half_width,
+        half_height - offset_y - sprite_half_height,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_fixed(value: f32) -> u16 {
+        (value * 256.0).round().clamp(0.0, u16::MAX as f32) as u16
+    }
+
+    fn sprite(x: f32, y: f32) -> ConsoleSprite {
+        ConsoleSprite {
+            number: 1,
+            anim: 0,
+            x: to_fixed(x),
+            y: to_fixed(y),
+        }
+    }
+
+    fn virtual_res(width: u32, height: u32) -> SpriteVirtualResolution {
+        SpriteVirtualResolution::new(VirtualResolution::new(width, height))
+    }
+
+    fn approx_equal(a: f32, b: f32, eps: f32) {
+        assert!(
+            (a - b).abs() <= eps,
+            "expected {b}, got {a} (|Δ| = {})",
+            (a - b).abs()
+        );
+    }
+
+    #[test]
+    fn sprite_position_aligns_top_left_at_origin() {
+        let sprite_virtual = virtual_res(128, 96);
+        let viewport = SpriteViewport::new(800.0, 600.0);
+        let sprite = sprite(0.0, 0.0);
+
+        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+
+        approx_equal(world.x, -340.0, 1e-3);
+        approx_equal(world.y, 220.0, 1e-3);
+    }
+
+    #[test]
+    fn sprite_position_aligns_bottom_right_at_max() {
+        let sprite_virtual = virtual_res(128, 96);
+        let viewport = SpriteViewport::new(800.0, 600.0);
+        let sprite = sprite(128.0, 96.0);
+
+        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+
+        approx_equal(world.x, 340.0, 1e-3);
+        approx_equal(world.y, -220.0, 1e-3);
+    }
+
+    #[test]
+    fn sprite_position_centres_at_midpoint() {
+        let sprite_virtual = virtual_res(128, 96);
+        let viewport = SpriteViewport::new(800.0, 600.0);
+        let sprite = sprite(64.0, 48.0);
+
+        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+
+        approx_equal(world.x, 0.0, 1e-3);
+        approx_equal(world.y, 0.0, 1e-3);
+    }
+}
+
+fn update_sprite_viewport(
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    mut viewport: ResMut<SpriteViewport>,
+) {
+    if let Ok(window) = window_query.get_single() {
+        viewport.update_window(window.width(), window.height());
+    }
 }
 
 fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::LayoutJob {

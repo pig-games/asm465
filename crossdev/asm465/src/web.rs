@@ -23,7 +23,10 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::UrlSearchParams;
 
-use crate::{run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
+use crate::{
+    run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage,
+    VirtualResolution,
+};
 
 const DEFAULT_MAX_CYCLES: u64 = 5_000_000;
 const DEFAULT_WS_PORT: u16 = 8_800;
@@ -198,6 +201,7 @@ pub fn start_web_app() -> Result<(), JsValue> {
     run_app(AppConfig {
         startup: None,
         default_max_cycles: DEFAULT_MAX_CYCLES,
+        virtual_resolution: VirtualResolution::default(),
         #[cfg(feature = "native-service")]
         service: None,
     });
