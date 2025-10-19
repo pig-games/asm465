@@ -15,6 +15,7 @@ use bevy::render::mesh::shape::Quad;
 use bevy::render::mesh::Mesh;
 use bevy::sprite::{ColorMaterial, MaterialMesh2dBundle, Mesh2dHandle};
 use bevy::window::PrimaryWindow;
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
@@ -336,11 +337,17 @@ pub struct DisplaySettings {
     pub border_color: Color,
     pub background_color: Color,
     pub resize_window_to_aspect: bool,
+    /// Amount of virtual-space padding kept off-screen on the left edge.
     pub sprite_margin_left: f32,
+    /// Amount of virtual-space padding kept off-screen on the right edge.
     pub sprite_margin_right: f32,
+    /// Amount of virtual-space padding kept off-screen above the content.
     pub sprite_margin_top: f32,
+    /// Amount of virtual-space padding kept off-screen below the content.
     pub sprite_margin_bottom: f32,
+    /// Maximum raw MMIO value expected on the X axis (`0` defers to virtual size + margins).
     pub sprite_mmio_max_x: f32,
+    /// Maximum raw MMIO value expected on the Y axis (`0` defers to virtual size + margins).
     pub sprite_mmio_max_y: f32,
     pub sprite_max_offscreen_width: f32,
     pub sprite_max_offscreen_height: f32,
@@ -367,6 +374,7 @@ impl Default for DisplaySettings {
     }
 }
 
+#[cfg_attr(not(feature = "native-service"), allow(dead_code))]
 fn parse_color(value: &str) -> Result<Color, String> {
     let value = value.trim();
     let value = value.trim_start_matches('#').trim_start_matches("0x");
@@ -1019,28 +1027,9 @@ fn ui_system(
                 *visibility = Visibility::Hidden;
                 continue;
             }
-            let scale_reg = ((state.scale_x & 0x0F) << 4) | (state.scale_y & 0x0F);
-            let mmio = sprite_mmio_position(state);
-            log::trace!(
-                "sprite slot {} raw position ({:04X}, {:04X}) scale {:02X} → mmio ({:.3}, {:.3})",
-                slot.index,
-                state.x,
-                state.y,
-                scale_reg,
-                mmio.x,
-                mmio.y
-            );
             if let Some((position, size)) =
                 sprite_world_transform(state, &sprite_viewport, &sprite_virtual, &display)
             {
-                log::trace!(
-                    "sprite slot {} world position ({:.2}, {:.2}) size ({:.2}, {:.2})",
-                    slot.index,
-                    position.x,
-                    position.y,
-                    size.x,
-                    size.y
-                );
                 *visibility = Visibility::Visible;
                 transform.translation.x = position.x;
                 transform.translation.y = position.y;
@@ -1058,7 +1047,6 @@ fn ui_system(
                 }
                 sprite.color = Color::WHITE;
             } else {
-                log::trace!("sprite slot {} culled by mapping", slot.index);
                 *visibility = Visibility::Hidden;
                 continue;
             }

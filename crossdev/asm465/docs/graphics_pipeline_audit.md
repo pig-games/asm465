@@ -10,8 +10,9 @@
 
 ### Snapshot → Bevy
 - `ConsoleOutput::snapshot` now carries text only; `GraphicsOutput::snapshot`
-- In `asm465/src/lib.rs`, the UI system logs the raw hex and decoded float for
-  each sprite before calling `sprite_world_transform`.
+- In `asm465/src/lib.rs`, the UI system mirrors the graphics snapshot into Bevy
+  components and relies on the shared helpers (`sprite_mmio_position`,
+  `sprite_world_transform`) to keep native/wasm behaviour identical.
 - Both native and wasm builds share the same code path; wasm just needed assets
   copied into `web-dist` so textures resolve.
 
@@ -65,7 +66,7 @@
 
 ### Observations
 - The pipeline now uses the dedicated graphics MMIO, honours the new mapping
-  configuration, and culls sprites that remain fully outside the visible
-  content area.
-- Remaining work items (final polish/cleanup, colour-register surfacing) can
-  build on this split without touching the console MMIO.
+  configuration, culls sprites that remain fully outside the visible content
+  area, and masks anything that overlaps the enforced border.
+- Remaining work (colour-register surfacing) can build on this split without
+  touching the console MMIO.
