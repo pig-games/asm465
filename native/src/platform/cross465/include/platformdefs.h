@@ -17,13 +17,15 @@ cross465 .namespace
     SETLPTR     = $DF09  ;        0x09 => self.set_lptr(value),
     SETHPTR     = $DF0A  ;        0x0A => self.set_hptr(value),
     PRINT       = $DF0B  ;        0x0B => self.print(value),
-    SPRSEL      = $DF10
-    SPRNUM      = $DF11
-    SPRANIM     = $DF12
-    SPRXHI      = $DF13
-    SPRXLO      = $DF14
-    SPRYHI      = $DF15
-    SPRYLO      = $DF16
+    SPRSEL      = $DF20
+    SPRNUM      = $DF21
+    SPRANIM     = $DF22
+    SPRXHI      = $DF23
+    SPRXLO      = $DF24
+    SPRYHI      = $DF25
+    SPRYLO      = $DF26
+    BRCOL       = $DF27
+    BGCOL       = $DF28
 .endnamespace ; cross465
 
 

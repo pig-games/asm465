@@ -7,6 +7,11 @@
     ; mirroring semantics from the Mega65 side (but 16‑bit).
 
     .cpr 3, "Sprite tests!n"
+    lda #4
+    sta cross465.BRCOL
+    lda #6
+    sta cross465.BGCOL
+
     lda #1
     sta cross465.SPRSEL
     lda #0

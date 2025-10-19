@@ -13,7 +13,8 @@ use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot, ConsoleSprite, CONSOLE_SPRITE_SLOTS};
+use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
+use bus::graphics_mmio::{GraphicsOutput, GraphicsSnapshot, SpriteState, GRAPHICS_SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
 
@@ -378,6 +379,7 @@ pub fn run_app(config: AppConfig) {
 struct EmulatorState {
     bus: Bus,
     console_output: Arc<Mutex<ConsoleOutput>>,
+    graphics_output: Arc<Mutex<GraphicsOutput>>,
     default_max_cycles: u64,
     status_message: Option<String>,
 }
@@ -405,10 +407,14 @@ impl EmulatorState {
         let console_output = bus
             .console_output_handle()
             .expect("default console MMIO not found on bus");
+        let graphics_output = bus
+            .graphics_output_handle()
+            .expect("graphics MMIO not found on bus");
 
         Self {
             bus,
             console_output,
+            graphics_output,
             default_max_cycles,
             status_message,
         }
@@ -438,6 +444,10 @@ impl EmulatorState {
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
+                self.graphics_output = self
+                    .bus
+                    .graphics_output_handle()
+                    .expect("graphics MMIO not found on bus");
                 self.status_message = Some(msg.clone());
                 Ok(msg)
             }
@@ -448,6 +458,10 @@ impl EmulatorState {
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
+                self.graphics_output = self
+                    .bus
+                    .graphics_output_handle()
+                    .expect("graphics MMIO not found on bus");
                 self.status_message = Some(msg.clone());
                 Err(msg)
             }
@@ -456,6 +470,13 @@ impl EmulatorState {
 
     fn snapshot(&self) -> Option<ConsoleSnapshot> {
         self.console_output
+            .lock()
+            .map(|output| output.snapshot())
+            .ok()
+    }
+
+    fn graphics_snapshot(&self) -> Option<GraphicsSnapshot> {
+        self.graphics_output
             .lock()
             .map(|output| output.snapshot())
             .ok()
@@ -588,7 +609,7 @@ fn setup_scene(
         handles: handles.clone(),
     });
 
-    for index in 0..CONSOLE_SPRITE_SLOTS {
+    for index in 0..GRAPHICS_SPRITE_SLOTS {
         commands.spawn((
             SpriteBundle {
                 texture: default_texture.clone(),
@@ -731,10 +752,11 @@ fn ui_system(
         });
 
     let console_snapshot = emulator.snapshot();
+    let graphics_snapshot = emulator.graphics_snapshot();
 
-    let snapshot_ref = console_snapshot.as_ref();
+    let sprite_snapshot = graphics_snapshot.as_ref();
     for (slot, mut transform, mut visibility, mut sprite, mut texture) in sprite_query.iter_mut() {
-        let state = snapshot_ref.and_then(|snapshot| snapshot.sprite(slot.index));
+        let state = sprite_snapshot.and_then(|snapshot| snapshot.sprite(slot.index));
         if let Some(state) = state {
             if state.number == 0 {
                 *visibility = Visibility::Hidden;
@@ -847,7 +869,7 @@ fn write_console_line(bus: &mut Bus, line: &str) {
 }
 
 fn sprite_world_position(
-    sprite: &ConsoleSprite,
+    sprite: &SpriteState,
     viewport: &SpriteViewport,
     virtual_resolution: &SpriteVirtualResolution,
 ) -> Vec2 {
@@ -933,8 +955,8 @@ mod tests {
         (value * 256.0).round().clamp(0.0, u16::MAX as f32) as u16
     }
 
-    fn sprite(x: f32, y: f32) -> ConsoleSprite {
-        ConsoleSprite {
+    fn sprite(x: f32, y: f32) -> SpriteState {
+        SpriteState {
             number: 1,
             anim: 0,
             x: to_fixed(x),

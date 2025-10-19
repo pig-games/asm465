@@ -25,22 +25,6 @@ const DEFAULT_WIDTH: usize = 80;
 /// Default character rows for the virtual console surface.
 const DEFAULT_HEIGHT: usize = 50;
 
-/// Maximum number of sprite slots exposed through the console MMIO.
-pub const CONSOLE_SPRITE_SLOTS: usize = 8;
-
-/// Snapshot of a single sprite slot.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ConsoleSprite {
-    /// Sprite asset identifier; `0` disables the sprite.
-    pub number: u8,
-    /// Optional animation index supplied by the guest.
-    pub anim: u8,
-    /// Horizontal position (16-bit, guest-defined scale).
-    pub x: u16,
-    /// Vertical position (16-bit, guest-defined scale).
-    pub y: u16,
-}
-
 /// Single cell of console output state.
 #[derive(Clone)]
 pub struct ConsoleCell {
@@ -71,19 +55,12 @@ pub struct ConsoleSnapshot {
     pub height: usize,
     /// Row-major cell data backing this snapshot.
     pub cells: Vec<ConsoleCell>,
-    /// Sprite slot state captured at snapshot time.
-    pub sprites: Vec<ConsoleSprite>,
 }
 
 impl ConsoleSnapshot {
     #[inline]
     pub fn cell(&self, x: usize, y: usize) -> &ConsoleCell {
         &self.cells[y * self.width + x]
-    }
-
-    #[inline]
-    pub fn sprite(&self, index: usize) -> Option<&ConsoleSprite> {
-        self.sprites.get(index)
     }
 }
 
@@ -95,8 +72,6 @@ pub struct ConsoleOutput {
     height: usize,
     /// Dense row-major backing store for all cells.
     cells: Vec<ConsoleCell>,
-    /// Sprite slots mirrored for host integrations.
-    sprites: [ConsoleSprite; CONSOLE_SPRITE_SLOTS],
     /// Cursor X position, clamped to the surface.
     cursor_x: usize,
     /// Cursor Y position, clamped to the surface.
@@ -116,7 +91,6 @@ impl ConsoleOutput {
             width,
             height,
             cells: vec![ConsoleCell::default(); width * height],
-            sprites: [ConsoleSprite::default(); CONSOLE_SPRITE_SLOTS],
             cursor_x: 0,
             cursor_y: 0,
         };
@@ -183,7 +157,6 @@ impl ConsoleOutput {
     /// Clear the screen and reset the cursor to the home position.
     pub fn clear(&mut self) {
         self.cells.fill(ConsoleCell::default());
-        self.sprites.fill(ConsoleSprite::default());
         self.cursor_x = 0;
         self.cursor_y = 0;
     }
@@ -201,7 +174,6 @@ impl ConsoleOutput {
             width: self.width,
             height: self.height,
             cells: self.cells.clone(),
-            sprites: self.sprites.iter().copied().collect(),
         }
     }
 
@@ -220,13 +192,6 @@ impl ConsoleOutput {
         }
         out
     }
-
-    /// Update the mirrored sprite state for `index`.
-    pub fn set_sprite(&mut self, index: usize, sprite: ConsoleSprite) {
-        if index < CONSOLE_SPRITE_SLOTS {
-            self.sprites[index] = sprite;
-        }
-    }
 }
 
 /// Console MMIO device for host-side text output.
@@ -244,8 +209,6 @@ pub struct ConsoleMmio {
     pub lptr: u8,
     pub hptr: u8,
     pub plength: u8,
-    pub spr_select: u8, // sprite select
-    sprites: [ConsoleSprite; CONSOLE_SPRITE_SLOTS],
     output: Arc<Mutex<ConsoleOutput>>,
 }
 
@@ -265,8 +228,6 @@ impl ConsoleMmio {
             lptr: 0,
             hptr: 0,
             plength: 0,
-            spr_select: 0, // sprite select
-            sprites: [ConsoleSprite::default(); CONSOLE_SPRITE_SLOTS],
             output: Arc::new(Mutex::new(ConsoleOutput::default())),
         }
     }
@@ -399,108 +360,6 @@ impl ConsoleMmio {
         //println!("length: {}", self.plength);
     }
 
-    fn sprite_index(select: u8) -> usize {
-        if CONSOLE_SPRITE_SLOTS == 0 {
-            0
-        } else {
-            (select as usize) % CONSOLE_SPRITE_SLOTS
-        }
-    }
-
-    fn selected_sprite_index(&self) -> usize {
-        Self::sprite_index(self.spr_select)
-    }
-
-    fn selected_sprite(&self) -> &ConsoleSprite {
-        &self.sprites[self.selected_sprite_index()]
-    }
-
-    fn publish_sprite(&self, index: usize) {
-        if let Ok(mut output) = self.output.lock() {
-            output.set_sprite(index, self.sprites[index]);
-        }
-    }
-
-    fn with_selected_sprite<F>(&mut self, f: F)
-    where
-        F: FnOnce(usize, &mut ConsoleSprite),
-    {
-        let index = self.selected_sprite_index();
-        f(index, &mut self.sprites[index]);
-        self.publish_sprite(index);
-    }
-
-    pub fn set_spr_select(&mut self, value: u8) {
-        log::trace!("ConsoleMmio: select sprite slot {value}");
-        self.spr_select = value;
-    }
-
-    pub fn set_spr_num(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.number = value;
-            log::trace!(
-                "ConsoleMmio: spr_num slot {} => {}",
-                index,
-                sprite.number
-            );
-        });
-    }
-
-    pub fn set_spr_anim(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.anim = value;
-            log::trace!(
-                "ConsoleMmio: spr_anim slot {} => {}",
-                index,
-                sprite.anim
-            );
-        });
-    }
-
-    pub fn set_spr_xhi(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.x = (sprite.x & 0x00FF) | ((value as u16) << 8);
-            log::trace!(
-                "ConsoleMmio: spr_x slot {} => {:04X}",
-                index,
-                sprite.x
-            );
-        });
-    }
-
-    pub fn set_spr_xlo(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.x = (sprite.x & 0xFF00) | value as u16;
-            log::trace!(
-                "ConsoleMmio: spr_x slot {} => {:04X}",
-                index,
-                sprite.x
-            );
-        });
-    }
-
-    pub fn set_spr_yhi(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.y = (sprite.y & 0x00FF) | ((value as u16) << 8);
-            log::trace!(
-                "ConsoleMmio: spr_y slot {} => {:04X}",
-                index,
-                sprite.y
-            );
-        });
-    }
-
-    pub fn set_spr_ylo(&mut self, value: u8) {
-        self.with_selected_sprite(|index, sprite| {
-            sprite.y = (sprite.y & 0xFF00) | value as u16;
-            log::trace!(
-                "ConsoleMmio: spr_y slot {} => {:04X}",
-                index,
-                sprite.y
-            );
-        });
-    }
-
     /// Shared output buffer handle for host integrations.
     pub fn output(&self) -> Arc<Mutex<ConsoleOutput>> {
         Arc::clone(&self.output)
@@ -519,13 +378,6 @@ impl MmioDevice for ConsoleMmio {
             0x09 => self.lptr,
             0x0a => self.hptr,
             0x0b => self.plength,
-            0x10 => self.spr_select,
-            0x11 => self.selected_sprite().number,
-            0x12 => self.selected_sprite().anim,
-            0x13 => (self.selected_sprite().x >> 8) as u8,
-            0x14 => (self.selected_sprite().x & 0x00FF) as u8,
-            0x15 => (self.selected_sprite().y >> 8) as u8,
-            0x16 => (self.selected_sprite().y & 0x00FF) as u8,
             _ => 0,
         };
         //println!("ConsoleMmio: read {:#06x} => {}", addr, val);
@@ -547,13 +399,6 @@ impl MmioDevice for ConsoleMmio {
             0x09 => self.set_lptr(value),
             0x0a => self.set_hptr(value),
             0x0b => self.print(value), // only requires previous call to set_lptr(val), the passed value is the high ptr for the text to be printed.
-            0x10 => self.set_spr_select(value), // set sprite select
-            0x11 => self.set_spr_num(value), // set sprite num (0 disable)
-            0x12 => self.set_spr_anim(value), // set sprite anim num
-            0x13 => self.set_spr_xhi(value), // set sprite xhi
-            0x14 => self.set_spr_xlo(value), // set sprite xlo
-            0x15 => self.set_spr_yhi(value), // set sprite yhi
-            0x16 => self.set_spr_ylo(value), // set sprite ylo
             _ => { /* reserved for future features (cursor, color, clear, etc.) */ }
         }
     }
