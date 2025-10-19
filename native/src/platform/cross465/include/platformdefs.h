@@ -26,6 +26,7 @@ cross465 .namespace
     SPRYLO      = $DF26
     BRCOL       = $DF27
     BGCOL       = $DF28
+    SPRSCL      = $DF29
 .endnamespace ; cross465
 
 

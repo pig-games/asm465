@@ -21,6 +21,9 @@ pub struct SpriteState {
     pub x: u16,
     /// Vertical position in 8.8 fixed-point units (guest space).
     pub y: u16,
+    /// Power-of-two scaling factors (encoded as shift exponents) for X/Y precision.
+    pub scale_x: u8,
+    pub scale_y: u8,
 }
 
 /// Immutable snapshot shared with host integrations (Bevy frontend/tests).
@@ -133,25 +136,24 @@ impl GraphicsMmio {
 
 impl MmioDevice for GraphicsMmio {
     fn read(&mut self, addr: u16) -> u8 {
+        let slot = (self.spr_select as usize) % GRAPHICS_SPRITE_SLOTS;
         match addr & 0x000F {
             0x00 => self.spr_select,
-            0x01 => self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].number,
-            0x02 => self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].anim,
-            0x03 => (self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].x >> 8) as u8,
-            0x04 => {
-                (self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].x & 0x00FF) as u8
-            }
-            0x05 => (self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].y >> 8) as u8,
-            0x06 => {
-                (self.sprites[self.spr_select as usize % GRAPHICS_SPRITE_SLOTS].y & 0x00FF) as u8
-            }
+            0x01 => self.sprites[slot].number,
+            0x02 => self.sprites[slot].anim,
+            0x03 => (self.sprites[slot].x >> 8) as u8,
+            0x04 => (self.sprites[slot].x & 0x00FF) as u8,
+            0x05 => (self.sprites[slot].y >> 8) as u8,
+            0x06 => (self.sprites[slot].y & 0x00FF) as u8,
             0x07 => self.border_color,
             0x08 => self.background_color,
+            0x09 => (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F),
             _ => 0,
         }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
+        let slot = (self.spr_select as usize) % GRAPHICS_SPRITE_SLOTS;
         match addr & 0x000F {
             0x00 => {
                 self.spr_select = value;
@@ -203,6 +205,19 @@ impl MmioDevice for GraphicsMmio {
                 self.publish_colors();
                 log::trace!("GraphicsMmio: background color => {value}");
             }
+            0x09 => {
+                let scale_x = (value >> 4) & 0x0F;
+                let scale_y = value & 0x0F;
+                self.sprites[slot].scale_x = scale_x;
+                self.sprites[slot].scale_y = scale_y;
+                self.publish_sprite(slot);
+                log::trace!(
+                    "GraphicsMmio: spr_scale slot {} => x={}, y={}",
+                    slot,
+                    scale_x,
+                    scale_y
+                );
+            }
             _ => {}
         }
     }
@@ -223,6 +238,7 @@ mod tests {
         MmioDevice::write(&mut mmio, 0xDF25, 0x56);
         MmioDevice::write(&mut mmio, 0xDF26, 0x78);
         MmioDevice::write(&mut mmio, 0xDF21, 5);
+        MmioDevice::write(&mut mmio, 0xDF29, 0x21);
 
         let handle = mmio.output();
         let snapshot = handle.lock().unwrap().snapshot();
@@ -230,6 +246,8 @@ mod tests {
         assert_eq!(sprite.number, 5);
         assert_eq!(sprite.x, 0x1234);
         assert_eq!(sprite.y, 0x5678);
+        assert_eq!(sprite.scale_x, 0x2);
+        assert_eq!(sprite.scale_y, 0x1);
     }
 
     #[test]

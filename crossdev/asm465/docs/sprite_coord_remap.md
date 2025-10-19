@@ -78,7 +78,18 @@
   ensure tests verify edges and check rounding.
 - Tooling: docs should show the formula so ROM authors know how to target the new space.
 
-### Next steps
-- Finalise register layout + encoding for per-sprite scale (shift vs exponent).
-- Prototype mapping + tests before implementing off-screen margins.
-- Update plan/audit once implementation lands.
+### Implementation snapshot
+- Sprite scale register at `$DF29` packs X shift in the high nibble and Y shift
+  in the low nibble; the frontend divides the 16-bit MMIO value by `2^shift`
+  before applying offsets.
+- Host configuration now exposes `sprite_margin_*`, `sprite_mmio_max_*`, and
+  `sprite_max_offscreen_*` so guests can tune the reachable range and the
+  culling threshold independently.
+- Leaving the MMIO maxima at `0` defers to the virtual-resolution+margin span;
+  with the default margins (one sprite width/height) this preserves the legacy
+  8.8 sweep while allowing a small off-screen buffer.
+- Mapping uses the agreed linear form  
+  `virtual = (mmio / mmio_max) * (virtual_extent + margins) - margin`, feeding
+  directly into the viewport scaling logic.
+- Off-screen sprites are hidden once their bounding box exceeds the configured
+  `sprite_max_offscreen_*` allowance, ensuring the border overlay remains opaque.

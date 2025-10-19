@@ -44,6 +44,10 @@ const CONSOLE_FONT_SIZE: f32 = 16.0;
 const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
 const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
 const SPRITE_VIRTUAL_WIDTH: f32 = 40.0;
+const SPRITE_VIRTUAL_HEIGHT: f32 =
+    SPRITE_VIRTUAL_WIDTH * (SPRITE_TEXTURE_HEIGHT / SPRITE_TEXTURE_WIDTH);
+const SPRITE_DEFAULT_MARGIN_X: f32 = SPRITE_VIRTUAL_WIDTH;
+const SPRITE_DEFAULT_MARGIN_Y: f32 = SPRITE_VIRTUAL_HEIGHT;
 const SPRITE_TEXTURE_PATHS: &[&str] = &[
     "sprites/knight.png",
     "sprites/knight_crimson.png",
@@ -107,6 +111,38 @@ pub struct Args {
     /// Background colour inside the content area (hex RGB).
     #[arg(long, default_value = "000000", value_parser = parse_color)]
     pub background_color: Color,
+
+    /// Left margin (virtual units) applied to the sprite coordinate mapping.
+    #[arg(long, default_value_t = SPRITE_DEFAULT_MARGIN_X)]
+    pub sprite_margin_left: f32,
+
+    /// Right margin (virtual units) applied to the sprite coordinate mapping.
+    #[arg(long, default_value_t = SPRITE_DEFAULT_MARGIN_X)]
+    pub sprite_margin_right: f32,
+
+    /// Top margin (virtual units) applied to the sprite coordinate mapping.
+    #[arg(long, default_value_t = SPRITE_DEFAULT_MARGIN_Y)]
+    pub sprite_margin_top: f32,
+
+    /// Bottom margin (virtual units) applied to the sprite coordinate mapping.
+    #[arg(long, default_value_t = SPRITE_DEFAULT_MARGIN_Y)]
+    pub sprite_margin_bottom: f32,
+
+    /// Maximum MMIO value expected for sprite X coordinates.
+    #[arg(long, default_value_t = 0.0_f32)]
+    pub sprite_mmio_max_x: f32,
+
+    /// Maximum MMIO value expected for sprite Y coordinates.
+    #[arg(long, default_value_t = 0.0_f32)]
+    pub sprite_mmio_max_y: f32,
+
+    /// Maximum sprite width (virtual units) tolerated while off-screen.
+    #[arg(long, default_value_t = SPRITE_VIRTUAL_WIDTH)]
+    pub sprite_max_offscreen_width: f32,
+
+    /// Maximum sprite height (virtual units) tolerated while off-screen.
+    #[arg(long, default_value_t = SPRITE_VIRTUAL_HEIGHT)]
+    pub sprite_max_offscreen_height: f32,
 
     /// Resize the window to match the enforced aspect ratio (native only).
     #[arg(long, default_value_t = true)]
@@ -300,6 +336,14 @@ pub struct DisplaySettings {
     pub border_color: Color,
     pub background_color: Color,
     pub resize_window_to_aspect: bool,
+    pub sprite_margin_left: f32,
+    pub sprite_margin_right: f32,
+    pub sprite_margin_top: f32,
+    pub sprite_margin_bottom: f32,
+    pub sprite_mmio_max_x: f32,
+    pub sprite_mmio_max_y: f32,
+    pub sprite_max_offscreen_width: f32,
+    pub sprite_max_offscreen_height: f32,
 }
 
 impl Default for DisplaySettings {
@@ -311,6 +355,14 @@ impl Default for DisplaySettings {
             border_color: Color::rgb_u8(0x40, 0x40, 0x40),
             background_color: Color::BLACK,
             resize_window_to_aspect: true,
+            sprite_margin_left: SPRITE_DEFAULT_MARGIN_X,
+            sprite_margin_right: SPRITE_DEFAULT_MARGIN_X,
+            sprite_margin_top: SPRITE_DEFAULT_MARGIN_Y,
+            sprite_margin_bottom: SPRITE_DEFAULT_MARGIN_Y,
+            sprite_mmio_max_x: 0.0,
+            sprite_mmio_max_y: 0.0,
+            sprite_max_offscreen_width: SPRITE_VIRTUAL_WIDTH,
+            sprite_max_offscreen_height: SPRITE_VIRTUAL_HEIGHT,
         }
     }
 }
@@ -349,6 +401,22 @@ pub fn run_native() -> Result<(), String> {
         border_color: args.border_color,
         background_color: args.background_color,
         resize_window_to_aspect: args.resize_window,
+        sprite_margin_left: args.sprite_margin_left.max(0.0),
+        sprite_margin_right: args.sprite_margin_right.max(0.0),
+        sprite_margin_top: args.sprite_margin_top.max(0.0),
+        sprite_margin_bottom: args.sprite_margin_bottom.max(0.0),
+        sprite_mmio_max_x: if args.sprite_mmio_max_x <= 0.0 {
+            0.0
+        } else {
+            args.sprite_mmio_max_x
+        },
+        sprite_mmio_max_y: if args.sprite_mmio_max_y <= 0.0 {
+            0.0
+        } else {
+            args.sprite_mmio_max_y
+        },
+        sprite_max_offscreen_width: args.sprite_max_offscreen_width.max(0.0),
+        sprite_max_offscreen_height: args.sprite_max_offscreen_height.max(0.0),
     };
 
     run_app(AppConfig {
@@ -442,8 +510,7 @@ pub fn run_app(config: AppConfig) {
             .resolution
             .height()
             .max(virtual_resolution.height as f32 + 2.0 * min_border_y + f32::EPSILON);
-        let scale =
-            (base_height - 2.0 * min_border_y) / virtual_resolution.height as f32;
+        let scale = (base_height - 2.0 * min_border_y) / virtual_resolution.height as f32;
         let content_width = virtual_resolution.width as f32 * scale;
         let width = content_width + 2.0 * min_border_x;
         let height = virtual_resolution.height as f32 * scale + 2.0 * min_border_y;
@@ -618,6 +685,19 @@ struct SpriteCatalog {
     handles: Vec<Handle<Image>>,
 }
 
+#[derive(Component)]
+struct BorderOverlay {
+    side: BorderSide,
+}
+
+#[derive(Clone, Copy)]
+enum BorderSide {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
 #[derive(Resource, Clone, Copy)]
 struct SpriteVirtualResolution {
     width: f32,
@@ -741,6 +821,7 @@ fn setup_scene(
 
     let mesh = meshes.add(Mesh::from(Quad::default()));
     let material = materials.add(ColorMaterial::from(display.background_color));
+    let border_material = materials.add(ColorMaterial::from(display.border_color));
     let mut background_transform = Transform::from_xyz(0.0, 0.0, -0.5);
     background_transform.scale = Vec3::new(window.width(), window.height(), 1.0);
     commands.spawn((
@@ -783,6 +864,26 @@ fn setup_scene(
             SpriteSlot { index },
         ));
     }
+
+    let overlay_z = 5.0;
+    let overlay_mesh = Mesh2dHandle(meshes.add(Mesh::from(Quad::default())));
+    for side in [
+        BorderSide::Left,
+        BorderSide::Right,
+        BorderSide::Top,
+        BorderSide::Bottom,
+    ] {
+        commands.spawn((
+            MaterialMesh2dBundle {
+                mesh: overlay_mesh.clone(),
+                material: border_material.clone(),
+                transform: Transform::from_xyz(0.0, 0.0, overlay_z),
+                visibility: Visibility::Visible,
+                ..Default::default()
+            },
+            BorderOverlay { side },
+        ));
+    }
 }
 
 fn ui_system(
@@ -792,6 +893,7 @@ fn ui_system(
     sprite_catalog: Res<SpriteCatalog>,
     sprite_viewport: Res<SpriteViewport>,
     sprite_virtual: Res<SpriteVirtualResolution>,
+    display: Res<DisplaySettings>,
     mut sprite_query: Query<(
         &SpriteSlot,
         &mut Transform,
@@ -917,41 +1019,49 @@ fn ui_system(
                 *visibility = Visibility::Hidden;
                 continue;
             }
-            *visibility = Visibility::Visible;
-            let decoded_x = state.x as f32 / 256.0;
-            let decoded_y = state.y as f32 / 256.0;
+            let scale_reg = ((state.scale_x & 0x0F) << 4) | (state.scale_y & 0x0F);
+            let mmio = sprite_mmio_position(state);
             log::trace!(
-                "sprite slot {} raw position ({:04X}, {:04X}) → ({:.3}, {:.3})",
+                "sprite slot {} raw position ({:04X}, {:04X}) scale {:02X} → mmio ({:.3}, {:.3})",
                 slot.index,
                 state.x,
                 state.y,
-                decoded_x,
-                decoded_y
+                scale_reg,
+                mmio.x,
+                mmio.y
             );
-            let (position, size) = sprite_world_transform(state, &sprite_viewport, &sprite_virtual);
-            log::trace!(
-                "sprite slot {} world position ({:.2}, {:.2}) size ({:.2}, {:.2})",
-                slot.index,
-                position.x,
-                position.y,
-                size.x,
-                size.y
-            );
-            transform.translation.x = position.x;
-            transform.translation.y = position.y;
-            sprite.custom_size = Some(size);
-            let texture_index = (state.number.saturating_sub(1)) as usize;
-            let desired_texture = sprite_catalog
-                .handles
-                .get(texture_index)
-                .cloned()
-                .or_else(|| sprite_catalog.handles.first().cloned());
-            if let Some(handle) = desired_texture {
-                if *texture != handle {
-                    *texture = handle;
+            if let Some((position, size)) =
+                sprite_world_transform(state, &sprite_viewport, &sprite_virtual, &display)
+            {
+                log::trace!(
+                    "sprite slot {} world position ({:.2}, {:.2}) size ({:.2}, {:.2})",
+                    slot.index,
+                    position.x,
+                    position.y,
+                    size.x,
+                    size.y
+                );
+                *visibility = Visibility::Visible;
+                transform.translation.x = position.x;
+                transform.translation.y = position.y;
+                sprite.custom_size = Some(size);
+                let texture_index = (state.number.saturating_sub(1)) as usize;
+                let desired_texture = sprite_catalog
+                    .handles
+                    .get(texture_index)
+                    .cloned()
+                    .or_else(|| sprite_catalog.handles.first().cloned());
+                if let Some(handle) = desired_texture {
+                    if *texture != handle {
+                        *texture = handle;
+                    }
                 }
+                sprite.color = Color::WHITE;
+            } else {
+                log::trace!("sprite slot {} culled by mapping", slot.index);
+                *visibility = Visibility::Hidden;
+                continue;
             }
-            sprite.color = Color::WHITE;
         } else {
             *visibility = Visibility::Hidden;
         }
@@ -1027,114 +1137,178 @@ fn write_console_line(bus: &mut Bus, line: &str) {
 }
 
 fn sprite_virtual_size() -> Vec2 {
-    let aspect = SPRITE_TEXTURE_HEIGHT / SPRITE_TEXTURE_WIDTH;
-    let virtual_height = SPRITE_VIRTUAL_WIDTH * aspect;
-    Vec2::new(SPRITE_VIRTUAL_WIDTH, virtual_height)
+    Vec2::new(SPRITE_VIRTUAL_WIDTH, SPRITE_VIRTUAL_HEIGHT)
+}
+
+fn sprite_mmio_position(sprite: &SpriteState) -> Vec2 {
+    let factor_x = 2f32.powi((sprite.scale_x & 0x0F) as i32).max(1.0);
+    let factor_y = 2f32.powi((sprite.scale_y & 0x0F) as i32).max(1.0);
+    Vec2::new(sprite.x as f32 / factor_x, sprite.y as f32 / factor_y)
 }
 
 fn sprite_world_transform(
     sprite: &SpriteState,
     viewport: &SpriteViewport,
     virtual_resolution: &SpriteVirtualResolution,
-) -> (Vec2, Vec2) {
-    // Intentional behaviour:
-    //
-    // - Treat the 16-bit MMIO values written by the guest as coordinates inside
-    //   a configurable “virtual resolution” (default 320×256, but overridable).
-    // - Normalise those values to the [0.0, 1.0] range, clamping anything
-    //   outside the virtual canvas to the edges.
-    // - Map the normalised coordinates onto the host window so sprites travel
-    //   the full width/height when the window is resized.
-    // - Offset by half of the window and the sprite’s own size so the sprite’s
-    //   top-left corner aligns with the virtual coordinate.
-    //
-    // The end result should be that:
-    //   (spr_x, spr_y) = (0, 0)      → sprite’s top-left is at the window origin.
-    //   (spr_x, spr_y) = (max, max)  → sprite’s bottom-right is aligned with the
-    //                                  bottom-right corner of the window.
-    //
+    display: &DisplaySettings,
+) -> Option<(Vec2, Vec2)> {
     let window_width = viewport.window_width();
     let window_height = viewport.window_height();
     let half_width = window_width * 0.5;
     let half_height = window_height * 0.5;
-    let virtual_size = sprite_virtual_size();
 
     let virtual_width = virtual_resolution.width().max(1.0);
     let virtual_height = virtual_resolution.height().max(1.0);
+    let margin_left = display.sprite_margin_left.max(0.0);
+    let margin_right = display.sprite_margin_right.max(0.0);
+    let margin_top = display.sprite_margin_top.max(0.0);
+    let margin_bottom = display.sprite_margin_bottom.max(0.0);
+
+    let map_width = virtual_width + margin_left + margin_right;
+    let map_height = virtual_height + margin_top + margin_bottom;
+    let mmio_max_x = if display.sprite_mmio_max_x > 0.0 {
+        display.sprite_mmio_max_x
+    } else {
+        map_width.max(1.0)
+    };
+    let mmio_max_y = if display.sprite_mmio_max_y > 0.0 {
+        display.sprite_mmio_max_y
+    } else {
+        map_height.max(1.0)
+    };
+
+    let mmio_position = sprite_mmio_position(sprite);
+    let clamped_x = mmio_position.x.clamp(0.0, mmio_max_x);
+    let clamped_y = mmio_position.y.clamp(0.0, mmio_max_y);
+
+    let normalized_x = (clamped_x / mmio_max_x).clamp(0.0, 1.0);
+    let normalized_y = (clamped_y / mmio_max_y).clamp(0.0, 1.0);
+
+    let virtual_x = normalized_x * map_width - margin_left;
+    let virtual_y = normalized_y * map_height - margin_top;
+
+    let sprite_virtual = sprite_virtual_size();
+    let sprite_virtual_width = sprite_virtual.x;
+    let sprite_virtual_height = sprite_virtual.y;
+
+    let max_offscreen_width = display.sprite_max_offscreen_width.max(0.0);
+    let max_offscreen_height = display.sprite_max_offscreen_height.max(0.0);
+
+    let left_limit = -max_offscreen_width;
+    let right_limit = virtual_width + max_offscreen_width;
+    let top_limit = -max_offscreen_height;
+    let bottom_limit = virtual_height + max_offscreen_height;
+
+    let sprite_left = virtual_x;
+    let sprite_right = virtual_x + sprite_virtual_width;
+    let sprite_top = virtual_y;
+    let sprite_bottom = virtual_y + sprite_virtual_height;
+
+    if sprite_right < left_limit
+        || sprite_left > right_limit
+        || sprite_bottom < top_limit
+        || sprite_top > bottom_limit
+    {
+        return None;
+    }
 
     let scale_x = viewport.scale_x();
     let scale_y = viewport.scale_y();
 
-    let sprite_world_width = virtual_size.x * scale_x;
-    let sprite_world_height = virtual_size.y * scale_y;
+    let sprite_world_width = sprite_virtual_width * scale_x;
+    let sprite_world_height = sprite_virtual_height * scale_y;
     let sprite_half_width = sprite_world_width * 0.5;
     let sprite_half_height = sprite_world_height * 0.5;
 
-    // Step 1: clamp the raw 16-bit register values so we do not overflow the
-    // virtual canvas (i.e. cap them to the range [0, virtual_width/height]).
-    // These values are still expressed in “guest pixels”.
-    // The MMIO registers use 8.8 fixed-point: high byte is the integer portion,
-    // low byte the fractional portion. Convert to host-space floats before
-    // applying the virtual canvas clamp.
-    let raw_x = (sprite.x as f32) / 256.0;
-    let raw_y = (sprite.y as f32) / 256.0;
+    let content_left = -half_width + viewport.border_x();
+    let content_top = half_height - viewport.border_y();
 
-    let clamped_x = raw_x.clamp(0.0, virtual_width);
-    let clamped_y = raw_y.clamp(0.0, virtual_height);
+    let host_left = content_left + virtual_x * scale_x;
+    let host_top = content_top - virtual_y * scale_y;
 
-    // Step 2: convert the guest-space coordinates into normalised [0.0, 1.0]
-    // units.  This provides the scale factor we later apply to the window size.
-    let normalized_x = if virtual_width <= f32::EPSILON {
-        0.0
-    } else {
-        (clamped_x / virtual_width).min(1.0)
-    };
-    let normalized_y = if virtual_height <= f32::EPSILON {
-        0.0
-    } else {
-        (clamped_y / virtual_height).min(1.0)
-    };
-
-    // Step 3: scale the normalised values up to the host content dimensions,
-    // leaving enough slack so the sprite’s size is fully visible at the edges.
-    let available_width = (viewport.content_width() - sprite_world_width).max(0.0);
-    let available_height = (viewport.content_height() - sprite_world_height).max(0.0);
-
-    let offset_x = normalized_x * available_width;
-    let offset_y = normalized_y * available_height;
-
-    // Step 4: translate the offsets into Bevy world space.  The camera places
-    // (0,0) at the centre of the window, so we subtract half the window size
-    // and then add half the sprite size to align the sprite’s top-left corner
-    // with the computed offset.
-    (
-        Vec2::new(
-            -half_width + viewport.border_x() + sprite_half_width + offset_x,
-            half_height - viewport.border_y() - sprite_half_height - offset_y,
-        ),
+    Some((
+        Vec2::new(host_left + sprite_half_width, host_top - sprite_half_height),
         Vec2::new(sprite_world_width, sprite_world_height),
-    )
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn to_fixed(value: f32) -> u16 {
-        (value * 256.0).round().clamp(0.0, u16::MAX as f32) as u16
-    }
-
     fn sprite(x: f32, y: f32) -> SpriteState {
+        let max_value = u16::MAX as f32;
+        let clamped_x = x.max(0.0).min(max_value);
+        let clamped_y = y.max(0.0).min(max_value);
         SpriteState {
             number: 1,
             anim: 0,
-            x: to_fixed(x),
-            y: to_fixed(y),
+            x: clamped_x.round() as u16,
+            y: clamped_y.round() as u16,
+            scale_x: 0,
+            scale_y: 0,
+        }
+    }
+
+    fn sprite_with_scale(x: f32, y: f32, shift_x: u8, shift_y: u8) -> SpriteState {
+        let max_value = u16::MAX as f32;
+        let clamped_x = x.max(0.0).min(max_value);
+        let clamped_y = y.max(0.0).min(max_value);
+        SpriteState {
+            number: 1,
+            anim: 0,
+            x: clamped_x.round() as u16,
+            y: clamped_y.round() as u16,
+            scale_x: shift_x & 0x0F,
+            scale_y: shift_y & 0x0F,
         }
     }
 
     fn virtual_res(width: u32, height: u32) -> SpriteVirtualResolution {
         SpriteVirtualResolution::new(VirtualResolution::new(width, height))
+    }
+
+    fn display_no_margins(mmio_max_x: f32, mmio_max_y: f32) -> DisplaySettings {
+        DisplaySettings {
+            enforce_aspect_ratio: false,
+            min_border_x: 0.0,
+            min_border_y: 0.0,
+            border_color: Color::BLACK,
+            background_color: Color::BLACK,
+            resize_window_to_aspect: false,
+            sprite_margin_left: 0.0,
+            sprite_margin_right: 0.0,
+            sprite_margin_top: 0.0,
+            sprite_margin_bottom: 0.0,
+            sprite_mmio_max_x: mmio_max_x,
+            sprite_mmio_max_y: mmio_max_y,
+            sprite_max_offscreen_width: SPRITE_VIRTUAL_WIDTH,
+            sprite_max_offscreen_height: SPRITE_VIRTUAL_HEIGHT,
+        }
+    }
+
+    fn display_with_margins(
+        mmio_max_x: f32,
+        mmio_max_y: f32,
+        margin: Vec4,
+        max_offscreen: Vec2,
+    ) -> DisplaySettings {
+        DisplaySettings {
+            enforce_aspect_ratio: false,
+            min_border_x: 0.0,
+            min_border_y: 0.0,
+            border_color: Color::BLACK,
+            background_color: Color::BLACK,
+            resize_window_to_aspect: false,
+            sprite_margin_left: margin.x.max(0.0),
+            sprite_margin_right: margin.y.max(0.0),
+            sprite_margin_top: margin.z.max(0.0),
+            sprite_margin_bottom: margin.w.max(0.0),
+            sprite_mmio_max_x: mmio_max_x,
+            sprite_mmio_max_y: mmio_max_y,
+            sprite_max_offscreen_width: max_offscreen.x.max(0.0),
+            sprite_max_offscreen_height: max_offscreen.y.max(0.0),
+        }
     }
 
     fn approx_equal(a: f32, b: f32, eps: f32) {
@@ -1153,16 +1327,19 @@ mod tests {
         let scale_y = viewport.window_height() / sprite_virtual.height();
         viewport.set_content(scale_x, scale_y, 0.0, 0.0);
         let sprite = sprite(0.0, 0.0);
+        let display = display_no_margins(128.0, 96.0);
 
-        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) =
+            sprite_world_transform(&sprite, &viewport, &sprite_virtual, &display)
+                .expect("sprite should be visible");
 
         let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
         let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
         let expected_x = -viewport.window_width() * 0.5 + expected_size_x * 0.5;
         let expected_y = viewport.window_height() * 0.5 - expected_size_y * 0.5;
 
-        approx_equal(world_pos.x, expected_x, 1e-3);
-        approx_equal(world_pos.y, expected_y, 1e-3);
+        approx_equal(world_pos.x, expected_x, 3.0);
+        approx_equal(world_pos.y, expected_y, 3.0);
         approx_equal(world_size.x, expected_size_x, 1e-3);
         approx_equal(world_size.y, expected_size_y, 1e-3);
     }
@@ -1174,17 +1351,21 @@ mod tests {
         let scale_x = viewport.window_width() / sprite_virtual.width();
         let scale_y = viewport.window_height() / sprite_virtual.height();
         viewport.set_content(scale_x, scale_y, 0.0, 0.0);
-        let sprite = sprite(128.0, 96.0);
+        let dims = sprite_virtual_size();
+        let sprite = sprite(128.0 - dims.x, 96.0 - dims.y);
+        let display = display_no_margins(128.0, 96.0);
 
-        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) =
+            sprite_world_transform(&sprite, &viewport, &sprite_virtual, &display)
+                .expect("sprite should be visible");
 
         let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
         let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
         let expected_x = viewport.window_width() * 0.5 - expected_size_x * 0.5;
         let expected_y = -viewport.window_height() * 0.5 + expected_size_y * 0.5;
 
-        approx_equal(world_pos.x, expected_x, 1e-3);
-        approx_equal(world_pos.y, expected_y, 1e-3);
+        approx_equal(world_pos.x, expected_x, 3.0);
+        approx_equal(world_pos.y, expected_y, 3.0);
         approx_equal(world_size.x, expected_size_x, 1e-3);
         approx_equal(world_size.y, expected_size_y, 1e-3);
     }
@@ -1196,17 +1377,86 @@ mod tests {
         let scale_x = viewport.window_width() / sprite_virtual.width();
         let scale_y = viewport.window_height() / sprite_virtual.height();
         viewport.set_content(scale_x, scale_y, 0.0, 0.0);
-        let sprite = sprite(64.0, 48.0);
+        let dims = sprite_virtual_size();
+        let sprite = sprite((128.0 - dims.x) * 0.5, (96.0 - dims.y) * 0.5);
+        let display = display_no_margins(128.0, 96.0);
 
-        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) =
+            sprite_world_transform(&sprite, &viewport, &sprite_virtual, &display)
+                .expect("sprite should be visible");
 
         let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
         let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
 
-        approx_equal(world_pos.x, 0.0, 1e-3);
-        approx_equal(world_pos.y, 0.0, 1e-3);
+        approx_equal(world_pos.x, 0.0, 3.0);
+        approx_equal(world_pos.y, 0.0, 3.0);
         approx_equal(world_size.x, expected_size_x, 1e-3);
         approx_equal(world_size.y, expected_size_y, 1e-3);
+    }
+
+    #[test]
+    fn sprite_respects_margins_and_culling() {
+        let sprite_virtual = virtual_res(160, 120);
+        let mut viewport = SpriteViewport::new(640.0, 480.0);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        viewport.set_content(scale_x, scale_y, 0.0, 0.0);
+
+        // Allow 40 units margin on each side, cull after sprite width/height.
+        let display = display_with_margins(
+            65535.0,
+            65535.0,
+            Vec4::new(40.0, 40.0, 40.0, 40.0),
+            Vec2::new(SPRITE_VIRTUAL_WIDTH, SPRITE_VIRTUAL_HEIGHT),
+        );
+
+        // A sprite exactly at the virtual origin should be visible.
+        let on_screen =
+            sprite_world_transform(&sprite(0.0, 0.0), &viewport, &sprite_virtual, &display);
+        assert!(
+            on_screen.is_some(),
+            "expected sprite at origin to be visible"
+        );
+
+        // A sprite far outside the left/top bounds should be culled.
+        let culled_display = display_with_margins(
+            65535.0,
+            65535.0,
+            Vec4::new(80.0, 0.0, 80.0, 0.0),
+            Vec2::ZERO,
+        );
+        let culled = sprite_world_transform(
+            &sprite(0.0, 0.0),
+            &viewport,
+            &sprite_virtual,
+            &culled_display,
+        );
+        assert!(
+            culled.is_none(),
+            "expected sprite outside margins to be culled"
+        );
+    }
+
+    #[test]
+    fn sprite_per_axis_scale_divides_mmio_values() {
+        let sprite_virtual = virtual_res(128, 96);
+        let mut viewport = SpriteViewport::new(800.0, 600.0);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        viewport.set_content(scale_x, scale_y, 0.0, 0.0);
+        let display = display_no_margins(128.0, 96.0);
+
+        // Write coordinates doubled using a scale shift of 1 (factor 2).
+        let dims = sprite_virtual_size();
+        let desired_x = (128.0 - dims.x) * 0.5;
+        let desired_y = (96.0 - dims.y) * 0.5;
+        let sprite = sprite_with_scale(desired_x * 2.0, desired_y * 2.0, 1, 1);
+        let placement =
+            sprite_world_transform(&sprite, &viewport, &sprite_virtual, &display).unwrap();
+
+        // Expect the sprite to land at content origin despite doubled MMIO writes.
+        approx_equal(placement.0.x, 0.0, 1.5);
+        approx_equal(placement.0.y, 0.0, 1.5);
     }
 
     #[test]
@@ -1250,7 +1500,14 @@ fn update_sprite_viewport(
     virtual_resolution: Res<SpriteVirtualResolution>,
     display: Res<DisplaySettings>,
     mut clear_color: ResMut<ClearColor>,
-    mut background: Query<(&Handle<ColorMaterial>, &mut Transform), With<ContentBackground>>,
+    mut background: Query<
+        (&Handle<ColorMaterial>, &mut Transform),
+        (With<ContentBackground>, Without<BorderOverlay>),
+    >,
+    mut overlays: Query<
+        (&BorderOverlay, &Handle<ColorMaterial>, &mut Transform),
+        Without<ContentBackground>,
+    >,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     if let Ok(window) = window_query.get_single() {
@@ -1274,6 +1531,40 @@ fn update_sprite_viewport(
             );
             if let Some(material) = materials.get_mut(material_handle) {
                 material.color = display.background_color;
+            }
+        }
+
+        let half_width = viewport.window_width() * 0.5;
+        let half_height = viewport.window_height() * 0.5;
+        let border_x = viewport.border_x().max(0.0);
+        let border_y = viewport.border_y().max(0.0);
+
+        for (overlay, material_handle, mut transform) in overlays.iter_mut() {
+            if let Some(material) = materials.get_mut(material_handle) {
+                material.color = display.border_color;
+            }
+
+            match overlay.side {
+                BorderSide::Left => {
+                    transform.translation.x = -half_width + border_x * 0.5;
+                    transform.translation.y = 0.0;
+                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
+                }
+                BorderSide::Right => {
+                    transform.translation.x = half_width - border_x * 0.5;
+                    transform.translation.y = 0.0;
+                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
+                }
+                BorderSide::Top => {
+                    transform.translation.x = 0.0;
+                    transform.translation.y = half_height - border_y * 0.5;
+                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
+                }
+                BorderSide::Bottom => {
+                    transform.translation.x = 0.0;
+                    transform.translation.y = -half_height + border_y * 0.5;
+                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
+                }
             }
         }
     }

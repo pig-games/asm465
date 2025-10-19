@@ -18,35 +18,40 @@
     sta cross465.SPRYHI
     sta cross465.SPRXHI
     sta cross465.SPRANIM
-    lda #0
-    sta cross465.SPRYLO
+    lda #20 ;40
     sta cross465.SPRXLO
+    lda #26 ;53
+    sta cross465.SPRYLO
+
     lda #1
     sta cross465.SPRNUM
 
     lda #2
     sta cross465.SPRSEL
-    lda #(255/2)
+    lda #0
     sta cross465.SPRYHI
     sta cross465.SPRXHI
     lda #0
     sta cross465.SPRANIM
-    sta cross465.SPRYLO
-    lda #(255/2)
+    lda #(160+20)   ; 160 + left margin of 20/2
     sta cross465.SPRXLO
+    lda #(120+26)   ; 120 + top margin of 20/2
+    sta cross465.SPRYLO
     lda #2
     sta cross465.SPRNUM
 
     lda #3
     sta cross465.SPRSEL
-    lda #255
-    sta cross465.SPRYHI
+    lda #1
     sta cross465.SPRXHI
-    lda #0
+    lda #1
+    sta cross465.SPRYHI
     sta cross465.SPRANIM
-    sta cross465.SPRYLO
-    lda #255
+    lda #(320-256+20)
     sta cross465.SPRXLO
+    lda #(240-256+26)
+    sta cross465.SPRYLO
+
     lda #3
     sta cross465.SPRNUM
 

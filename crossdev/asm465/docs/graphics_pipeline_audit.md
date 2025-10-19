@@ -5,8 +5,8 @@
   window (`$DF20–$DF2F`).
 - `GraphicsMmio::write` updates per-slot `SpriteState`s plus colour registers
   and mirrors them into `GraphicsOutput` immediately.
-- Recent instrumentation (`log::trace!`) shows raw register values in 8.8
-  fixed-point (e.g. `$3264 → 12.75`).
+- Scale nibbles are surfaced through the same snapshot so the frontend can
+  recover per-axis power-of-two factors when decoding coordinates.
 
 ### Snapshot → Bevy
 - `ConsoleOutput::snapshot` now carries text only; `GraphicsOutput::snapshot`
@@ -15,13 +15,32 @@
 - Both native and wasm builds share the same code path; wasm just needed assets
   copied into `web-dist` so textures resolve.
 
-### Scaling Logic
-- `sprite_world_transform` treats the registers as U8.8 fixed-point values,
-  clamps them to the configured virtual resolution, normalises to `[0, 1]`, and
-  scales both positions and sprite sizes based on the active window (or the
-  enforced aspect-ratio viewport).
-- Unit tests at the end of `asm465/src/lib.rs` confirm origin/midpoint/max
-  placement, sprite dimensions, and the aspect-ratio viewport math.
+### Mapping, Margins & Clipping
+- MMIO sprite coordinates are decoded as raw 16-bit values. Per-axis shift
+  registers provide optional sub-pixel precision (`value / 2^shift`).
+- Frontend mapping uses a linear scale+offset:
+  `virtual = (mmio / mmio_max) * (virtual_extent + margins) - margin`, so the
+  full configurable margin range remains reachable.
+- Default configuration keeps each margin at ~one sprite width/height (40×53⅓)
+  while deriving `mmio_max` from the virtual resolution + margins, so legacy
+  8.8 positions still sweep the full visible area but games can immediately
+  nudge sprites slightly off-screen.
+- Negative top/left margins allow sprites to spawn off-screen; right/bottom
+  mapping uses the same range, so writes above the virtual extent move sprites
+  past the edges instead of clamping.
+- `DisplaySettings` now exposes:
+  - `sprite_margin_{left,right,top,bottom}` (virtual units)
+  - `sprite_mmio_max_{x,y}` to describe the guest-facing coordinate span
+  - `sprite_max_offscreen_{width,height}` to control when fully hidden sprites
+    are culled for rendering.
+- `sprite_world_transform` converts the virtual top-left into Bevy world space
+  without clamping, and hides sprites once their bounding box exceeds the
+  configured off-screen allowance. This keeps letterboxed borders opaque while
+  still letting sprites traverse beyond the content area. A dedicated border
+  overlay (four quads rendered above the sprite layer) now masks anything that
+  overlaps the border region so off-screen sprites remain hidden.
+- Unit tests cover origin/midpoint/border placement, margin-only spawning,
+  culling behaviour, and per-axis scaling.
 
 ### Aspect Ratio & Borders
 - `DisplaySettings` (from CLI or defaults) controls whether we enforce the
@@ -36,7 +55,17 @@
 - Optional native-only resizing can adjust the primary window to match the
   virtual aspect ratio on startup.
 
+### Sprite Coordinate Mapping
+- Sprite MMIO values are interpreted linearly across the virtual canvas,
+  extended by configurable margins so `(0,0)` can live outside the top-left
+  border.
+- Each sprite slot supports a power-of-two precision scale (shift exponent)
+  so games can opt into sub-pixel motion while keeping the default behaviour
+  simple.
+
 ### Observations
-- The pipeline now uses the dedicated graphics MMIO and honours the new
-  display settings. Remaining work items (off-screen margins, final polish)
-  can build on this split without touching the console MMIO.
+- The pipeline now uses the dedicated graphics MMIO, honours the new mapping
+  configuration, and culls sprites that remain fully outside the visible
+  content area.
+- Remaining work items (final polish/cleanup, colour-register surfacing) can
+  build on this split without touching the console MMIO.
