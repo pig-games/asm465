@@ -15,13 +15,13 @@
   - [x] Extend the new module with border/background colour registers as part of the graphics MMIO  
   - [x] Add tests covering register reads/writes and interaction with the snapshot exposed to Bevy
 
-- [ ] Scale sprite dimensions alongside coordinates  
-  - [ ] Decide on configuration surface (automatic vs. explicit scale factor per axis)  
-  - [ ] Update `sprite_world_position` (or companion helper) to return a size multiplier in addition to position  
-  - [ ] Apply the multiplier to each sprite’s `Sprite::custom_size` while preserving aspect ratio  
-  - [ ] Add focused unit tests that validate size scaling for a few window/virtual-resolution combinations  
-  - [ ] Update `graphics_pipeline_audit.md` to reflect the changes
-  - [ ] Write commit message summarising scaling changes and tests
+- [x] Scale sprite dimensions alongside coordinates  
+  - [x] Decide on configuration surface (automatic vs. explicit scale factor per axis)  
+  - [x] Update `sprite_world_position` (or companion helper) to return a size multiplier in addition to position  
+  - [x] Apply the multiplier to each sprite’s `Sprite::custom_size` while preserving aspect ratio  
+  - [x] Add focused unit tests that validate size scaling for a few window/virtual-resolution combinations  
+  - [x] Update `graphics_pipeline_audit.md` to reflect the changes
+  - [x] Write commit message summarising scaling changes and tests
 
 - [ ] Introduce aspect-ratio controls & border handling  
   - [ ] Extend configuration to support:  

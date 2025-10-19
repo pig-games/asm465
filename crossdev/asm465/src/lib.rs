@@ -37,9 +37,9 @@ use std::thread;
 
 const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
-const SPRITE_BASE_WIDTH: f32 = 96.0;
-const SPRITE_BASE_HEIGHT: f32 = 128.0;
-const SPRITE_SCALE: f32 = 1.25;
+const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
+const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
+const SPRITE_VIRTUAL_WIDTH: f32 = 40.0;
 const SPRITE_TEXTURE_PATHS: &[&str] = &[
     "sprites/knight.png",
     "sprites/knight_crimson.png",
@@ -615,10 +615,7 @@ fn setup_scene(
                 texture: default_texture.clone(),
                 sprite: Sprite {
                     color: Color::WHITE,
-                    custom_size: Some(Vec2::new(
-                        SPRITE_BASE_WIDTH * SPRITE_SCALE,
-                        SPRITE_BASE_HEIGHT * SPRITE_SCALE,
-                    )),
+                    custom_size: None,
                     ..Default::default()
                 },
                 transform: Transform::from_xyz(0.0, 0.0, 1.0 + index as f32 * 0.01),
@@ -773,15 +770,18 @@ fn ui_system(
                 decoded_x,
                 decoded_y
             );
-            let position = sprite_world_position(state, &sprite_viewport, &sprite_virtual);
+            let (position, size) = sprite_world_transform(state, &sprite_viewport, &sprite_virtual);
             log::trace!(
-                "sprite slot {} world position ({:.2}, {:.2})",
+                "sprite slot {} world position ({:.2}, {:.2}) size ({:.2}, {:.2})",
                 slot.index,
                 position.x,
-                position.y
+                position.y,
+                size.x,
+                size.y
             );
             transform.translation.x = position.x;
             transform.translation.y = position.y;
+            sprite.custom_size = Some(size);
             let texture_index = (state.number.saturating_sub(1)) as usize;
             let desired_texture = sprite_catalog
                 .handles
@@ -868,12 +868,18 @@ fn write_console_line(bus: &mut Bus, line: &str) {
     bus.write(0xDF01, 0);
 }
 
-fn sprite_world_position(
+fn sprite_virtual_size() -> Vec2 {
+    let aspect = SPRITE_TEXTURE_HEIGHT / SPRITE_TEXTURE_WIDTH;
+    let virtual_height = SPRITE_VIRTUAL_WIDTH * aspect;
+    Vec2::new(SPRITE_VIRTUAL_WIDTH, virtual_height)
+}
+
+fn sprite_world_transform(
     sprite: &SpriteState,
     viewport: &SpriteViewport,
     virtual_resolution: &SpriteVirtualResolution,
-) -> Vec2 {
-    // Intentional behaviour (current implementation still under investigation):
+) -> (Vec2, Vec2) {
+    // Intentional behaviour:
     //
     // - Treat the 16-bit MMIO values written by the guest as coordinates inside
     //   a configurable “virtual resolution” (default 320×256, but overridable).
@@ -889,20 +895,22 @@ fn sprite_world_position(
     //   (spr_x, spr_y) = (max, max)  → sprite’s bottom-right is aligned with the
     //                                  bottom-right corner of the window.
     //
-    // NOTE: At the moment sprites still appear clustered near the origin,
-    // indicating the scale or offset math above is incorrect.  See plan below
-    // for how we intend to resolve this.
     let window_width = viewport.window_width();
     let window_height = viewport.window_height();
     let half_width = window_width * 0.5;
     let half_height = window_height * 0.5;
-    let sprite_half_width = SPRITE_BASE_WIDTH * SPRITE_SCALE * 0.5;
-    let sprite_half_height = SPRITE_BASE_HEIGHT * SPRITE_SCALE * 0.5;
-    let sprite_width = sprite_half_width * 2.0;
-    let sprite_height = sprite_half_height * 2.0;
+    let virtual_size = sprite_virtual_size();
 
     let virtual_width = virtual_resolution.width().max(1.0);
     let virtual_height = virtual_resolution.height().max(1.0);
+
+    let scale_x = window_width / virtual_width;
+    let scale_y = window_height / virtual_height;
+
+    let sprite_world_width = virtual_size.x * scale_x;
+    let sprite_world_height = virtual_size.y * scale_y;
+    let sprite_half_width = sprite_world_width * 0.5;
+    let sprite_half_height = sprite_world_height * 0.5;
 
     // Step 1: clamp the raw 16-bit register values so we do not overflow the
     // virtual canvas (i.e. cap them to the range [0, virtual_width/height]).
@@ -931,8 +939,8 @@ fn sprite_world_position(
 
     // Step 3: scale the normalised values up to the host window dimensions,
     // leaving enough slack so the sprite’s size is fully visible at the edges.
-    let available_width = (window_width - sprite_width).max(0.0);
-    let available_height = (window_height - sprite_height).max(0.0);
+    let available_width = (window_width - sprite_world_width).max(0.0);
+    let available_height = (window_height - sprite_world_height).max(0.0);
 
     let offset_x = normalized_x * available_width;
     let offset_y = normalized_y * available_height;
@@ -941,9 +949,12 @@ fn sprite_world_position(
     // (0,0) at the centre of the window, so we subtract half the window size
     // and then add half the sprite size to align the sprite’s top-left corner
     // with the computed offset.
-    Vec2::new(
-        -half_width + offset_x + sprite_half_width,
-        half_height - offset_y - sprite_half_height,
+    (
+        Vec2::new(
+            -half_width + offset_x + sprite_half_width,
+            half_height - offset_y - sprite_half_height,
+        ),
+        Vec2::new(sprite_world_width, sprite_world_height),
     )
 }
 
@@ -982,10 +993,19 @@ mod tests {
         let viewport = SpriteViewport::new(800.0, 600.0);
         let sprite = sprite(0.0, 0.0);
 
-        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        approx_equal(world.x, -340.0, 1e-3);
-        approx_equal(world.y, 220.0, 1e-3);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        let expected_size_x = sprite_virtual_size().x * scale_x;
+        let expected_size_y = sprite_virtual_size().y * scale_y;
+        let expected_x = -viewport.window_width() * 0.5 + expected_size_x * 0.5;
+        let expected_y = viewport.window_height() * 0.5 - expected_size_y * 0.5;
+
+        approx_equal(world_pos.x, expected_x, 1e-3);
+        approx_equal(world_pos.y, expected_y, 1e-3);
+        approx_equal(world_size.x, expected_size_x, 1e-3);
+        approx_equal(world_size.y, expected_size_y, 1e-3);
     }
 
     #[test]
@@ -994,10 +1014,19 @@ mod tests {
         let viewport = SpriteViewport::new(800.0, 600.0);
         let sprite = sprite(128.0, 96.0);
 
-        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        approx_equal(world.x, 340.0, 1e-3);
-        approx_equal(world.y, -220.0, 1e-3);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        let expected_size_x = sprite_virtual_size().x * scale_x;
+        let expected_size_y = sprite_virtual_size().y * scale_y;
+        let expected_x = viewport.window_width() * 0.5 - expected_size_x * 0.5;
+        let expected_y = -viewport.window_height() * 0.5 + expected_size_y * 0.5;
+
+        approx_equal(world_pos.x, expected_x, 1e-3);
+        approx_equal(world_pos.y, expected_y, 1e-3);
+        approx_equal(world_size.x, expected_size_x, 1e-3);
+        approx_equal(world_size.y, expected_size_y, 1e-3);
     }
 
     #[test]
@@ -1006,10 +1035,17 @@ mod tests {
         let viewport = SpriteViewport::new(800.0, 600.0);
         let sprite = sprite(64.0, 48.0);
 
-        let world = sprite_world_position(&sprite, &viewport, &sprite_virtual);
+        let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        approx_equal(world.x, 0.0, 1e-3);
-        approx_equal(world.y, 0.0, 1e-3);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        let expected_size_x = sprite_virtual_size().x * scale_x;
+        let expected_size_y = sprite_virtual_size().y * scale_y;
+
+        approx_equal(world_pos.x, 0.0, 1e-3);
+        approx_equal(world_pos.y, 0.0, 1e-3);
+        approx_equal(world_size.x, expected_size_x, 1e-3);
+        approx_equal(world_size.y, expected_size_y, 1e-3);
     }
 }
 

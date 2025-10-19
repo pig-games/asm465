@@ -17,11 +17,12 @@
   copied into `web-dist` so textures resolve.
 
 ### Scaling Logic
-- `sprite_world_position` treats the registers as U8.8 fixed-point values,
+- `sprite_world_transform` treats the registers as U8.8 fixed-point values,
   clamps them to the configured virtual resolution, normalises to `[0, 1]`, and
-  scales them across the live window size.
-- Unit tests at the end of `asm465/src/lib.rs` confirm origin, midpoint, and
-  bottom-right behaviour after decoding the fixed-point values.
+  scales both positions and sprite sizes based on the active window.
+- Unit tests at the end of `asm465/src/lib.rs` confirm origin/midpoint/max
+  placement and verify that sprite dimensions grow proportionally with the
+  window.
 
 ### Observations
 - The pipeline now uses the dedicated graphics MMIO. Remaining work items
