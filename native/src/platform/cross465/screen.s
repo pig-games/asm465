@@ -79,9 +79,9 @@ setLocation .proc
     ; store logical cursor
     stx PrtColumn
     sty PrtRow
-    stx cross465.SETX
-    sty cross465.SETY
-    sty cross465.SETLOC
+    stx cross465.console.SETX
+    sty cross465.console.SETY
+    sty cross465.console.SETLOC
     rts
 .endproc
 
@@ -89,7 +89,7 @@ setLocation .proc
 cPutC .proc
     sty YStore
     ldy PrtColour
-    sty cross465.SETCOL
+    sty cross465.console.SETCOL
     ldy YStore
     .PutC
     rts
@@ -99,7 +99,7 @@ cPutC .proc
 cPrintC .proc
     sty YStore
     ldy PrtColour
-    sty cross465.SETCOL
+    sty cross465.console.SETCOL
     ldy YStore
     .PutC
     rts
@@ -109,7 +109,7 @@ cPrintC .proc
 ; X: colour
 setCPrintC .proc
     stx PrtColour
-    stx cross465.SETCOL
+    stx cross465.console.SETCOL
     .PutC
     rts
 .endproc
@@ -120,11 +120,11 @@ print .proc
     .stxy Ptr
     sty YStore
     ldy PrtColour
-    sty cross465.SETCOL
+    sty cross465.console.SETCOL
     ldy YStore
-    stx cross465.SETLPTR
-    sty cross465.PRINT
-    ldy cross465.PRINT
+    stx cross465.console.SETLPTR
+    sty cross465.console.PRINT
+    ldy cross465.console.PRINT
     rts
 .endproc
 
@@ -149,7 +149,7 @@ cPrintSC .proc
 ; Print a newline: reset cursor to 0,0 and update pointers
 ; (also updates current screen/color pointers)
 printNL .proc
-    sta cross465.NL
+    sta cross465.console.NL
     rts
 .endproc
 

@@ -19,7 +19,8 @@ use bevy::window::PrimaryWindow;
 use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
-use bus::graphics_mmio::{GraphicsOutput, GraphicsSnapshot, SpriteState, GRAPHICS_SPRITE_SLOTS};
+use bus::display_mmio::{DisplayOutput, DisplaySnapshot};
+use bus::sprite_mmio::{SpriteOutput, SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
 
@@ -374,6 +375,26 @@ impl Default for DisplaySettings {
     }
 }
 
+#[derive(Resource, Clone)]
+struct DisplayPalette {
+    border: Color,
+    background: Color,
+}
+
+impl DisplayPalette {
+    fn from_settings(settings: &DisplaySettings) -> Self {
+        Self {
+            border: settings.border_color,
+            background: settings.background_color,
+        }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: &DisplaySnapshot, defaults: &DisplaySettings) {
+        self.border = mmio_color(snapshot.border_color, defaults.border_color);
+        self.background = mmio_color(snapshot.background_color, defaults.background_color);
+    }
+}
+
 #[cfg_attr(not(feature = "native-service"), allow(dead_code))]
 fn parse_color(value: &str) -> Result<Color, String> {
     let value = value.trim();
@@ -385,6 +406,28 @@ fn parse_color(value: &str) -> Result<Color, String> {
     let g = u8::from_str_radix(&value[2..4], 16).map_err(|e| e.to_string())?;
     let b = u8::from_str_radix(&value[4..6], 16).map_err(|e| e.to_string())?;
     Ok(Color::rgb_u8(r, g, b))
+}
+
+fn mmio_color(value: u8, fallback: Color) -> Color {
+    match value & 0x0F {
+        0x00 => Color::rgb_u8(0x00, 0x00, 0x00), // Black
+        0x01 => Color::rgb_u8(0xFF, 0xFF, 0xFF), // White
+        0x02 => Color::rgb_u8(0x88, 0x00, 0x00), // Red
+        0x03 => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Cyan
+        0x04 => Color::rgb_u8(0xCC, 0x44, 0xCC), // Magenta
+        0x05 => Color::rgb_u8(0x00, 0xCC, 0x55), // Green
+        0x06 => Color::rgb_u8(0x00, 0x00, 0xAA), // Blue
+        0x07 => Color::rgb_u8(0xEE, 0xEE, 0x77), // Yellow
+        0x08 => Color::rgb_u8(0xDD, 0x88, 0x55), // Orange
+        0x09 => Color::rgb_u8(0x66, 0x44, 0x00), // Brown
+        0x0A => Color::rgb_u8(0xFF, 0x77, 0x77), // Light red
+        0x0B => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Light cyan
+        0x0C => Color::rgb_u8(0xFF, 0xAA, 0xFF), // Light magenta
+        0x0D => Color::rgb_u8(0xAA, 0xFF, 0xAA), // Light green
+        0x0E => Color::rgb_u8(0xAA, 0xCC, 0xFF), // Light blue
+        0x0F => Color::rgb_u8(0xCC, 0xCC, 0xCC), // Light gray
+        _ => fallback,
+    }
 }
 
 #[cfg(feature = "native-service")]
@@ -476,7 +519,9 @@ pub fn run_app(config: AppConfig) {
     app.insert_non_send_resource(emulator);
     app.insert_resource(SpriteVirtualResolution::new(virtual_resolution));
     app.insert_resource(display.clone());
-    app.insert_resource(ClearColor(display.border_color));
+    let initial_palette = DisplayPalette::from_settings(&display);
+    app.insert_resource(initial_palette.clone());
+    app.insert_resource(ClearColor(initial_palette.border));
 
     #[cfg(feature = "native-service")]
     if let Some(listener) = service_listener {
@@ -546,7 +591,8 @@ pub fn run_app(config: AppConfig) {
 struct EmulatorState {
     bus: Bus,
     console_output: Arc<Mutex<ConsoleOutput>>,
-    graphics_output: Arc<Mutex<GraphicsOutput>>,
+    display_output: Arc<Mutex<DisplayOutput>>,
+    sprite_output: Arc<Mutex<SpriteOutput>>,
     default_max_cycles: u64,
     status_message: Option<String>,
 }
@@ -574,14 +620,18 @@ impl EmulatorState {
         let console_output = bus
             .console_output_handle()
             .expect("default console MMIO not found on bus");
-        let graphics_output = bus
-            .graphics_output_handle()
-            .expect("graphics MMIO not found on bus");
+        let display_output = bus
+            .display_output_handle()
+            .expect("display MMIO not found on bus");
+        let sprite_output = bus
+            .sprite_output_handle()
+            .expect("sprite MMIO not found on bus");
 
         Self {
             bus,
             console_output,
-            graphics_output,
+            display_output,
+            sprite_output,
             default_max_cycles,
             status_message,
         }
@@ -611,10 +661,14 @@ impl EmulatorState {
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
-                self.graphics_output = self
+                self.display_output = self
                     .bus
-                    .graphics_output_handle()
-                    .expect("graphics MMIO not found on bus");
+                    .display_output_handle()
+                    .expect("display MMIO not found on bus");
+                self.sprite_output = self
+                    .bus
+                    .sprite_output_handle()
+                    .expect("sprite MMIO not found on bus");
                 self.status_message = Some(msg.clone());
                 Ok(msg)
             }
@@ -625,10 +679,14 @@ impl EmulatorState {
                     .bus
                     .console_output_handle()
                     .expect("default console MMIO not found on bus");
-                self.graphics_output = self
+                self.display_output = self
                     .bus
-                    .graphics_output_handle()
-                    .expect("graphics MMIO not found on bus");
+                    .display_output_handle()
+                    .expect("display MMIO not found on bus");
+                self.sprite_output = self
+                    .bus
+                    .sprite_output_handle()
+                    .expect("sprite MMIO not found on bus");
                 self.status_message = Some(msg.clone());
                 Err(msg)
             }
@@ -642,8 +700,15 @@ impl EmulatorState {
             .ok()
     }
 
-    fn graphics_snapshot(&self) -> Option<GraphicsSnapshot> {
-        self.graphics_output
+    fn display_snapshot(&self) -> Option<DisplaySnapshot> {
+        self.display_output
+            .lock()
+            .map(|output| output.snapshot())
+            .ok()
+    }
+
+    fn sprite_snapshot(&self) -> Option<SpriteSnapshot> {
+        self.sprite_output
             .lock()
             .map(|output| output.snapshot())
             .ok()
@@ -813,7 +878,7 @@ impl SpriteViewport {
 fn setup_scene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    display: Res<DisplaySettings>,
+    palette: Res<DisplayPalette>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
@@ -828,8 +893,8 @@ fn setup_scene(
     commands.insert_resource(SpriteViewport::new(window.width(), window.height()));
 
     let mesh = meshes.add(Mesh::from(Quad::default()));
-    let material = materials.add(ColorMaterial::from(display.background_color));
-    let border_material = materials.add(ColorMaterial::from(display.border_color));
+    let material = materials.add(ColorMaterial::from(palette.background));
+    let border_material = materials.add(ColorMaterial::from(palette.border));
     let mut background_transform = Transform::from_xyz(0.0, 0.0, -0.5);
     background_transform.scale = Vec3::new(window.width(), window.height(), 1.0);
     commands.spawn((
@@ -856,7 +921,7 @@ fn setup_scene(
         handles: handles.clone(),
     });
 
-    for index in 0..GRAPHICS_SPRITE_SLOTS {
+    for index in 0..SPRITE_SLOTS {
         commands.spawn((
             SpriteBundle {
                 texture: default_texture.clone(),
@@ -902,6 +967,7 @@ fn ui_system(
     sprite_viewport: Res<SpriteViewport>,
     sprite_virtual: Res<SpriteVirtualResolution>,
     display: Res<DisplaySettings>,
+    mut palette: ResMut<DisplayPalette>,
     mut sprite_query: Query<(
         &SpriteSlot,
         &mut Transform,
@@ -1017,11 +1083,18 @@ fn ui_system(
         });
 
     let console_snapshot = emulator.snapshot();
-    let graphics_snapshot = emulator.graphics_snapshot();
+    let display_snapshot = emulator.display_snapshot();
+    let sprite_snapshot = emulator.sprite_snapshot();
 
-    let sprite_snapshot = graphics_snapshot.as_ref();
+    if let Some(snapshot) = display_snapshot.as_ref() {
+        palette.apply_snapshot(snapshot, &display);
+    } else {
+        *palette = DisplayPalette::from_settings(&display);
+    }
     for (slot, mut transform, mut visibility, mut sprite, mut texture) in sprite_query.iter_mut() {
-        let state = sprite_snapshot.and_then(|snapshot| snapshot.sprite(slot.index));
+        let state = sprite_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.sprite(slot.index));
         if let Some(state) = state {
             if state.number == 0 {
                 *visibility = Visibility::Hidden;
@@ -1223,6 +1296,17 @@ fn sprite_world_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_color_eq(a: Color, b: Color) {
+        let a = a.as_linear_rgba_f32();
+        let b = b.as_linear_rgba_f32();
+        for i in 0..4 {
+            assert!(
+                (a[i] - b[i]).abs() <= 1e-3,
+                "component {i} differ: {a:?} vs {b:?}"
+            );
+        }
+    }
 
     fn sprite(x: f32, y: f32) -> SpriteState {
         let max_value = u16::MAX as f32;
@@ -1480,6 +1564,19 @@ mod tests {
         assert!(border_x >= settings.min_border_x - 1e-6);
         assert!(border_y >= settings.min_border_y - 1e-6);
     }
+
+    #[test]
+    fn mmio_palette_translation_uses_c64_colours() {
+        let defaults = DisplaySettings::default();
+        let mut palette = DisplayPalette::from_settings(&defaults);
+        let snapshot = DisplaySnapshot {
+            border_color: 0x06,
+            background_color: 0x0A,
+        };
+        palette.apply_snapshot(&snapshot, &defaults);
+        assert_color_eq(palette.border, Color::rgb_u8(0x00, 0x00, 0xAA));
+        assert_color_eq(palette.background, Color::rgb_u8(0xFF, 0x77, 0x77));
+    }
 }
 
 fn update_sprite_viewport(
@@ -1487,6 +1584,7 @@ fn update_sprite_viewport(
     mut viewport: ResMut<SpriteViewport>,
     virtual_resolution: Res<SpriteVirtualResolution>,
     display: Res<DisplaySettings>,
+    palette: Res<DisplayPalette>,
     mut clear_color: ResMut<ClearColor>,
     mut background: Query<
         (&Handle<ColorMaterial>, &mut Transform),
@@ -1510,7 +1608,7 @@ fn update_sprite_viewport(
 
         viewport.set_content(scale_x, scale_y, computed_border_x, computed_border_y);
 
-        clear_color.0 = display.border_color;
+        clear_color.0 = palette.border;
         if let Ok((material_handle, mut transform)) = background.get_single_mut() {
             transform.scale = Vec3::new(
                 viewport.content_width().max(1.0),
@@ -1518,7 +1616,7 @@ fn update_sprite_viewport(
                 1.0,
             );
             if let Some(material) = materials.get_mut(material_handle) {
-                material.color = display.background_color;
+                material.color = palette.background;
             }
         }
 
@@ -1529,7 +1627,7 @@ fn update_sprite_viewport(
 
         for (overlay, material_handle, mut transform) in overlays.iter_mut() {
             if let Some(material) = materials.get_mut(material_handle) {
-                material.color = display.border_color;
+                material.color = palette.border;
             }
 
             match overlay.side {

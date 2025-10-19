@@ -15,21 +15,21 @@ SCREENMACROS := true
 ; Clear screen and color RAM, then set cursor to 0,0
 ClearScreen .macro colour
     ; clear chars
-    sta cross465.CLR
+    sta cross465.console.CLR
 .endmacro
 
 SetBGColor .macro col
     lda #\col
-    sta cross465.SETCOL
+    sta cross465.console.SETCOL
 .endmacro
 
 SetBColor .macro col
     lda #\col
-    sta cross465.SETBGCOL
+    sta cross465.console.SETBGCOL
 .endmacro
 
 PutC .macro
-    sta cross465.PUTC
+    sta cross465.console.PUTC
 .endmacro
 
 .endif ; SCREENMACROS

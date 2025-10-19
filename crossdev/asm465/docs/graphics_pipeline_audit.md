@@ -1,18 +1,23 @@
 ## Graphics/Sprite Pipeline Audit
 
 ### 6502 → Bus
-- Sprite/border/background registers now live in the dedicated graphics MMIO
-  window (`$DF20–$DF2F`).
-- `GraphicsMmio::write` updates per-slot `SpriteState`s plus colour registers
-  and mirrors them into `GraphicsOutput` immediately.
-- Scale nibbles are surfaced through the same snapshot so the frontend can
+- Sprite registers now live in the dedicated sprite MMIO window (`$DF30–$DF37`)
+  while border/background colours are exposed via the display MMIO window
+  (`$DF20–$DF21`).
+- `SpriteMmio::write` updates per-slot `SpriteState`s and mirrors them into the
+  shared sprite snapshot immediately.
+- `DisplayMmio::write` updates the colour registers and mirrors them into the
+  display snapshot consumed by the viewer.
+- Scale nibbles are surfaced through the sprite snapshot so the frontend can
   recover per-axis power-of-two factors when decoding coordinates.
 
 ### Snapshot → Bevy
-- `ConsoleOutput::snapshot` now carries text only; `GraphicsOutput::snapshot`
-- In `asm465/src/lib.rs`, the UI system mirrors the graphics snapshot into Bevy
-  components and relies on the shared helpers (`sprite_mmio_position`,
-  `sprite_world_transform`) to keep native/wasm behaviour identical.
+- `ConsoleOutput::snapshot` now carries text only; sprite and display snapshots
+  are handled separately.
+- In `asm465/src/lib.rs`, the UI system mirrors the display snapshot to tint
+  the border/background, and the sprite snapshot into Bevy components. Shared
+  helpers (`sprite_mmio_position`, `sprite_world_transform`) keep native/wasm
+  behaviour identical.
 - Both native and wasm builds share the same code path; wasm just needed assets
   copied into `web-dist` so textures resolve.
 

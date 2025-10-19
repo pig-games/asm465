@@ -15,7 +15,9 @@
 //! ```text
 //! $0000–$DFFF   RAM (read/write)
 //! $DF00–$DF1F   Console MMIO (default device)
-//! $DF20–$FFFB   RAM (read/write)
+//! $DF20–$DF21   Display MMIO (border/background)
+//! $DF30–$DF37   Sprite MMIO (sprite slots)
+//! $DF38–$FFFB   RAM (read/write)
 //! $FFFC–$FFFD   Reset vector
 //! $FFFE–$FFFF   NMI vector
 //! ```
@@ -44,7 +46,8 @@
 //! ```
 
 pub mod console_mmio; // expose console device as bus::console_mmio::*
-pub mod graphics_mmio; // expose graphics device as bus::graphics_mmio::*
+pub mod display_mmio; // expose display device as bus::display_mmio::*
+pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod utils; // expose helpers as bus::utils::*
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
@@ -54,7 +57,8 @@ use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
 use console_mmio::ConsoleMmio;
-use graphics_mmio::GraphicsMmio;
+use display_mmio::DisplayMmio;
+use sprite_mmio::SpriteMmio;
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
 ///
@@ -158,7 +162,8 @@ impl Bus {
             mmio: Vec::new(),
         };
         bus.map_mmio(0xDF00..=0xDF1F, Box::new(ConsoleMmio::new(ram.clone())));
-        bus.map_mmio(0xDF20..=0xDF2F, Box::new(GraphicsMmio::new()));
+        bus.map_mmio(0xDF20..=0xDF21, Box::new(DisplayMmio::new()));
+        bus.map_mmio(0xDF30..=0xDF37, Box::new(SpriteMmio::new()));
         bus
     }
 
@@ -242,12 +247,24 @@ impl Bus {
         None
     }
 
-    /// Expose the graphics device's shared output buffer (sprites, colours).
-    pub fn graphics_output_handle(&self) -> Option<Arc<Mutex<graphics_mmio::GraphicsOutput>>> {
+    /// Expose the display device's shared output buffer (border/background).
+    pub fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
         for (range, dev) in self.mmio.iter() {
             if range.contains(&0xDF20) {
-                if let Some(g) = dev.as_any().downcast_ref::<GraphicsMmio>() {
-                    return Some(g.output());
+                if let Some(d) = dev.as_any().downcast_ref::<DisplayMmio>() {
+                    return Some(d.output());
+                }
+            }
+        }
+        None
+    }
+
+    /// Expose the sprite device's shared output buffer.
+    pub fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
+        for (range, dev) in self.mmio.iter() {
+            if range.contains(&0xDF30) {
+                if let Some(s) = dev.as_any().downcast_ref::<SpriteMmio>() {
+                    return Some(s.output());
                 }
             }
         }
