@@ -7,11 +7,15 @@ CARGO_FLAGS := --manifest-path Cargo.toml --target $(WASM_TARGET) --release --no
 build:
 	cargo build $(CARGO_FLAGS)
 	wasm-bindgen --out-dir $(WASM_OUT) --target web $(WASM_BIN)
+	mkdir -p $(WASM_OUT)/assets
+	rsync -a ../asm465/assets/ $(WASM_OUT)/assets/
 
 .PHONY: build-dev
 build-dev:
 	cargo build $(CARGO_FLAGS) --features dev-loopback
 	wasm-bindgen --out-dir $(WASM_OUT) --target web $(WASM_BIN)
+	mkdir -p $(WASM_OUT)/assets
+	rsync -a ../asm465/assets/ $(WASM_OUT)/assets/
 
 .PHONY: clean
 clean:
