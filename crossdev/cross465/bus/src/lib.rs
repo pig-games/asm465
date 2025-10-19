@@ -46,7 +46,7 @@ use std::sync::{Arc, Mutex};
 
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
-use personality::{Personality, PersonalityMmioKind, MODERN_RETRO};
+use personality::{Personality, PersonalityMmioKind};
 use sprite_mmio::SpriteMmio;
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
@@ -157,7 +157,7 @@ impl Bus {
 
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
     pub fn new() -> Self {
-        Self::with_personality(&MODERN_RETRO)
+        Self::with_personality(personality::default())
     }
 
     /// Construct the bus using the specified personality.

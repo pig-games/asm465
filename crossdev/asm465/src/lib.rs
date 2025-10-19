@@ -20,6 +20,7 @@ use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
 use bus::display_mmio::{DisplayOutput, DisplaySnapshot};
+use bus::personality::{self, Personality};
 use bus::sprite_mmio::{SpriteOutput, SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
@@ -153,6 +154,14 @@ pub struct Args {
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
     pub program: Option<PathBuf>,
+
+    /// Personality to load (see `--list-personalities`).
+    #[arg(long, default_value = "modern-retro")]
+    pub personality: String,
+
+    /// List available personalities and exit.
+    #[arg(long, default_value_t = false)]
+    pub list_personalities: bool,
 }
 
 /// Source for a PRG payload that should be executed by the emulator.
@@ -299,6 +308,7 @@ pub struct AppConfig {
     pub default_max_cycles: u64,
     pub virtual_resolution: VirtualResolution,
     pub display: DisplaySettings,
+    pub personality: &'static Personality,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -433,6 +443,20 @@ fn mmio_color(value: u8, fallback: Color) -> Color {
 #[cfg(feature = "native-service")]
 pub fn run_native() -> Result<(), String> {
     let args = Args::parse();
+    if args.list_personalities {
+        println!("Available personalities:");
+        for personality in personality::all() {
+            println!("  {:<16} {}", personality.name, personality.description);
+        }
+        return Ok(());
+    }
+
+    let persona = personality::find(&args.personality).ok_or_else(|| {
+        format!(
+            "unknown personality '{}'. Use --list-personalities to inspect the available options.",
+            args.personality
+        )
+    })?;
     let startup_path = args.prg.clone().or_else(|| args.program.clone());
     let startup = startup_path.map(|path| StartupConfig {
         source: ProgramSource::File(path),
@@ -475,6 +499,7 @@ pub fn run_native() -> Result<(), String> {
         default_max_cycles: args.max_cycles,
         virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
         display,
+        personality: persona,
         #[cfg(feature = "native-service")]
         service,
     });
@@ -488,12 +513,13 @@ pub fn run_app(config: AppConfig) {
         default_max_cycles,
         virtual_resolution,
         display,
+        personality,
         #[cfg(feature = "native-service")]
         service,
     } = config;
 
     #[allow(unused_mut)]
-    let mut emulator = EmulatorState::new(startup, default_max_cycles);
+    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality);
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
@@ -598,8 +624,12 @@ struct EmulatorState {
 }
 
 impl EmulatorState {
-    fn new(startup: Option<StartupConfig>, default_max_cycles: u64) -> Self {
-        let mut bus = Bus::new();
+    fn new(
+        startup: Option<StartupConfig>,
+        default_max_cycles: u64,
+        personality: &'static Personality,
+    ) -> Self {
+        let mut bus = Bus::with_personality(personality);
         let status_message = if let Some(config) = startup {
             match run_program_with_config(bus, &config) {
                 Ok((new_bus, msg)) => {
@@ -653,7 +683,8 @@ impl EmulatorState {
             max_cycles: configured_cycles,
             start,
         };
-        let bus = std::mem::replace(&mut self.bus, Bus::new());
+        let personality = self.bus.personality();
+        let bus = std::mem::replace(&mut self.bus, Bus::with_personality(personality));
         match run_program_with_config(bus, &config) {
             Ok((new_bus, msg)) => {
                 self.bus = new_bus;

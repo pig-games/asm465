@@ -70,3 +70,20 @@ pub static MODERN_RETRO: Personality = Personality {
         background_color: 0x00,
     },
 };
+
+static PERSONALITIES: &[&Personality] = &[&MODERN_RETRO];
+
+/// Return the built-in personalities.
+pub fn all() -> &'static [&'static Personality] {
+    PERSONALITIES
+}
+
+/// Personality used by default when constructing a [`Bus`](crate::Bus).
+pub fn default() -> &'static Personality {
+    &MODERN_RETRO
+}
+
+/// Look up a personality by `name` (case-sensitive).
+pub fn find(name: &str) -> Option<&'static Personality> {
+    PERSONALITIES.iter().copied().find(|p| p.name == name)
+}
