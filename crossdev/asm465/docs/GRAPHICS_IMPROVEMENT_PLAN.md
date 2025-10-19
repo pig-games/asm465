@@ -34,11 +34,19 @@
   - [x] Render a border overlay (or clear colour) that sits above sprites so hidden regions stay concealed  
   - [x] Unit-test the viewport/border math to ensure centered content and correct padding sizes  
   - [x] Update `graphics_pipeline_audit.md` to reflect the changes  
-  - [ ] Write commit message summarising aspect-ratio/border updates
+  - [x] Write commit message summarising aspect-ratio/border updates
+
+- [x] Explore sprite coordinate remapping  
+  - [x] Analyse current 8.8 fixed-point mapping versus virtual resolution + desired margins  
+  - [x] Document several remapping approaches (e.g. scaling factors, clamping strategies, non-linear maps) in a dedicated exploration doc  
+  - [x] Determine recommended approach to support full virtual range and off-screen allowances  
+  - [x] Update `graphics_pipeline_audit.md` with conclusions  
+  - [x] Write commit message summarising the exploration findings
 
 - [ ] Support configurable off-screen margins for sprites  
   - [ ] Add a setting describing the maximum sprite size to tolerate when off-screen  
-  - [ ] Modify coordinate mapping to expand the virtual canvas by that margin, keeping `x=0/y=0` just outside top-left and `x=max` outside bottom-right after borders are applied  
+  - [ ] Implement linear MMIO→virtual mapping using the agreed scale/offset (Option 1 + per-sprite power-of-two scale) and apply configurable negative offsets for top-left margins (see sprite_coord_remap.md)
+  - [ ] Ensure sprites can move beyond right/bottom edges by mapping the full MMIO range after offsets  
   - [ ] Ensure clipping/overlay still masks sprites that remain outside the visible content area  
   - [ ] Cover the updated mapping with unit tests that check extreme values (negative offsets, fully-hidden sprites, etc.)  
   - [ ] Update `graphics_pipeline_audit.md` to reflect the changes
