@@ -24,8 +24,8 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::UrlSearchParams;
 
 use crate::{
-    run_app, AppConfig, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage,
-    VirtualResolution,
+    run_app, AppConfig, DisplaySettings, ServiceCommand, ServiceRequestPayload,
+    ServiceResponseMessage, VirtualResolution,
 };
 
 const DEFAULT_MAX_CYCLES: u64 = 5_000_000;
@@ -202,6 +202,7 @@ pub fn start_web_app() -> Result<(), JsValue> {
         startup: None,
         default_max_cycles: DEFAULT_MAX_CYCLES,
         virtual_resolution: VirtualResolution::default(),
+        display: DisplaySettings::default(),
         #[cfg(feature = "native-service")]
         service: None,
     });

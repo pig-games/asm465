@@ -23,17 +23,17 @@
   - [x] Update `graphics_pipeline_audit.md` to reflect the changes
   - [x] Write commit message summarising scaling changes and tests
 
-- [ ] Introduce aspect-ratio controls & border handling  
-  - [ ] Extend configuration to support:  
-    - [ ] Enforcing virtual aspect ratio on the output canvas  
-    - [ ] Custom border colour when letterboxing/pillarboxing  
-    - [ ] Custom background colour separate from the content  
-    - [ ] Optional window resizing to match the enforced aspect ratio (native only)  
-    - [ ] Minimum horizontal/vertical border sizes so we can emulate fixed hardware margins  
-  - [ ] Implement viewport calculations that determine content bounds and border regions  
-  - [ ] Render a border overlay (or clear colour) that sits above sprites so hidden regions stay concealed  
-  - [ ] Unit-test the viewport/border math to ensure centered content and correct padding sizes  
-  - [ ] Update `graphics_pipeline_audit.md` to reflect the changes
+- [x] Introduce aspect-ratio controls & border handling  
+  - [x] Extend configuration to support:  
+    - [x] Enforcing virtual aspect ratio on the output canvas  
+    - [x] Custom border colour when letterboxing/pillarboxing  
+    - [x] Custom background colour separate from the content  
+    - [x] Optional window resizing to match the enforced aspect ratio (native only)  
+    - [x] Minimum horizontal/vertical border sizes so we can emulate fixed hardware margins  
+  - [x] Implement viewport calculations that determine content bounds and border regions  
+  - [x] Render a border overlay (or clear colour) that sits above sprites so hidden regions stay concealed  
+  - [x] Unit-test the viewport/border math to ensure centered content and correct padding sizes  
+  - [x] Update `graphics_pipeline_audit.md` to reflect the changes  
   - [ ] Write commit message summarising aspect-ratio/border updates
 
 - [ ] Support configurable off-screen margins for sprites  

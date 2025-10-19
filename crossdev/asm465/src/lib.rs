@@ -11,7 +11,11 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
+use bevy::render::mesh::shape::Quad;
+use bevy::render::mesh::Mesh;
+use bevy::sprite::{ColorMaterial, MaterialMesh2dBundle, Mesh2dHandle};
 use bevy::window::PrimaryWindow;
+use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
 use bus::graphics_mmio::{GraphicsOutput, GraphicsSnapshot, SpriteState, GRAPHICS_SPRITE_SLOTS};
@@ -77,12 +81,36 @@ pub struct Args {
     pub service_host: String,
 
     /// Virtual sprite canvas width used for MMIO coordinate scaling.
-    #[arg(long, default_value_t = 255u32)]
+    #[arg(long, default_value_t = 320u32)]
     pub virtual_width: u32,
 
     /// Virtual sprite canvas height used for MMIO coordinate scaling.
-    #[arg(long, default_value_t = 255u32)]
+    #[arg(long, default_value_t = 240u32)]
     pub virtual_height: u32,
+
+    /// Enforce the virtual aspect ratio onto the output window.
+    #[arg(long, default_value_t = true)]
+    pub force_aspect_ratio: bool,
+
+    /// Minimum horizontal border in pixels when enforcing aspect ratio.
+    #[arg(long, default_value_t = 50.0)]
+    pub min_border_x: f32,
+
+    /// Minimum vertical border in pixels when enforcing aspect ratio.
+    #[arg(long, default_value_t = 50.0)]
+    pub min_border_y: f32,
+
+    /// Border colour (hex RGB, e.g. FF0000).
+    #[arg(long, default_value = "404040", value_parser = parse_color)]
+    pub border_color: Color,
+
+    /// Background colour inside the content area (hex RGB).
+    #[arg(long, default_value = "000000", value_parser = parse_color)]
+    pub background_color: Color,
+
+    /// Resize the window to match the enforced aspect ratio (native only).
+    #[arg(long, default_value_t = true)]
+    pub resize_window: bool,
 
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
@@ -232,6 +260,7 @@ pub struct AppConfig {
     pub startup: Option<StartupConfig>,
     pub default_max_cycles: u64,
     pub virtual_resolution: VirtualResolution,
+    pub display: DisplaySettings,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -257,10 +286,45 @@ impl VirtualResolution {
 impl Default for VirtualResolution {
     fn default() -> Self {
         Self {
-            width: 255,
-            height: 255,
+            width: 320,
+            height: 240,
         }
     }
+}
+
+#[derive(Clone, Resource)]
+pub struct DisplaySettings {
+    pub enforce_aspect_ratio: bool,
+    pub min_border_x: f32,
+    pub min_border_y: f32,
+    pub border_color: Color,
+    pub background_color: Color,
+    pub resize_window_to_aspect: bool,
+}
+
+impl Default for DisplaySettings {
+    fn default() -> Self {
+        Self {
+            enforce_aspect_ratio: true,
+            min_border_x: 50.0,
+            min_border_y: 50.0,
+            border_color: Color::rgb_u8(0x40, 0x40, 0x40),
+            background_color: Color::BLACK,
+            resize_window_to_aspect: true,
+        }
+    }
+}
+
+fn parse_color(value: &str) -> Result<Color, String> {
+    let value = value.trim();
+    let value = value.trim_start_matches('#').trim_start_matches("0x");
+    if value.len() != 6 {
+        return Err("expected 6 hex digits (e.g. FFCC00)".into());
+    }
+    let r = u8::from_str_radix(&value[0..2], 16).map_err(|e| e.to_string())?;
+    let g = u8::from_str_radix(&value[2..4], 16).map_err(|e| e.to_string())?;
+    let b = u8::from_str_radix(&value[4..6], 16).map_err(|e| e.to_string())?;
+    Ok(Color::rgb_u8(r, g, b))
 }
 
 #[cfg(feature = "native-service")]
@@ -278,10 +342,20 @@ pub fn run_native() -> Result<(), String> {
         port,
     });
 
+    let display = DisplaySettings {
+        enforce_aspect_ratio: args.force_aspect_ratio,
+        min_border_x: args.min_border_x.max(0.0),
+        min_border_y: args.min_border_y.max(0.0),
+        border_color: args.border_color,
+        background_color: args.background_color,
+        resize_window_to_aspect: args.resize_window,
+    };
+
     run_app(AppConfig {
         startup,
         default_max_cycles: args.max_cycles,
         virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
+        display,
         #[cfg(feature = "native-service")]
         service,
     });
@@ -294,6 +368,7 @@ pub fn run_app(config: AppConfig) {
         startup,
         default_max_cycles,
         virtual_resolution,
+        display,
         #[cfg(feature = "native-service")]
         service,
     } = config;
@@ -323,7 +398,9 @@ pub fn run_app(config: AppConfig) {
 
     let mut app = App::new();
     app.insert_non_send_resource(emulator);
-    app.insert_resource(ClearColor(Color::rgb(0.05, 0.05, 0.08)));
+    app.insert_resource(SpriteVirtualResolution::new(virtual_resolution));
+    app.insert_resource(display.clone());
+    app.insert_resource(ClearColor(display.border_color));
 
     #[cfg(feature = "native-service")]
     if let Some(listener) = service_listener {
@@ -350,13 +427,28 @@ pub fn run_app(config: AppConfig) {
     }
 
     app.insert_resource(ui_state);
-    app.insert_resource(SpriteVirtualResolution::new(virtual_resolution));
 
     #[allow(unused_mut)]
     let mut window = Window {
         title: "asm465 Console".to_string(),
         ..Default::default()
     };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if display.enforce_aspect_ratio && display.resize_window_to_aspect {
+        let min_border_x = display.min_border_x.max(0.0);
+        let min_border_y = display.min_border_y.max(0.0);
+        let base_height = window
+            .resolution
+            .height()
+            .max(virtual_resolution.height as f32 + 2.0 * min_border_y + f32::EPSILON);
+        let scale =
+            (base_height - 2.0 * min_border_y) / virtual_resolution.height as f32;
+        let content_width = virtual_resolution.width as f32 * scale;
+        let width = content_width + 2.0 * min_border_x;
+        let height = virtual_resolution.height as f32 * scale + 2.0 * min_border_y;
+        window.resolution = WindowResolution::new(width.max(1.0), height.max(1.0));
+    }
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -518,6 +610,9 @@ struct SpriteSlot {
     index: usize,
 }
 
+#[derive(Component)]
+struct ContentBackground;
+
 #[derive(Resource)]
 struct SpriteCatalog {
     handles: Vec<Handle<Image>>,
@@ -554,6 +649,12 @@ impl SpriteVirtualResolution {
 struct SpriteViewport {
     width: f32,
     height: f32,
+    scale_x: f32,
+    scale_y: f32,
+    border_x: f32,
+    border_y: f32,
+    content_width: f32,
+    content_height: f32,
 }
 
 impl SpriteViewport {
@@ -562,6 +663,12 @@ impl SpriteViewport {
         Self {
             width: window_width,
             height: window_height,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            border_x: 0.0,
+            border_y: 0.0,
+            content_width: window_width,
+            content_height: window_height,
         }
     }
 
@@ -580,11 +687,47 @@ impl SpriteViewport {
     fn window_height(&self) -> f32 {
         self.height.max(1.0)
     }
+
+    fn set_content(&mut self, scale_x: f32, scale_y: f32, border_x: f32, border_y: f32) {
+        self.scale_x = scale_x;
+        self.scale_y = scale_y;
+        self.border_x = border_x;
+        self.border_y = border_y;
+        self.content_width = (self.window_width() - 2.0 * border_x).max(0.0);
+        self.content_height = (self.window_height() - 2.0 * border_y).max(0.0);
+    }
+
+    fn scale_x(&self) -> f32 {
+        self.scale_x
+    }
+
+    fn scale_y(&self) -> f32 {
+        self.scale_y
+    }
+
+    fn border_x(&self) -> f32 {
+        self.border_x
+    }
+
+    fn border_y(&self) -> f32 {
+        self.border_y
+    }
+
+    fn content_width(&self) -> f32 {
+        self.content_width.max(0.0)
+    }
+
+    fn content_height(&self) -> f32 {
+        self.content_height.max(0.0)
+    }
 }
 
 fn setup_scene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    display: Res<DisplaySettings>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
 ) {
     let mut camera = Camera2dBundle::default();
@@ -595,6 +738,21 @@ fn setup_scene(
         .get_single()
         .expect("primary window not available during setup");
     commands.insert_resource(SpriteViewport::new(window.width(), window.height()));
+
+    let mesh = meshes.add(Mesh::from(Quad::default()));
+    let material = materials.add(ColorMaterial::from(display.background_color));
+    let mut background_transform = Transform::from_xyz(0.0, 0.0, -0.5);
+    background_transform.scale = Vec3::new(window.width(), window.height(), 1.0);
+    commands.spawn((
+        MaterialMesh2dBundle {
+            mesh: Mesh2dHandle(mesh),
+            material,
+            transform: background_transform,
+            visibility: Visibility::Visible,
+            ..Default::default()
+        },
+        ContentBackground,
+    ));
 
     let handles: Vec<Handle<Image>> = SPRITE_TEXTURE_PATHS
         .iter()
@@ -904,8 +1062,8 @@ fn sprite_world_transform(
     let virtual_width = virtual_resolution.width().max(1.0);
     let virtual_height = virtual_resolution.height().max(1.0);
 
-    let scale_x = window_width / virtual_width;
-    let scale_y = window_height / virtual_height;
+    let scale_x = viewport.scale_x();
+    let scale_y = viewport.scale_y();
 
     let sprite_world_width = virtual_size.x * scale_x;
     let sprite_world_height = virtual_size.y * scale_y;
@@ -937,10 +1095,10 @@ fn sprite_world_transform(
         (clamped_y / virtual_height).min(1.0)
     };
 
-    // Step 3: scale the normalised values up to the host window dimensions,
+    // Step 3: scale the normalised values up to the host content dimensions,
     // leaving enough slack so the sprite’s size is fully visible at the edges.
-    let available_width = (window_width - sprite_world_width).max(0.0);
-    let available_height = (window_height - sprite_world_height).max(0.0);
+    let available_width = (viewport.content_width() - sprite_world_width).max(0.0);
+    let available_height = (viewport.content_height() - sprite_world_height).max(0.0);
 
     let offset_x = normalized_x * available_width;
     let offset_y = normalized_y * available_height;
@@ -951,8 +1109,8 @@ fn sprite_world_transform(
     // with the computed offset.
     (
         Vec2::new(
-            -half_width + offset_x + sprite_half_width,
-            half_height - offset_y - sprite_half_height,
+            -half_width + viewport.border_x() + sprite_half_width + offset_x,
+            half_height - viewport.border_y() - sprite_half_height - offset_y,
         ),
         Vec2::new(sprite_world_width, sprite_world_height),
     )
@@ -990,15 +1148,16 @@ mod tests {
     #[test]
     fn sprite_position_aligns_top_left_at_origin() {
         let sprite_virtual = virtual_res(128, 96);
-        let viewport = SpriteViewport::new(800.0, 600.0);
+        let mut viewport = SpriteViewport::new(800.0, 600.0);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        viewport.set_content(scale_x, scale_y, 0.0, 0.0);
         let sprite = sprite(0.0, 0.0);
 
         let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        let scale_x = viewport.window_width() / sprite_virtual.width();
-        let scale_y = viewport.window_height() / sprite_virtual.height();
-        let expected_size_x = sprite_virtual_size().x * scale_x;
-        let expected_size_y = sprite_virtual_size().y * scale_y;
+        let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
+        let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
         let expected_x = -viewport.window_width() * 0.5 + expected_size_x * 0.5;
         let expected_y = viewport.window_height() * 0.5 - expected_size_y * 0.5;
 
@@ -1011,15 +1170,16 @@ mod tests {
     #[test]
     fn sprite_position_aligns_bottom_right_at_max() {
         let sprite_virtual = virtual_res(128, 96);
-        let viewport = SpriteViewport::new(800.0, 600.0);
+        let mut viewport = SpriteViewport::new(800.0, 600.0);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        viewport.set_content(scale_x, scale_y, 0.0, 0.0);
         let sprite = sprite(128.0, 96.0);
 
         let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        let scale_x = viewport.window_width() / sprite_virtual.width();
-        let scale_y = viewport.window_height() / sprite_virtual.height();
-        let expected_size_x = sprite_virtual_size().x * scale_x;
-        let expected_size_y = sprite_virtual_size().y * scale_y;
+        let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
+        let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
         let expected_x = viewport.window_width() * 0.5 - expected_size_x * 0.5;
         let expected_y = -viewport.window_height() * 0.5 + expected_size_y * 0.5;
 
@@ -1032,29 +1192,138 @@ mod tests {
     #[test]
     fn sprite_position_centres_at_midpoint() {
         let sprite_virtual = virtual_res(128, 96);
-        let viewport = SpriteViewport::new(800.0, 600.0);
+        let mut viewport = SpriteViewport::new(800.0, 600.0);
+        let scale_x = viewport.window_width() / sprite_virtual.width();
+        let scale_y = viewport.window_height() / sprite_virtual.height();
+        viewport.set_content(scale_x, scale_y, 0.0, 0.0);
         let sprite = sprite(64.0, 48.0);
 
         let (world_pos, world_size) = sprite_world_transform(&sprite, &viewport, &sprite_virtual);
 
-        let scale_x = viewport.window_width() / sprite_virtual.width();
-        let scale_y = viewport.window_height() / sprite_virtual.height();
-        let expected_size_x = sprite_virtual_size().x * scale_x;
-        let expected_size_y = sprite_virtual_size().y * scale_y;
+        let expected_size_x = sprite_virtual_size().x * viewport.scale_x();
+        let expected_size_y = sprite_virtual_size().y * viewport.scale_y();
 
         approx_equal(world_pos.x, 0.0, 1e-3);
         approx_equal(world_pos.y, 0.0, 1e-3);
         approx_equal(world_size.x, expected_size_x, 1e-3);
         approx_equal(world_size.y, expected_size_y, 1e-3);
     }
+
+    #[test]
+    fn viewport_geometry_without_aspect_enforcement() {
+        let settings = DisplaySettings {
+            enforce_aspect_ratio: false,
+            ..DisplaySettings::default()
+        };
+        let virtual_res = SpriteVirtualResolution::new(VirtualResolution::new(128, 96));
+        let (scale_x, scale_y, border_x, border_y) =
+            compute_viewport_geometry(800.0, 600.0, &virtual_res, &settings);
+
+        approx_equal(scale_x, 800.0 / 128.0, 1e-6);
+        approx_equal(scale_y, 600.0 / 96.0, 1e-6);
+        approx_equal(border_x, 0.0, 1e-6);
+        approx_equal(border_y, 0.0, 1e-6);
+    }
+
+    #[test]
+    fn viewport_geometry_with_aspect_enforcement_and_min_border() {
+        let settings = DisplaySettings {
+            enforce_aspect_ratio: true,
+            min_border_x: 10.0,
+            min_border_y: 20.0,
+            ..DisplaySettings::default()
+        };
+        let virtual_res = SpriteVirtualResolution::new(VirtualResolution::new(160, 120));
+        let (scale_x, scale_y, border_x, border_y) =
+            compute_viewport_geometry(800.0, 600.0, &virtual_res, &settings);
+
+        // Aspect ratio 4:3 should be preserved; min borders padded equally.
+        approx_equal(scale_x, scale_y, 1e-6);
+        assert!(border_x >= settings.min_border_x - 1e-6);
+        assert!(border_y >= settings.min_border_y - 1e-6);
+    }
 }
 
 fn update_sprite_viewport(
     window_query: Query<&Window, With<PrimaryWindow>>,
     mut viewport: ResMut<SpriteViewport>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    display: Res<DisplaySettings>,
+    mut clear_color: ResMut<ClearColor>,
+    mut background: Query<(&Handle<ColorMaterial>, &mut Transform), With<ContentBackground>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     if let Ok(window) = window_query.get_single() {
         viewport.update_window(window.width(), window.height());
+
+        let (scale_x, scale_y, computed_border_x, computed_border_y) = compute_viewport_geometry(
+            viewport.window_width(),
+            viewport.window_height(),
+            &virtual_resolution,
+            &display,
+        );
+
+        viewport.set_content(scale_x, scale_y, computed_border_x, computed_border_y);
+
+        clear_color.0 = display.border_color;
+        if let Ok((material_handle, mut transform)) = background.get_single_mut() {
+            transform.scale = Vec3::new(
+                viewport.content_width().max(1.0),
+                viewport.content_height().max(1.0),
+                1.0,
+            );
+            if let Some(material) = materials.get_mut(material_handle) {
+                material.color = display.background_color;
+            }
+        }
+    }
+}
+
+fn compute_viewport_geometry(
+    window_width: f32,
+    window_height: f32,
+    virtual_resolution: &SpriteVirtualResolution,
+    display: &DisplaySettings,
+) -> (f32, f32, f32, f32) {
+    let min_border_x = display.min_border_x.max(0.0);
+    let min_border_y = display.min_border_y.max(0.0);
+
+    if display.enforce_aspect_ratio {
+        let inner_width = (window_width - 2.0 * min_border_x).max(1.0);
+        let inner_height = (window_height - 2.0 * min_border_y).max(1.0);
+        let uniform_scale = (inner_width / virtual_resolution.width())
+            .min(inner_height / virtual_resolution.height());
+        let mut content_width = virtual_resolution.width() * uniform_scale;
+        let mut content_height = virtual_resolution.height() * uniform_scale;
+        let mut border_x = (window_width - content_width) * 0.5;
+        let mut border_y = (window_height - content_height) * 0.5;
+
+        if border_x < min_border_x || border_y < min_border_y {
+            border_x = min_border_x;
+            border_y = min_border_y;
+            let adjusted_width = (window_width - 2.0 * border_x).max(1.0);
+            let adjusted_height = (window_height - 2.0 * border_y).max(1.0);
+            let uniform_scale = (adjusted_width / virtual_resolution.width())
+                .min(adjusted_height / virtual_resolution.height());
+            content_width = virtual_resolution.width() * uniform_scale;
+            content_height = virtual_resolution.height() * uniform_scale;
+            border_x = (window_width - content_width) * 0.5;
+            border_y = (window_height - content_height) * 0.5;
+        }
+
+        (
+            (window_width - 2.0 * border_x).max(1.0) / virtual_resolution.width(),
+            (window_height - 2.0 * border_y).max(1.0) / virtual_resolution.height(),
+            border_x,
+            border_y,
+        )
+    } else {
+        (
+            window_width / virtual_resolution.width(),
+            window_height / virtual_resolution.height(),
+            0.0,
+            0.0,
+        )
     }
 }
 
