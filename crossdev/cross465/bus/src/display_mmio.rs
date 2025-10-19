@@ -15,10 +15,18 @@ pub struct DisplaySnapshot {
 }
 
 /// Shared state backing the display MMIO.
-#[derive(Default)]
 pub struct DisplayOutput {
     border_color: u8,
     background_color: u8,
+}
+
+impl Default for DisplayOutput {
+    fn default() -> Self {
+        Self {
+            border_color: 0x0E,
+            background_color: 0x06
+        }
+    }
 }
 
 impl DisplayOutput {
