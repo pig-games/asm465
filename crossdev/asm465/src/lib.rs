@@ -76,11 +76,11 @@ pub struct Args {
     pub service_host: String,
 
     /// Virtual sprite canvas width used for MMIO coordinate scaling.
-    #[arg(long, default_value_t = 320u32)]
+    #[arg(long, default_value_t = 255u32)]
     pub virtual_width: u32,
 
     /// Virtual sprite canvas height used for MMIO coordinate scaling.
-    #[arg(long, default_value_t = 256u32)]
+    #[arg(long, default_value_t = 255u32)]
     pub virtual_height: u32,
 
     /// Optional positional PRG path (shorthand for `--prg`).
@@ -256,8 +256,8 @@ impl VirtualResolution {
 impl Default for VirtualResolution {
     fn default() -> Self {
         Self {
-            width: 320,
-            height: 256,
+            width: 255,
+            height: 255,
         }
     }
 }

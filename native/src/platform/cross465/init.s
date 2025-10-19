@@ -21,26 +21,26 @@
 
     lda #2
     sta cross465.SPRSEL
-    lda #50
+    lda #(255/2)
     sta cross465.SPRYHI
     sta cross465.SPRXHI
-    sta cross465.SPRANIM
     lda #0
+    sta cross465.SPRANIM
     sta cross465.SPRYLO
-    lda #100
+    lda #(255/2)
     sta cross465.SPRXLO
     lda #2
     sta cross465.SPRNUM
 
     lda #3
     sta cross465.SPRSEL
-    lda #100
+    lda #255
     sta cross465.SPRYHI
     sta cross465.SPRXHI
-    sta cross465.SPRANIM
     lda #0
+    sta cross465.SPRANIM
     sta cross465.SPRYLO
-    lda #200
+    lda #255
     sta cross465.SPRXLO
     lda #3
     sta cross465.SPRNUM
