@@ -1,52 +1,40 @@
-//! cross465 Bus: 64KB RAM + pluggable MMIO devices.
+//! cross465 Bus: 64KB RAM + pluggable personalities.
 //!
 //! This module implements the system bus for a 6502-based virtual machine.
 //! It contains:
 //!
-//! * [`Memory`] — a 64 KB RAM abstraction.
+//! * [`Memory`] — a 64 KB RAM abstraction shared by all MMIO devices.
 //! * [`MmioDevice`] — a trait for memory-mapped I/O peripherals.
-//! * [`Bus`] — the actual 6502 bus, with RAM and pluggable MMIO devices.
-//! * Default MMIO mapping for [`console_mmio::ConsoleMmio`] at `$DF00–$DF1F`.
+//! * [`Bus`] — the actual 6502 bus, with RAM and personality-driven MMIO layout.
+//! * [`personality`] — descriptors that define which MMIO modules to map and in
+//!   which address ranges.
 //!
-//! ## Memory Map
+//! ## Personalities & Memory Map
 //!
-//! The bus exposes the full 16-bit address space (`$0000`–`$FFFF`):
+//! By default [`Bus::new`] loads the [`personality::MODERN_RETRO`] descriptor,
+//! which maps:
 //!
 //! ```text
 //! $0000–$DFFF   RAM (read/write)
-//! $DF00–$DF1F   Console MMIO (default device)
-//! $DF20–$DF21   Display MMIO (border/background)
+//! $DF00–$DF1F   Console MMIO (text output)
+//! $DF20–$DF21   Display MMIO (border/background colours)
 //! $DF30–$DF37   Sprite MMIO (sprite slots)
 //! $DF38–$FFFB   RAM (read/write)
 //! $FFFC–$FFFD   Reset vector
 //! $FFFE–$FFFF   NMI vector
 //! ```
 //!
+//! You can construct a bus with a different mapping by calling
+//! [`Bus::with_personality`] and supplying a custom descriptor. Each
+//! `PersonalityMmio` entry provides a range and a factory for the MMIO module so
+//! applications can plug in alternative devices (e.g. different sprite/display
+//! implementations) without modifying the bus internals.
+//!
 //! The [`Bus`] forwards reads/writes in MMIO ranges to their device instead of RAM.
-//!
-//! ## Default Console MMIO
-//!
-//! The default console device allows the 6502 core to "print" to the host terminal:
-//!
-//! - `$DF00`: write a byte → prints a character.
-//! - `$DF01`: write any value → prints a newline.
-//! - `$DF02`: write a byte → prints two hexadecimal digits.
-//!
-//! This is useful for quick debugging and smoke tests without a GUI.
-//!
-//! ## Example
-//!
-//! ```no_run
-//! use bus::{Bus, console_mmio::ConsoleMmio};
-//!
-//! let mut bus = Bus::new();
-//! bus.write(0xDF00, b'H');
-//! bus.write(0xDF00, b'i');
-//! bus.write(0xDF01, 0); // newline
-//! ```
 
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod display_mmio; // expose display device as bus::display_mmio::*
+pub mod personality; // personas describing MMIO layouts
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod utils; // expose helpers as bus::utils::*
 
@@ -58,6 +46,7 @@ use std::sync::{Arc, Mutex};
 
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
+use personality::{Personality, PersonalityMmioKind, MODERN_RETRO};
 use sprite_mmio::SpriteMmio;
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
@@ -150,26 +139,45 @@ impl dyn MmioDevice {
 /// Everything else goes to RAM.
 pub struct Bus {
     ram: Arc<Mutex<Memory>>,
-    mmio: Vec<(RangeInclusive<u16>, Box<dyn MmioDevice>)>,
+    personality: &'static Personality,
+    mmio: Vec<MappedDevice>,
+}
+
+struct MappedDevice {
+    range: RangeInclusive<u16>,
+    device: Box<dyn MmioDevice>,
+    kind: Option<PersonalityMmioKind>,
 }
 
 impl Bus {
+    /// Active personality descriptor backing this bus.
+    pub fn personality(&self) -> &'static Personality {
+        self.personality
+    }
+
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
     pub fn new() -> Self {
+        Self::with_personality(&MODERN_RETRO)
+    }
+
+    /// Construct the bus using the specified personality.
+    pub fn with_personality(personality: &'static Personality) -> Self {
         let ram = Arc::new(Mutex::new(Memory::new()));
         let mut bus = Self {
             ram: ram.clone(),
+            personality,
             mmio: Vec::new(),
         };
-        bus.map_mmio(0xDF00..=0xDF1F, Box::new(ConsoleMmio::new(ram.clone())));
-        bus.map_mmio(0xDF20..=0xDF21, Box::new(DisplayMmio::new()));
-        bus.map_mmio(0xDF30..=0xDF37, Box::new(SpriteMmio::new()));
+        for mapping in personality.mmio {
+            let device = (mapping.create)(&ram);
+            bus.map_mmio_internal(mapping.range.clone(), device, Some(mapping.kind));
+        }
         bus
     }
 
     /// Map an MMIO device to a specific address range (inclusive).
     pub fn map_mmio(&mut self, range: RangeInclusive<u16>, dev: Box<dyn MmioDevice>) {
-        self.mmio.push((range, dev));
+        self.map_mmio_internal(range, dev, None);
     }
 
     /// Load a contiguous slice into RAM starting at `at`.
@@ -208,9 +216,9 @@ impl Bus {
 
     /// Search for an MMIO device covering `addr`.
     pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn MmioDevice> {
-        for (range, dev) in self.mmio.iter_mut() {
-            if range.contains(&addr) {
-                return Some(dev.as_mut());
+        for mapped in self.mmio.iter_mut() {
+            if mapped.range.contains(&addr) {
+                return Some(mapped.device.as_mut());
             }
         }
         None
@@ -225,9 +233,9 @@ impl Bus {
 
     /// Enable/disable PETSCII translation on the default console device.
     pub fn with_console_petscii(mut self, petscii: bool) -> Self {
-        for (range, dev) in self.mmio.iter_mut() {
-            if *range == (0xDF00..=0xDF1F) {
-                if let Some(c) = dev.as_any_mut().downcast_mut::<ConsoleMmio>() {
+        for mapped in self.mmio.iter_mut() {
+            if mapped.kind == Some(PersonalityMmioKind::Console) {
+                if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.petscii_mode = petscii;
                 }
             }
@@ -237,9 +245,9 @@ impl Bus {
 
     /// Expose the console device's shared output buffer.
     pub fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
-        for (range, dev) in self.mmio.iter() {
-            if range.contains(&0xDF00) {
-                if let Some(c) = dev.as_any().downcast_ref::<ConsoleMmio>() {
+        for mapped in self.mmio.iter() {
+            if mapped.kind == Some(PersonalityMmioKind::Console) {
+                if let Some(c) = mapped.device.as_any().downcast_ref::<ConsoleMmio>() {
                     return Some(c.output());
                 }
             }
@@ -249,9 +257,9 @@ impl Bus {
 
     /// Expose the display device's shared output buffer (border/background).
     pub fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
-        for (range, dev) in self.mmio.iter() {
-            if range.contains(&0xDF20) {
-                if let Some(d) = dev.as_any().downcast_ref::<DisplayMmio>() {
+        for mapped in self.mmio.iter() {
+            if mapped.kind == Some(PersonalityMmioKind::Display) {
+                if let Some(d) = mapped.device.as_any().downcast_ref::<DisplayMmio>() {
                     return Some(d.output());
                 }
             }
@@ -261,9 +269,9 @@ impl Bus {
 
     /// Expose the sprite device's shared output buffer.
     pub fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
-        for (range, dev) in self.mmio.iter() {
-            if range.contains(&0xDF30) {
-                if let Some(s) = dev.as_any().downcast_ref::<SpriteMmio>() {
+        for mapped in self.mmio.iter() {
+            if mapped.kind == Some(PersonalityMmioKind::Sprite) {
+                if let Some(s) = mapped.device.as_any().downcast_ref::<SpriteMmio>() {
                     return Some(s.output());
                 }
             }
@@ -279,12 +287,27 @@ impl Bus {
 
     /// Clear the console buffer (if present).
     pub fn clear_console_buffer(&mut self) {
-        for (range, dev) in self.mmio.iter_mut() {
-            if *range == (0xDF00..=0xDF1F) {
-                if let Some(c) = dev.as_any_mut().downcast_mut::<ConsoleMmio>() {
+        for mapped in self.mmio.iter_mut() {
+            if mapped.kind == Some(PersonalityMmioKind::Console) {
+                if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.clear();
                 }
             }
         }
+    }
+}
+
+impl Bus {
+    fn map_mmio_internal(
+        &mut self,
+        range: RangeInclusive<u16>,
+        dev: Box<dyn MmioDevice>,
+        kind: Option<PersonalityMmioKind>,
+    ) {
+        self.mmio.push(MappedDevice {
+            range,
+            device: dev,
+            kind,
+        });
     }
 }

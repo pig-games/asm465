@@ -24,7 +24,7 @@ impl Default for DisplayOutput {
     fn default() -> Self {
         Self {
             border_color: 0x0E,
-            background_color: 0x06
+            background_color: 0x06,
         }
     }
 }
