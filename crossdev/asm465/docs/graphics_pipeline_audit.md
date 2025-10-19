@@ -69,6 +69,16 @@
   so games can opt into sub-pixel motion while keeping the default behaviour
   simple.
 
+### Personalities
+- A personality is a combination of default values for display setup and a set of specifically mapped MMIO modules.
+- Personalities allow easy implementation of different types of runtime feature sets.
+- Our current setup allows the use of the console, display and sprite MMIO interface at specific address ranges. For different applications where the cross465 runtime is used different combination of existing or newly developed MMIO's can be configured and packaged up into a new personality. Some personalities will be specific to a single application, while some personalities may be developed to be reused by many different games/applications.
+- Examples of personalities:
+  - C64 personality. This personality mirrors the MMIO layout of the C64 as much as possible. This would allow for games with very little changes to the code on both c64 and modern hardware. This could also be a good porting tool.
+  - Modern Retro 2D game runtime. This personality (basically what we are developing currently) has it's own MMIO mapping and supports 2d game logic to be reused but requires an abstract layer to bridge differences between vintage/retro and modern platform. This allows for a more modern version to be developed for modern platforms, while still reusing as much of the game logic code as possible. Such a personality can enhance the graphics on modern platforms with higher resolution, more colors, particle systems, multiple layer parallax backgrounds, etc.
+  - Modern Retro 2.5D game runtime. This personality would support a configurable mapping between a 2d game representation on vintage/retro hardware onto a 3D rendered modern version. This would most likely still have a fixed camera so a sideways scrolling game in 2D would be mapped on a sideway scrolling 3d representation that adds depth and true 3d parallax.
+  - ...
+
 ### Observations
 - The pipeline now uses the dedicated graphics MMIO, honours the new mapping
   configuration, culls sprites that remain fully outside the visible content
