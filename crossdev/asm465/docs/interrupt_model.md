@@ -49,6 +49,10 @@ The goals for this phase are:
 
 Additional sources can be added later; IDs are contiguous per personality.
 
+These definitions now live in `MODERN_RETRO_INTERRUPTS` (see
+`crossdev/cross465/bus/src/personality.rs`) so tooling can introspect them at
+runtime.
+
 ---
 
 ## Interrupt Controller Surface

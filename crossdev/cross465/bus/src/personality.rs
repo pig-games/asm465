@@ -100,7 +100,7 @@ pub static MODERN_RETRO: Personality = Personality {
         border_color: 0x00,
         background_color: 0x00,
     },
-    interrupts: &[],
+    interrupts: MODERN_RETRO_INTERRUPTS,
 };
 
 /// Scaffold personality that loosely mirrors the C64 MMIO layout. It reuses the
@@ -134,6 +134,45 @@ pub static C64_COMPAT: Personality = Personality {
     },
     interrupts: &[],
 };
+
+/// Interrupt sources exposed by the modern-retro personality.
+const MODERN_RETRO_INTERRUPTS: &[PersonalityInterrupt] = &[
+    PersonalityInterrupt {
+        id: 0,
+        name: "frame_start",
+        line: InterruptLine::Nmi,
+        trigger: InterruptTrigger::Edge,
+        default_enable: true,
+    },
+    PersonalityInterrupt {
+        id: 1,
+        name: "frame_end",
+        line: InterruptLine::Irq,
+        trigger: InterruptTrigger::Level,
+        default_enable: false,
+    },
+    PersonalityInterrupt {
+        id: 2,
+        name: "timer0",
+        line: InterruptLine::Irq,
+        trigger: InterruptTrigger::Level,
+        default_enable: false,
+    },
+    PersonalityInterrupt {
+        id: 3,
+        name: "keyboard_event",
+        line: InterruptLine::Irq,
+        trigger: InterruptTrigger::Level,
+        default_enable: false,
+    },
+    PersonalityInterrupt {
+        id: 4,
+        name: "gamepad_event",
+        line: InterruptLine::Irq,
+        trigger: InterruptTrigger::Level,
+        default_enable: false,
+    },
+];
 
 static PERSONALITIES: &[&Personality] = &[&MODERN_RETRO, &C64_COMPAT];
 
