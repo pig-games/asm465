@@ -82,6 +82,11 @@ It exposes `InterruptController` helpers that use atomics so the UI thread and
 the CPU worker can concurrently raise/clear sources. Unit tests in the same file
 cover the edge/level semantics for NMI/IRQ.
 
+`InterruptBindings` inside `crossdev/asm465/src/lib.rs` wires these sources to
+the viewer: frame lifecycle interrupts fire once per Bevy frame, a 60 Hz host
+timer raises `timer0`, and keyboard/gamepad events raise the corresponding IRQ
+when input is observed on the host side.
+
 ### Register Map (proposed at `$DF40–$DF47`)
 
 | Address | Name | Access | Description |

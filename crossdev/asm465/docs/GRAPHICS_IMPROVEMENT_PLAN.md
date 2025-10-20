@@ -88,11 +88,11 @@
   - [x] Extend personality descriptors with interrupt definitions
     - [x] Allow personalities to register named interrupt sources, associate them with IRQ/NMI lines, and expose configuration knobs (priority, enable bits, default masks).
     - [x] Ensure personalities can subscribe to host-side producers (display loop, input manager, timers) and translate those events into controller calls.
-  - [ ] Wire up interrupt sources for the ModernRetro personality
-    - [ ] Display: raise `frame_start`/`frame_end` interrupts tied to the renderer’s vblank lifecycle and debounce duplicate triggers.
-    - [ ] Timer: implement a host-driven programmable timer module in `cross465/asm465`, expose period registers via MMIO, and verify cadence with tests.
-    - [ ] Keyboard: surface key state/register interface to the guest, fire interrupts on press/release, and document scan-code expectations.
-    - [ ] Game controller: mirror the keyboard approach for controller state changes, including hot-plug/idle handling.
+  - [x] Wire up interrupt sources for the ModernRetro personality
+    - [x] Display: raise `frame_start`/`frame_end` interrupts tied to the renderer’s vblank lifecycle and debounce duplicate triggers (handled by `emit_frame_start_interrupt`/`emit_frame_end_interrupt` in `crossdev/asm465/src/lib.rs`).
+    - [x] Timer: implement a host-driven programmable timer module in `cross465/asm465`, expose period registers via MMIO, and verify cadence with tests.
+    - [x] Keyboard: surface key state/register interface to the guest, fire interrupts on press/release, and document scan-code expectations.
+    - [x] Game controller: mirror the keyboard approach for controller state changes, including hot-plug/idle handling.
   - [ ] Update developer documentation and tooling
     - [ ] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
     - [ ] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.

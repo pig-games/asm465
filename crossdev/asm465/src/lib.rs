@@ -7,8 +7,13 @@
 //! in platform-neutral modules.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::input::gamepad::GamepadEvent;
+use bevy::input::keyboard::KeyboardInput;
+use bevy::input::ButtonState;
 use bevy::render::camera::ScalingMode;
 use bevy::render::mesh::shape::Quad;
 use bevy::render::mesh::Mesh;
@@ -17,8 +22,10 @@ use bevy::window::PrimaryWindow;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
+use bevy::time::{Timer, TimerMode};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
+use bus::interrupts::InterruptController;
 use bus::personality::{self, Personality};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
@@ -528,6 +535,7 @@ pub fn run_app(config: AppConfig) {
 
     #[allow(unused_mut)]
     let mut emulator = EmulatorState::new(startup, default_max_cycles, personality);
+    let interrupt_bindings = InterruptBindings::from_personality(emulator.interrupts(), personality);
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
@@ -551,6 +559,13 @@ pub fn run_app(config: AppConfig) {
 
     let mut app = App::new();
     app.insert_non_send_resource(emulator);
+    if let Some(bindings) = interrupt_bindings {
+        let has_timer = bindings.has_timer();
+        if has_timer {
+            app.insert_resource(TimerInterruptState::new(Duration::from_secs_f32(1.0 / 60.0)));
+        }
+        app.insert_resource(bindings);
+    }
     app.insert_resource(SpriteVirtualResolution::new(virtual_resolution));
     app.insert_resource(display.clone());
     let initial_palette = DisplayPalette::from_settings(&display);
@@ -618,7 +633,18 @@ pub fn run_app(config: AppConfig) {
         EguiPlugin,
     ))
     .add_systems(Startup, setup_scene)
-    .add_systems(Update, (update_sprite_viewport, ui_system))
+    .add_systems(
+        Update,
+        (
+            emit_frame_start_interrupt,
+            timer_interrupt_system,
+            keyboard_interrupt_system,
+            gamepad_interrupt_system,
+            update_sprite_viewport,
+            ui_system,
+        ),
+    )
+    .add_systems(PostUpdate, emit_frame_end_interrupt)
     .run();
 }
 
@@ -629,6 +655,7 @@ struct EmulatorState {
     default_max_cycles: u64,
     status_message: Option<String>,
     last_outcome: Option<RunOutcome>,
+    interrupts: Arc<InterruptController>,
 }
 
 impl EmulatorState {
@@ -641,12 +668,15 @@ impl EmulatorState {
             CpuWorker::spawn(personality, startup)
                 .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
+        let interrupts = outputs.interrupts.clone();
+
         Self {
             cpu,
             outputs,
             default_max_cycles,
             status_message: status,
             last_outcome: outcome,
+            interrupts,
         }
     }
 
@@ -665,6 +695,10 @@ impl EmulatorState {
     #[allow(dead_code)]
     fn last_outcome(&self) -> Option<RunOutcome> {
         self.last_outcome
+    }
+
+    fn interrupts(&self) -> Arc<InterruptController> {
+        self.interrupts.clone()
     }
 
     /// Ask the worker to load and execute a program, returning the status text.
@@ -688,6 +722,7 @@ impl EmulatorState {
                 outcome,
             }) => {
                 self.outputs = outputs;
+                self.interrupts = self.outputs.interrupts.clone();
                 self.status_message = Some(summary.clone());
                 self.last_outcome = outcome;
                 match status {
@@ -739,6 +774,183 @@ impl EmulatorState {
                 Err(err) => ServiceResponseMessage::error(err),
             },
         }
+    }
+}
+
+#[derive(Resource)]
+struct InterruptBindings {
+    controller: Arc<InterruptController>,
+    frame_start: Option<u32>,
+    frame_end: Option<u32>,
+    timer0: Option<u32>,
+    keyboard: Option<u32>,
+    gamepad: Option<u32>,
+}
+
+impl InterruptBindings {
+    fn from_personality(
+        controller: Arc<InterruptController>,
+        personality: &'static Personality,
+    ) -> Option<Self> {
+        let mut bindings = Self {
+            controller,
+            frame_start: None,
+            frame_end: None,
+            timer0: None,
+            keyboard: None,
+            gamepad: None,
+        };
+
+        for interrupt in personality.interrupts {
+            let mask = 1u32 << interrupt.id;
+            match interrupt.name {
+                "frame_start" => bindings.frame_start = Some(mask),
+                "frame_end" => bindings.frame_end = Some(mask),
+                "timer0" => bindings.timer0 = Some(mask),
+                "keyboard_event" => bindings.keyboard = Some(mask),
+                "gamepad_event" => bindings.gamepad = Some(mask),
+                _ => {}
+            }
+        }
+
+        if bindings.has_any() {
+            Some(bindings)
+        } else {
+            None
+        }
+    }
+
+    fn has_any(&self) -> bool {
+        self.frame_start.is_some()
+            || self.frame_end.is_some()
+            || self.timer0.is_some()
+            || self.keyboard.is_some()
+            || self.gamepad.is_some()
+    }
+
+    fn has_timer(&self) -> bool {
+        self.timer0.is_some()
+    }
+
+    fn has_keyboard(&self) -> bool {
+        self.keyboard.is_some()
+    }
+
+    fn has_gamepad(&self) -> bool {
+        self.gamepad.is_some()
+    }
+
+    fn raise_frame_start(&self) {
+        if let Some(mask) = self.frame_start {
+            self.raise_nmi(mask);
+        }
+    }
+
+    fn raise_frame_end(&self) {
+        if let Some(mask) = self.frame_end {
+            self.raise_irq(mask);
+        }
+    }
+
+    fn raise_timer0(&self) {
+        if let Some(mask) = self.timer0 {
+            self.raise_irq(mask);
+        }
+    }
+
+    fn raise_keyboard(&self) {
+        if let Some(mask) = self.keyboard {
+            self.raise_irq(mask);
+        }
+    }
+
+    fn raise_gamepad(&self) {
+        if let Some(mask) = self.gamepad {
+            self.raise_irq(mask);
+        }
+    }
+
+    fn raise_irq(&self, mask: u32) {
+        if mask != 0 && (self.controller.irq_pending() & mask) == 0 {
+            self.controller.raise_irq(mask);
+        }
+    }
+
+    fn raise_nmi(&self, mask: u32) {
+        if mask != 0 && (self.controller.nmi_pending() & mask) == 0 {
+            self.controller.raise_nmi(mask);
+        }
+    }
+}
+
+#[derive(Resource)]
+struct TimerInterruptState {
+    timer: Timer,
+}
+
+impl TimerInterruptState {
+    fn new(period: Duration) -> Self {
+        Self {
+            timer: Timer::new(period, TimerMode::Repeating),
+        }
+    }
+}
+
+fn emit_frame_start_interrupt(bindings: Option<Res<InterruptBindings>>) {
+    if let Some(bindings) = bindings {
+        bindings.raise_frame_start();
+    }
+}
+
+fn emit_frame_end_interrupt(bindings: Option<Res<InterruptBindings>>) {
+    if let Some(bindings) = bindings {
+        bindings.raise_frame_end();
+    }
+}
+
+fn timer_interrupt_system(
+    time: Res<Time>,
+    bindings: Option<Res<InterruptBindings>>,
+    state: Option<ResMut<TimerInterruptState>>,
+) {
+    let (bindings, mut state) = match (bindings, state) {
+        (Some(bindings), Some(state)) if bindings.has_timer() => (bindings, state),
+        _ => return,
+    };
+
+    if state.timer.tick(time.delta()).just_finished() {
+        bindings.raise_timer0();
+    }
+}
+
+fn keyboard_interrupt_system(
+    bindings: Option<Res<InterruptBindings>>,
+    mut events: EventReader<KeyboardInput>,
+) {
+    let bindings = match bindings {
+        Some(bindings) if bindings.has_keyboard() => bindings,
+        _ => return,
+    };
+
+    for event in events.iter() {
+        if matches!(event.state, ButtonState::Pressed | ButtonState::Released) {
+            bindings.raise_keyboard();
+            break;
+        }
+    }
+}
+
+fn gamepad_interrupt_system(
+    bindings: Option<Res<InterruptBindings>>,
+    mut events: EventReader<GamepadEvent>,
+) {
+    let bindings = match bindings {
+        Some(bindings) if bindings.has_gamepad() => bindings,
+        _ => return,
+    };
+
+    if events.iter().next().is_some() {
+        bindings.raise_gamepad();
     }
 }
 
