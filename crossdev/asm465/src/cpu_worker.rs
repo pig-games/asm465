@@ -1,0 +1,493 @@
+//! Dedicated CPU runner for the asm465 viewer.
+//!
+//! Native builds keep the 6502 core on a background thread so the Bevy/egui UI
+//! can drive rendering and host events without blocking instruction execution.
+//! The worker exposes a simple command channel for program loads and exposes
+//! shared MMIO snapshots back to the UI. On wasm we fall back to a synchronous
+//! runner (threads are not available) but keep the same API surface so the rest
+//! of the app does not need conditional code.
+
+use bus::console_mmio::ConsoleOutput;
+use bus::display_mmio::DisplayOutput;
+use bus::personality::Personality;
+use bus::sprite_mmio::SpriteOutput;
+use bus::Bus;
+use crate::{run_program_with_config, write_console_line, StartupConfig, WELCOME_MESSAGE};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// Handles to the shared MMIO output buffers that the viewer reads from.
+#[derive(Clone)]
+pub struct CpuWorkerOutputs {
+    pub console: Arc<Mutex<ConsoleOutput>>,
+    pub display: Arc<Mutex<DisplayOutput>>,
+    pub sprite: Arc<Mutex<SpriteOutput>>,
+}
+
+impl CpuWorkerOutputs {
+    /// Snapshot the console/display/sprite handles from the supplied bus.
+    fn new(bus: &Bus) -> Self {
+        let console = bus
+            .console_output_handle()
+            .expect("console MMIO output handle");
+        let display = bus
+            .display_output_handle()
+            .expect("display MMIO output handle");
+        let sprite = bus
+            .sprite_output_handle()
+            .expect("sprite MMIO output handle");
+        Self {
+            console,
+            display,
+            sprite,
+        }
+    }
+}
+
+/// Outcome of a [`CpuWorker`] command.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CpuRunStatus {
+    Success,
+    Failure,
+}
+
+/// Reply returned after the worker loads and executes a program batch.
+pub struct CpuRunReply {
+    pub summary: String,
+    pub status: CpuRunStatus,
+    pub outputs: CpuWorkerOutputs,
+}
+
+/// Initialisation payload returned when the worker spins up.
+pub struct CpuWorkerInit {
+    pub outputs: CpuWorkerOutputs,
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+pub struct CpuThrottle {
+    pub cycles_per_batch: u64,
+    pub sleep: Duration,
+}
+
+impl CpuThrottle {
+    /// Helper used by tests/debug tools that need an unthrottled worker.
+    #[allow(dead_code)]
+    pub const fn unlimited() -> Self {
+        Self {
+            cycles_per_batch: u64::MAX,
+            sleep: Duration::from_micros(0),
+        }
+    }
+}
+
+impl Default for CpuThrottle {
+    fn default() -> Self {
+        Self {
+            cycles_per_batch: 50_000,
+            sleep: Duration::from_millis(1),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
+    use super::*;
+    use core6502::Cpu;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+    use std::thread::{self, JoinHandle};
+
+    /// Native worker that keeps the CPU on a background thread.
+    pub struct CpuWorker {
+        command_tx: Sender<CpuCommand>,
+        #[allow(dead_code)]
+        status: Arc<CpuWorkerStatus>,
+        handle: Option<JoinHandle<()>>,
+    }
+
+    #[derive(Default)]
+    struct CpuWorkerStatus {
+        running: AtomicBool,
+        paused: AtomicBool,
+    }
+
+    /// Control messages sent to the worker thread.
+    #[allow(dead_code)]
+    enum CpuCommand {
+        RunProgram {
+            config: StartupConfig,
+            respond_to: Sender<Result<CpuRunReply, String>>,
+        },
+        Pause,
+        Resume,
+        SetThrottle(CpuThrottle),
+        Shutdown,
+    }
+
+    /// Owned state that lives on the worker thread.
+    struct WorkerInner {
+        cpu: Cpu,
+        throttle: CpuThrottle,
+        running: bool,
+        paused: bool,
+        personality: &'static Personality,
+        status: Arc<CpuWorkerStatus>,
+    }
+
+    impl WorkerInner {
+        /// Build the worker state and gather initial MMIO handles.
+        fn new(
+            personality: &'static Personality,
+            startup: Option<StartupConfig>,
+            status: Arc<CpuWorkerStatus>,
+        ) -> (Self, CpuWorkerInit) {
+            let (cpu, outputs, initial_status) = initialize_cpu(personality, startup);
+            status.running.store(true, Ordering::SeqCst);
+            status.paused.store(false, Ordering::SeqCst);
+            let inner = Self {
+                cpu,
+                throttle: CpuThrottle::default(),
+                running: true,
+                paused: false,
+                personality,
+                status: status.clone(),
+            };
+            let init = CpuWorkerInit {
+                outputs,
+                status: initial_status,
+            };
+            (inner, init)
+        }
+
+        /// Main worker loop: polls commands, runs the CPU, and respects throttle settings.
+        fn run(mut self, command_rx: Receiver<CpuCommand>) {
+            while self.running {
+                if self.paused {
+                    match command_rx.recv() {
+                        Ok(cmd) => self.handle_command(cmd),
+                        Err(_) => break,
+                    }
+                    continue;
+                }
+
+                match command_rx.try_recv() {
+                    Ok(cmd) => {
+                        self.handle_command(cmd);
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => break,
+                }
+
+                let mut spent = 0u64;
+                while spent < self.throttle.cycles_per_batch && self.running && !self.paused {
+                    let cycles = self.cpu.step() as u64;
+                    spent += cycles;
+                    match command_rx.try_recv() {
+                        Ok(cmd) => {
+                            self.handle_command(cmd);
+                        }
+                        Err(TryRecvError::Empty) => {}
+                        Err(TryRecvError::Disconnected) => {
+                            self.running = false;
+                        }
+                    }
+                }
+
+                if self.throttle.sleep > Duration::ZERO {
+                    thread::sleep(self.throttle.sleep);
+                }
+            }
+            self.status.running.store(false, Ordering::SeqCst);
+            self.status.paused.store(true, Ordering::SeqCst);
+        }
+
+        /// Dispatch a command received from the control channel.
+        fn handle_command(&mut self, command: CpuCommand) {
+            match command {
+                CpuCommand::RunProgram { config, respond_to } => {
+                    self.paused = true;
+                    self.status.paused.store(true, Ordering::SeqCst);
+                    let reply = self.perform_run_program(config);
+                    let _ = respond_to.send(reply);
+                    if self.running {
+                        self.paused = false;
+                        self.status.paused.store(false, Ordering::SeqCst);
+                    }
+                }
+                CpuCommand::Pause => {
+                    self.paused = true;
+                    self.status.paused.store(true, Ordering::SeqCst);
+                }
+                CpuCommand::Resume => {
+                    if self.running {
+                        self.paused = false;
+                        self.status.paused.store(false, Ordering::SeqCst);
+                    }
+                }
+                CpuCommand::SetThrottle(throttle) => {
+                    self.throttle = throttle;
+                }
+                CpuCommand::Shutdown => {
+                    self.running = false;
+                    self.paused = true;
+                    self.status.running.store(false, Ordering::SeqCst);
+                    self.status.paused.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+
+        /// Execute a program request and keep the worker state coherent.
+        fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
+            match run_program_with_config(Bus::with_personality(self.personality), &config) {
+                Ok((bus, summary)) => Ok(self.finish_program(bus, summary, CpuRunStatus::Success)),
+                Err((mut bus, summary)) => {
+                    write_console_line(&mut bus, &summary);
+                    Ok(self.finish_program(bus, summary, CpuRunStatus::Failure))
+                }
+            }
+        }
+
+        /// Reset the CPU core back to the worker loop and provide refreshed outputs.
+        fn finish_program(
+            &mut self,
+            bus: Bus,
+            summary: String,
+            status: CpuRunStatus,
+        ) -> CpuRunReply {
+            let outputs = CpuWorkerOutputs::new(&bus);
+            self.cpu = Cpu::new(bus);
+            self.cpu.reset();
+            CpuRunReply {
+                summary,
+                status,
+                outputs,
+            }
+        }
+    }
+
+    /// Helper that prepares the initial CPU/bus state for the worker thread.
+    fn initialize_cpu(
+        personality: &'static Personality,
+        startup: Option<StartupConfig>,
+    ) -> (Cpu, CpuWorkerOutputs, Option<String>) {
+        match startup {
+            Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
+            {
+                Ok((bus, summary)) => {
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    let mut cpu = Cpu::new(bus);
+                    cpu.reset();
+                    (cpu, outputs, Some(summary))
+                }
+                Err((mut bus, summary)) => {
+                    write_console_line(&mut bus, &summary);
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    let mut cpu = Cpu::new(bus);
+                    cpu.reset();
+                    (cpu, outputs, Some(summary))
+                }
+            },
+            None => {
+                let mut bus = Bus::with_personality(personality);
+                write_console_line(&mut bus, WELCOME_MESSAGE);
+                let outputs = CpuWorkerOutputs::new(&bus);
+                let mut cpu = Cpu::new(bus);
+                cpu.reset();
+                (cpu, outputs, Some(WELCOME_MESSAGE.to_string()))
+            }
+        }
+    }
+
+    impl CpuWorker {
+        /// Spawn the worker thread and return the handles the UI needs for rendering.
+        pub fn spawn(
+            personality: &'static Personality,
+            startup: Option<StartupConfig>,
+        ) -> Result<(Self, CpuWorkerInit), String> {
+            let (command_tx, command_rx) = mpsc::channel();
+            let status = Arc::new(CpuWorkerStatus::default());
+            let (inner, init) = WorkerInner::new(personality, startup, status.clone());
+            let handle = thread::Builder::new()
+                .name("cpu-worker".into())
+                .spawn(move || inner.run(command_rx))
+                .map_err(|err| err.to_string())?;
+
+            Ok((
+                Self {
+                    command_tx,
+                    status,
+                    handle: Some(handle),
+                },
+                init,
+            ))
+        }
+
+        /// Request the worker to load a program and return once it finishes.
+        pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
+            let (tx, rx) = mpsc::channel();
+            self.command_tx
+                .send(CpuCommand::RunProgram {
+                    config,
+                    respond_to: tx,
+                })
+                .map_err(|err| err.to_string())?;
+            rx.recv().map_err(|err| err.to_string())?
+        }
+
+        /// Pause the worker loop (no-op if it is already paused).
+        #[allow(dead_code)]
+        pub fn pause(&mut self) {
+            let _ = self.command_tx.send(CpuCommand::Pause);
+        }
+
+        /// Resume the worker loop if it was paused.
+        #[allow(dead_code)]
+        pub fn resume(&mut self) {
+            let _ = self.command_tx.send(CpuCommand::Resume);
+        }
+
+        /// Adjust the worker throttle (cycles per batch + host sleep).
+        #[allow(dead_code)]
+        pub fn set_throttle(&mut self, throttle: CpuThrottle) {
+            let _ = self.command_tx.send(CpuCommand::SetThrottle(throttle));
+        }
+
+        /// Report whether the worker thread is still alive.
+        #[allow(dead_code)]
+        pub fn is_running(&self) -> bool {
+            self.status.running.load(Ordering::SeqCst)
+        }
+
+        /// Report whether the worker loop is currently paused.
+        #[allow(dead_code)]
+        pub fn is_paused(&self) -> bool {
+            self.status.paused.load(Ordering::SeqCst)
+        }
+
+        pub fn shutdown(&mut self) {
+            let _ = self.command_tx.send(CpuCommand::Shutdown);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    impl Drop for CpuWorker {
+        fn drop(&mut self) {
+            self.shutdown();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::*;
+    use std::thread;
+
+    /// Synchronous worker used in wasm builds (threads are unavailable).
+    pub struct CpuWorker {
+        bus: Bus,
+        personality: &'static Personality,
+    }
+
+    impl CpuWorker {
+        /// Create the worker and return the initial MMIO handles.
+        pub fn spawn(
+            personality: &'static Personality,
+            startup: Option<StartupConfig>,
+        ) -> Result<(Self, CpuWorkerInit), String> {
+            let (bus, outputs, status) = initialize_bus(personality, startup);
+            Ok((
+                Self { bus, personality },
+                CpuWorkerInit { outputs, status },
+            ))
+        }
+
+        /// Run the supplied program immediately on the single-threaded executor.
+        pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
+            match run_program_with_config(Bus::with_personality(self.personality), &config) {
+                Ok((bus, summary)) => {
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    self.bus = bus;
+                    Ok(CpuRunReply {
+                        summary,
+                        status: CpuRunStatus::Success,
+                        outputs,
+                    })
+                }
+                Err((mut bus, summary)) => {
+                    write_console_line(&mut bus, &summary);
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    self.bus = bus;
+                    Ok(CpuRunReply {
+                        summary,
+                        status: CpuRunStatus::Failure,
+                        outputs,
+                    })
+                }
+            }
+        }
+
+        /// Hint to the scheduler (no-op placeholder for API parity).
+        pub fn pause(&mut self) {
+            let _ = thread::yield_now();
+        }
+
+        /// Resume execution (no-op in wasm).
+        pub fn resume(&mut self) {}
+
+        /// Update throttle settings (ignored in wasm).
+        pub fn set_throttle(&mut self, _throttle: CpuThrottle) {}
+
+        /// Report that the interpreter is always running (wasm single thread).
+        pub fn is_running(&self) -> bool {
+            true
+        }
+
+        /// Wasm runner never pauses (no real worker loop).
+        pub fn is_paused(&self) -> bool {
+            false
+        }
+
+        /// Drop hook kept for API symmetry with the native worker.
+        pub fn shutdown(&mut self) {}
+    }
+
+    impl Drop for CpuWorker {
+        fn drop(&mut self) {}
+    }
+
+    /// Helper mirroring [`initialize_cpu`] for the single-threaded wasm runner.
+    fn initialize_bus(
+        personality: &'static Personality,
+        startup: Option<StartupConfig>,
+    ) -> (Bus, CpuWorkerOutputs, Option<String>) {
+        match startup {
+            Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
+            {
+                Ok((bus, summary)) => {
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    (bus, outputs, Some(summary))
+                }
+                Err((mut bus, summary)) => {
+                    write_console_line(&mut bus, &summary);
+                    let outputs = CpuWorkerOutputs::new(&bus);
+                    (bus, outputs, Some(summary))
+                }
+            },
+            None => {
+                let mut bus = Bus::with_personality(personality);
+                write_console_line(&mut bus, WELCOME_MESSAGE);
+                let outputs = CpuWorkerOutputs::new(&bus);
+                (bus, outputs, Some(WELCOME_MESSAGE.to_string()))
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::CpuWorker;
+#[cfg(target_arch = "wasm32")]
+pub use wasm::CpuWorker;

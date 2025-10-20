@@ -7,7 +7,6 @@
 //! in platform-neutral modules.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
@@ -18,12 +17,15 @@ use bevy::window::PrimaryWindow;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use bus::console_mmio::{ConsoleOutput, ConsoleSnapshot};
-use bus::display_mmio::{DisplayOutput, DisplaySnapshot};
+use bus::console_mmio::ConsoleSnapshot;
+use bus::display_mmio::DisplaySnapshot;
 use bus::personality::{self, Personality};
-use bus::sprite_mmio::{SpriteOutput, SpriteSnapshot, SpriteState, SPRITE_SLOTS};
+use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::Cpu;
+
+mod cpu_worker;
+use cpu_worker::{CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs};
 
 #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
@@ -42,7 +44,7 @@ use std::net::{TcpListener, TcpStream};
 #[cfg(feature = "native-service")]
 use std::thread;
 
-const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
+pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
 const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
 const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
@@ -536,7 +538,7 @@ pub fn run_app(config: AppConfig) {
                     service_cfg.host, service_cfg.port
                 );
                 emulator.status_message = Some(msg.clone());
-                write_console_line(&mut emulator.bus, &msg);
+                emulator.log_console(&msg);
             }
         }
     }
@@ -614,11 +616,10 @@ pub fn run_app(config: AppConfig) {
     .run();
 }
 
+/// Viewer state that proxies CPU execution to the background worker.
 struct EmulatorState {
-    bus: Bus,
-    console_output: Arc<Mutex<ConsoleOutput>>,
-    display_output: Arc<Mutex<DisplayOutput>>,
-    sprite_output: Arc<Mutex<SpriteOutput>>,
+    cpu: CpuWorker,
+    outputs: CpuWorkerOutputs,
     default_max_cycles: u64,
     status_message: Option<String>,
 }
@@ -629,41 +630,22 @@ impl EmulatorState {
         default_max_cycles: u64,
         personality: &'static Personality,
     ) -> Self {
-        let mut bus = Bus::with_personality(personality);
-        let status_message = if let Some(config) = startup {
-            match run_program_with_config(bus, &config) {
-                Ok((new_bus, msg)) => {
-                    bus = new_bus;
-                    Some(msg)
-                }
-                Err((mut new_bus, msg)) => {
-                    write_console_line(&mut new_bus, &msg);
-                    bus = new_bus;
-                    Some(msg)
-                }
-            }
-        } else {
-            write_console_line(&mut bus, WELCOME_MESSAGE);
-            Some(WELCOME_MESSAGE.to_string())
-        };
-
-        let console_output = bus
-            .console_output_handle()
-            .expect("default console MMIO not found on bus");
-        let display_output = bus
-            .display_output_handle()
-            .expect("display MMIO not found on bus");
-        let sprite_output = bus
-            .sprite_output_handle()
-            .expect("sprite MMIO not found on bus");
+        let (cpu, CpuWorkerInit { outputs, status }) = CpuWorker::spawn(personality, startup)
+            .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
         Self {
-            bus,
-            console_output,
-            display_output,
-            sprite_output,
+            cpu,
+            outputs,
             default_max_cycles,
-            status_message,
+            status_message: status,
+        }
+    }
+
+    /// Append a host message to the shared console surface (best-effort).
+    fn log_console(&self, line: &str) {
+        if let Ok(mut console) = self.outputs.console.lock() {
+            console.write_str(line, 1, 0);
+            console.newline();
         }
     }
 
@@ -671,6 +653,7 @@ impl EmulatorState {
         self.status_message.clone()
     }
 
+    /// Ask the worker to load and execute a program, returning the status text.
     fn run_program(
         &mut self,
         source: ProgramSource,
@@ -683,63 +666,46 @@ impl EmulatorState {
             max_cycles: configured_cycles,
             start,
         };
-        let personality = self.bus.personality();
-        let bus = std::mem::replace(&mut self.bus, Bus::with_personality(personality));
-        match run_program_with_config(bus, &config) {
-            Ok((new_bus, msg)) => {
-                self.bus = new_bus;
-                self.console_output = self
-                    .bus
-                    .console_output_handle()
-                    .expect("default console MMIO not found on bus");
-                self.display_output = self
-                    .bus
-                    .display_output_handle()
-                    .expect("display MMIO not found on bus");
-                self.sprite_output = self
-                    .bus
-                    .sprite_output_handle()
-                    .expect("sprite MMIO not found on bus");
-                self.status_message = Some(msg.clone());
-                Ok(msg)
+        match self.cpu.run_program(config) {
+            Ok(CpuRunReply {
+                summary,
+                status,
+                outputs,
+            }) => {
+                self.outputs = outputs;
+                self.status_message = Some(summary.clone());
+                match status {
+                    CpuRunStatus::Success => Ok(summary),
+                    CpuRunStatus::Failure => Err(summary),
+                }
             }
-            Err((mut new_bus, msg)) => {
-                write_console_line(&mut new_bus, &msg);
-                self.bus = new_bus;
-                self.console_output = self
-                    .bus
-                    .console_output_handle()
-                    .expect("default console MMIO not found on bus");
-                self.display_output = self
-                    .bus
-                    .display_output_handle()
-                    .expect("display MMIO not found on bus");
-                self.sprite_output = self
-                    .bus
-                    .sprite_output_handle()
-                    .expect("sprite MMIO not found on bus");
-                self.status_message = Some(msg.clone());
-                Err(msg)
+            Err(err) => {
+                self.log_console(&err);
+                self.status_message = Some(err.clone());
+                Err(err)
             }
         }
     }
 
     fn snapshot(&self) -> Option<ConsoleSnapshot> {
-        self.console_output
+        self.outputs
+            .console
             .lock()
             .map(|output| output.snapshot())
             .ok()
     }
 
     fn display_snapshot(&self) -> Option<DisplaySnapshot> {
-        self.display_output
+        self.outputs
+            .display
             .lock()
             .map(|output| output.snapshot())
             .ok()
     }
 
     fn sprite_snapshot(&self) -> Option<SpriteSnapshot> {
-        self.sprite_output
+        self.outputs
+            .sprite
             .lock()
             .map(|output| output.snapshot())
             .ok()
@@ -1178,7 +1144,7 @@ fn ui_system(
         });
 }
 
-fn run_program_with_config(
+pub(crate) fn run_program_with_config(
     bus: Bus,
     config: &StartupConfig,
 ) -> Result<(Bus, String), (Bus, String)> {
@@ -1216,7 +1182,7 @@ fn run_program_with_config(
     Ok((bus, summary))
 }
 
-fn write_console_line(bus: &mut Bus, line: &str) {
+pub(crate) fn write_console_line(bus: &mut Bus, line: &str) {
     for ch in line.chars() {
         let screen_code = unicode_to_screen(ch);
         if screen_code == b'\n' {
