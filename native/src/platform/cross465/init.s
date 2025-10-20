@@ -13,47 +13,47 @@
     sta cross465.display.BGCOL
 
     lda #1
-    sta cross465.sprite.SPRSEL
+    sta cross465.sprite.SEL
     lda #0
-    sta cross465.sprite.SPRYHI
-    sta cross465.sprite.SPRXHI
-    sta cross465.sprite.SPRANIM
+    sta cross465.sprite.YHI
+    sta cross465.sprite.XHI
+    sta cross465.sprite.ANIM
     lda #20 ;40
-    sta cross465.sprite.SPRXLO
+    sta cross465.sprite.XLO
     lda #26 ;53
-    sta cross465.sprite.SPRYLO
+    sta cross465.sprite.YLO
 
     lda #1
-    sta cross465.sprite.SPRNUM
+    sta cross465.sprite.NUM
 
     lda #2
-    sta cross465.sprite.SPRSEL
+    sta cross465.sprite.SEL
     lda #0
-    sta cross465.sprite.SPRYHI
-    sta cross465.sprite.SPRXHI
+    sta cross465.sprite.YHI
+    sta cross465.sprite.XHI
     lda #0
-    sta cross465.sprite.SPRANIM
+    sta cross465.sprite.ANIM
     lda #(160+20)   ; 160 + left margin of 20/2
-    sta cross465.sprite.SPRXLO
+    sta cross465.sprite.XLO
     lda #(120+26)   ; 120 + top margin of 20/2
-    sta cross465.sprite.SPRYLO
+    sta cross465.sprite.YLO
     lda #2
-    sta cross465.sprite.SPRNUM
+    sta cross465.sprite.NUM
 
     lda #3
-    sta cross465.sprite.SPRSEL
+    sta cross465.sprite.SEL
     lda #1
-    sta cross465.sprite.SPRXHI
+    sta cross465.sprite.XHI
     lda #1
-    sta cross465.sprite.SPRYHI
-    sta cross465.sprite.SPRANIM
+    sta cross465.sprite.YHI
+    sta cross465.sprite.ANIM
     lda #(320-256+20)
-    sta cross465.sprite.SPRXLO
+    sta cross465.sprite.XLO
     lda #(240-256+26)
-    sta cross465.sprite.SPRYLO
+    sta cross465.sprite.YLO
 
     lda #3
-    sta cross465.sprite.SPRNUM
+    sta cross465.sprite.NUM
 
     brk
 .endsection

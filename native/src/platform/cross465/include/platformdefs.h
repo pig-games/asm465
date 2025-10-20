@@ -24,15 +24,27 @@ cross465 .namespace
         BGCOL       = $DF21
     .endnamespace ; display
     sprite .namespace
-        SPRSEL      = $DF30
-        SPRNUM      = $DF31
-        SPRANIM     = $DF32
-        SPRXHI      = $DF33
-        SPRXLO      = $DF34
-        SPRYHI      = $DF35
-        SPRYLO      = $DF36
-        SPRSCL      = $DF37
+        SEL         = $DF30
+        NUM         = $DF31
+        ANIM        = $DF32
+        XHI         = $DF33
+        XLO         = $DF34
+        YHI         = $DF35
+        YLO         = $DF36
+        SCL         = $DF37
     .endnamespace ; sprite
+    system .namespace
+        IRQ_PENDING  = $DF40  ; R   | Bitmask of pending IRQ sources (masked by enable when the line is asserted). |
+        IRQ_ENABLE   = $DF41  ; R/W | Bitmask selecting which IRQ sources may raise the line. |
+        IRQ_ACK      = $DF42  ; W   | Writing a bit clears the corresponding pending IRQ source. Reads return `IRQ_PENDING`. |
+        IRQ_SOURCE   = $DF43  ; R   | Highest-priority pending IRQ source (lowest set bit), or `0xFF` if none. |
+        NMI_PENDING  = $DF44  ; R   | Bitmask of pending NMI sources. |
+        NMI_ACK      = $DF45  ; W   | Writing a bit clears the corresponding pending NMI source and drops the NMI line. Reads return `NMI_PENDING`. |
+        CTRL_STATUS  = $DF46  ; R   | Debug/status bitfield (e.g., latched line state, overflow counters); reserved bits read as zero. 
+    .endnamespace ; sytem
+    gcontroller .namespace
+
+    .endnamespace ; gcontroller
 .endnamespace ; cross465
 
 
