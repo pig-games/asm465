@@ -42,6 +42,10 @@ The desktop/wasm viewer in `crossdev/asm465` exposes several flags for tuning th
 - Personality selection: `--personality <name>` swaps MMIO layouts (e.g.
   `modern-retro`, `c64-compat`); use
   `--list-personalities` to inspect the built-in options.
+- Interrupt inspector: press the `Show Interrupts` button in the top bar to open a
+  live view of the IRQ/NMI controller. Pending/enabled masks and source-specific
+  flags update in real time so you can confirm host events are reaching the
+  guest.
 
 These flags apply to both the native binary and the wasm wrapper so games/tools can match the behaviour of their target hardware.
 

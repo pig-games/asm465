@@ -92,9 +92,9 @@
     - [x] Timer: implement a host-driven programmable timer module in `cross465/asm465`, expose period registers via MMIO, and verify cadence with tests.
     - [x] Keyboard: surface key state/register interface to the guest, fire interrupts on press/release, and document scan-code expectations.
     - [x] Game controller: mirror the keyboard approach for controller state changes, including hot-plug/idle handling.
-  - [ ] Update developer documentation and tooling
-    - [ ] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
-    - [ ] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
+  - [x] Update developer documentation and tooling
+    - [x] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
+    - [x] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
 
 # rough outlines of additional features, these need to be further explored and documented.
 
