@@ -79,7 +79,7 @@
 
 # rough outlines of additional features, these need to be further explored and documented.
 - [ ] Add interrupt support from the modern UI layer, including display refresh, input, and timer sources (use `cross465/docs/6502_interrupts_overview.md` as reference).
-  - [ ] Capture the desired interrupt model: document which host events map to IRQ vs NMI, how acknowledgement/clearing works, and how personalities declare available sources.
+  - [x] Capture the desired interrupt model: document which host events map to IRQ vs NMI, how acknowledgement/clearing works, and how personalities declare available sources (see `crossdev/asm465/docs/interrupt_model.md`).
   - [ ] Put the CPU on a dedicated worker thread with a controllable run loop (throttle, pause/resume hooks, graceful shutdown) so it can service interrupts continuously.
   - [ ] Introduce a thread-safe interrupt controller that the UI can call into
     - [ ] Provide APIs to raise/clear IRQ and NMI, queue multiple sources, and report pending state back to the CPU core.
