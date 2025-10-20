@@ -12,7 +12,10 @@ use bus::display_mmio::DisplayOutput;
 use bus::personality::Personality;
 use bus::sprite_mmio::SpriteOutput;
 use bus::Bus;
-use crate::{run_program_with_config, write_console_line, StartupConfig, WELCOME_MESSAGE};
+use core6502::RunOutcome;
+use crate::{
+    run_program_with_config, write_console_line, ProgramRunReport, StartupConfig, WELCOME_MESSAGE,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,7 +48,7 @@ impl CpuWorkerOutputs {
 }
 
 /// Outcome of a [`CpuWorker`] command.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuRunStatus {
     Success,
     Failure,
@@ -56,12 +59,14 @@ pub struct CpuRunReply {
     pub summary: String,
     pub status: CpuRunStatus,
     pub outputs: CpuWorkerOutputs,
+    pub outcome: Option<RunOutcome>,
 }
 
 /// Initialisation payload returned when the worker spins up.
 pub struct CpuWorkerInit {
     pub outputs: CpuWorkerOutputs,
     pub status: Option<String>,
+    pub outcome: Option<RunOutcome>,
 }
 
 #[derive(Clone, Copy)]
@@ -142,7 +147,8 @@ mod native {
             startup: Option<StartupConfig>,
             status: Arc<CpuWorkerStatus>,
         ) -> (Self, CpuWorkerInit) {
-            let (cpu, outputs, initial_status) = initialize_cpu(personality, startup);
+            let (cpu, outputs, initial_status, initial_outcome) =
+                initialize_cpu(personality, startup);
             status.running.store(true, Ordering::SeqCst);
             status.paused.store(false, Ordering::SeqCst);
             let inner = Self {
@@ -156,6 +162,7 @@ mod native {
             let init = CpuWorkerInit {
                 outputs,
                 status: initial_status,
+                outcome: initial_outcome,
             };
             (inner, init)
         }
@@ -241,11 +248,10 @@ mod native {
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
             match run_program_with_config(Bus::with_personality(self.personality), &config) {
-                Ok((bus, summary)) => Ok(self.finish_program(bus, summary, CpuRunStatus::Success)),
-                Err((mut bus, summary)) => {
-                    write_console_line(&mut bus, &summary);
-                    Ok(self.finish_program(bus, summary, CpuRunStatus::Failure))
+                Ok((bus, report)) => {
+                    Ok(self.finish_program(bus, report, CpuRunStatus::Success))
                 }
+                Err((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Failure)),
             }
         }
 
@@ -253,16 +259,22 @@ mod native {
         fn finish_program(
             &mut self,
             bus: Bus,
-            summary: String,
+            report: ProgramRunReport,
             status: CpuRunStatus,
         ) -> CpuRunReply {
+            let ProgramRunReport { outcome, message } = report;
+            let mut bus = bus;
+            if status == CpuRunStatus::Failure {
+                write_console_line(&mut bus, &message);
+            }
             let outputs = CpuWorkerOutputs::new(&bus);
             self.cpu = Cpu::new(bus);
             self.cpu.reset();
             CpuRunReply {
-                summary,
+                summary: message,
                 status,
                 outputs,
+                outcome,
             }
         }
     }
@@ -271,22 +283,29 @@ mod native {
     fn initialize_cpu(
         personality: &'static Personality,
         startup: Option<StartupConfig>,
-    ) -> (Cpu, CpuWorkerOutputs, Option<String>) {
+    ) -> (
+        Cpu,
+        CpuWorkerOutputs,
+        Option<String>,
+        Option<RunOutcome>,
+    ) {
         match startup {
             Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
             {
-                Ok((bus, summary)) => {
+                Ok((bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
                     let outputs = CpuWorkerOutputs::new(&bus);
                     let mut cpu = Cpu::new(bus);
                     cpu.reset();
-                    (cpu, outputs, Some(summary))
+                    (cpu, outputs, Some(message), outcome)
                 }
-                Err((mut bus, summary)) => {
-                    write_console_line(&mut bus, &summary);
+                Err((mut bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
+                    write_console_line(&mut bus, &message);
                     let outputs = CpuWorkerOutputs::new(&bus);
                     let mut cpu = Cpu::new(bus);
                     cpu.reset();
-                    (cpu, outputs, Some(summary))
+                    (cpu, outputs, Some(message), outcome)
                 }
             },
             None => {
@@ -295,7 +314,7 @@ mod native {
                 let outputs = CpuWorkerOutputs::new(&bus);
                 let mut cpu = Cpu::new(bus);
                 cpu.reset();
-                (cpu, outputs, Some(WELCOME_MESSAGE.to_string()))
+                (cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None)
             }
         }
     }
@@ -398,33 +417,41 @@ mod wasm {
             personality: &'static Personality,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
-            let (bus, outputs, status) = initialize_bus(personality, startup);
+            let (bus, outputs, status, outcome) = initialize_bus(personality, startup);
             Ok((
                 Self { bus, personality },
-                CpuWorkerInit { outputs, status },
+                CpuWorkerInit {
+                    outputs,
+                    status,
+                    outcome,
+                },
             ))
         }
 
         /// Run the supplied program immediately on the single-threaded executor.
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
             match run_program_with_config(Bus::with_personality(self.personality), &config) {
-                Ok((bus, summary)) => {
+                Ok((bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
                     let outputs = CpuWorkerOutputs::new(&bus);
                     self.bus = bus;
                     Ok(CpuRunReply {
-                        summary,
+                        summary: message,
                         status: CpuRunStatus::Success,
                         outputs,
+                        outcome,
                     })
                 }
-                Err((mut bus, summary)) => {
-                    write_console_line(&mut bus, &summary);
+                Err((mut bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
+                    write_console_line(&mut bus, &message);
                     let outputs = CpuWorkerOutputs::new(&bus);
                     self.bus = bus;
                     Ok(CpuRunReply {
-                        summary,
+                        summary: message,
                         status: CpuRunStatus::Failure,
                         outputs,
+                        outcome,
                     })
                 }
             }
@@ -463,25 +490,37 @@ mod wasm {
     fn initialize_bus(
         personality: &'static Personality,
         startup: Option<StartupConfig>,
-    ) -> (Bus, CpuWorkerOutputs, Option<String>) {
+    ) -> (
+        Bus,
+        CpuWorkerOutputs,
+        Option<String>,
+        Option<RunOutcome>,
+    ) {
         match startup {
             Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
             {
-                Ok((bus, summary)) => {
+                Ok((bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
                     let outputs = CpuWorkerOutputs::new(&bus);
-                    (bus, outputs, Some(summary))
+                    (bus, outputs, Some(message), outcome)
                 }
-                Err((mut bus, summary)) => {
-                    write_console_line(&mut bus, &summary);
+                Err((mut bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
+                    write_console_line(&mut bus, &message);
                     let outputs = CpuWorkerOutputs::new(&bus);
-                    (bus, outputs, Some(summary))
+                    (bus, outputs, Some(message), outcome)
                 }
             },
             None => {
                 let mut bus = Bus::with_personality(personality);
                 write_console_line(&mut bus, WELCOME_MESSAGE);
                 let outputs = CpuWorkerOutputs::new(&bus);
-                (bus, outputs, Some(WELCOME_MESSAGE.to_string()))
+                (
+                    bus,
+                    outputs,
+                    Some(WELCOME_MESSAGE.to_string()),
+                    None,
+                )
             }
         }
     }

@@ -22,7 +22,7 @@ use bus::display_mmio::DisplaySnapshot;
 use bus::personality::{self, Personality};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
-use core6502::Cpu;
+use core6502::{Cpu, RunLimit, RunOutcome};
 
 mod cpu_worker;
 use cpu_worker::{CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs};
@@ -201,6 +201,12 @@ pub struct StartupConfig {
     pub source: ProgramSource,
     pub max_cycles: u64,
     pub start: Option<u16>,
+}
+
+/// Details about a bounded CPU run triggered by the host.
+pub(crate) struct ProgramRunReport {
+    pub outcome: Option<RunOutcome>,
+    pub message: String,
 }
 
 /// Command variants exchanged with the external service API.
@@ -622,6 +628,7 @@ struct EmulatorState {
     outputs: CpuWorkerOutputs,
     default_max_cycles: u64,
     status_message: Option<String>,
+    last_outcome: Option<RunOutcome>,
 }
 
 impl EmulatorState {
@@ -630,14 +637,16 @@ impl EmulatorState {
         default_max_cycles: u64,
         personality: &'static Personality,
     ) -> Self {
-        let (cpu, CpuWorkerInit { outputs, status }) = CpuWorker::spawn(personality, startup)
-            .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
+        let (cpu, CpuWorkerInit { outputs, status, outcome }) =
+            CpuWorker::spawn(personality, startup)
+                .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
         Self {
             cpu,
             outputs,
             default_max_cycles,
             status_message: status,
+            last_outcome: outcome,
         }
     }
 
@@ -651,6 +660,11 @@ impl EmulatorState {
 
     fn status_message(&self) -> Option<String> {
         self.status_message.clone()
+    }
+
+    #[allow(dead_code)]
+    fn last_outcome(&self) -> Option<RunOutcome> {
+        self.last_outcome
     }
 
     /// Ask the worker to load and execute a program, returning the status text.
@@ -671,9 +685,11 @@ impl EmulatorState {
                 summary,
                 status,
                 outputs,
+                outcome,
             }) => {
                 self.outputs = outputs;
                 self.status_message = Some(summary.clone());
+                self.last_outcome = outcome;
                 match status {
                     CpuRunStatus::Success => Ok(summary),
                     CpuRunStatus::Failure => Err(summary),
@@ -682,6 +698,7 @@ impl EmulatorState {
             Err(err) => {
                 self.log_console(&err);
                 self.status_message = Some(err.clone());
+                self.last_outcome = None;
                 Err(err)
             }
         }
@@ -1147,17 +1164,28 @@ fn ui_system(
 pub(crate) fn run_program_with_config(
     bus: Bus,
     config: &StartupConfig,
-) -> Result<(Bus, String), (Bus, String)> {
+) -> Result<(Bus, ProgramRunReport), (Bus, ProgramRunReport)> {
     let label = config.source.label();
     let data = match config.source.load_bytes() {
         Ok(bytes) => bytes,
-        Err(err) => return Err((bus, err)),
+        Err(err) => {
+            return Err((
+                bus,
+                ProgramRunReport {
+                    outcome: None,
+                    message: err,
+                },
+            ))
+        }
     };
 
     if data.len() < 2 {
         return Err((
             bus,
-            format!("Program {label} is too small to contain a load address"),
+            ProgramRunReport {
+                outcome: None,
+                message: format!("Program {label} is too small to contain a load address"),
+            },
         ));
     }
 
@@ -1170,16 +1198,26 @@ pub(crate) fn run_program_with_config(
 
     let mut cpu = Cpu::new(bus);
     cpu.reset();
-    cpu.run_for(config.max_cycles);
-    let cycles = cpu.cycles;
+    let outcome = cpu.run_for(config.max_cycles);
     let bus = cpu.bus;
 
+    let limit_desc = match outcome.limit {
+        RunLimit::CycleBudget => "cycle budget",
+        RunLimit::Brk => "BRK",
+    };
+
     let summary = format!(
-        "Loaded {label} at ${:04X} and ran for {} cycles (start=${:04X})",
-        load_addr, cycles, start
+        "Loaded {label} at ${:04X} and ran for {} cycles (reason: {limit_desc}, start=${:04X})",
+        load_addr, outcome.cycles, start
     );
 
-    Ok((bus, summary))
+    Ok((
+        bus,
+        ProgramRunReport {
+            outcome: Some(outcome),
+            message: summary,
+        },
+    ))
 }
 
 pub(crate) fn write_console_line(bus: &mut Bus, line: &str) {

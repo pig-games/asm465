@@ -123,6 +123,23 @@ pub struct Cpu {
     pub bus: Bus,
 }
 
+/// Reason why a bounded CPU run ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunLimit {
+    /// The requested cycle budget was exhausted.
+    CycleBudget,
+    /// Execution encountered a `BRK` instruction.
+    Brk,
+}
+
+/// Summary of a bounded CPU run, including the number of cycles executed and
+/// why the loop ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunOutcome {
+    pub cycles: u64,
+    pub limit: RunLimit,
+}
+
 impl Cpu {
     /// Construct a CPU bound to the provided [`Bus`].
     ///
@@ -821,19 +838,26 @@ impl Cpu {
     /// Execute instructions until either `max_cycles` have elapsed or a `BRK`
     /// opcode is encountered at the current program counter.
     ///
-    /// The cycle count accumulated by [`step`](Cpu::step) is added to
-    /// [`Cpu::cycles`], allowing callers to measure aggregate CPU time without
-    /// manually summing return values.
-    pub fn run_for(&mut self, max_cycles: u64) {
+    /// Returns a [`RunOutcome`] summarising how many cycles were executed and
+    /// which condition caused the loop to finish. The total cycle counter stored
+    /// on the CPU is updated as well.
+    pub fn run_for(&mut self, max_cycles: u64) -> RunOutcome {
         let mut spent = 0u64;
+        let mut limit = RunLimit::CycleBudget;
+        let start_cycles = self.cycles;
         while spent < max_cycles {
             let opcode = self.bus.read(self.pc);
             let c = self.step() as u64;
             spent += c;
             self.cycles += c;
             if opcode == 0x00 {
+                limit = RunLimit::Brk;
                 break;
             }
+        }
+        RunOutcome {
+            cycles: self.cycles.saturating_sub(start_cycles),
+            limit,
         }
     }
 }

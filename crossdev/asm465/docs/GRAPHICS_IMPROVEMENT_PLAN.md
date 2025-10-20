@@ -84,7 +84,7 @@
   - [x] Introduce a thread-safe interrupt controller that the UI can call into
     - [x] Provide APIs to raise/clear IRQ and NMI, queue multiple sources, and report pending state back to the CPU core (see `crossdev/cross465/bus/src/interrupts.rs`).
     - [x] Cover the controller with unit tests to confirm edge-triggered NMIs and level-triggered IRQs behave correctly.
-  - [ ] Expose CPU run-batch outcomes (cycle budget vs. `BRK`, etc.) to the host so debugger scenarios can resume execution after traps.
+  - [x] Expose CPU run-batch outcomes (cycle budget vs. `BRK`, etc.) to the host so debugger scenarios can resume execution after traps (see `ProgramRunReport` in `crossdev/asm465/src/lib.rs`).
   - [ ] Extend personality descriptors with interrupt definitions
     - [ ] Allow personalities to register named interrupt sources, associate them with IRQ/NMI lines, and expose configuration knobs (priority, enable bits, default masks).
     - [ ] Ensure personalities can subscribe to host-side producers (display loop, input manager, timers) and translate those events into controller calls.

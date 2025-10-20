@@ -22,7 +22,11 @@ struct Args {
     start: Option<u16>,
 }
 
-fn run_program(data: &[u8], max_cycles: u64, start_override: Option<u16>) -> anyhow::Result<Cpu> {
+fn run_program(
+    data: &[u8],
+    max_cycles: u64,
+    start_override: Option<u16>,
+) -> anyhow::Result<(Cpu, core6502::RunOutcome)> {
     if data.len() < 2 {
         anyhow::bail!("PRG too small");
     }
@@ -37,14 +41,14 @@ fn run_program(data: &[u8], max_cycles: u64, start_override: Option<u16>) -> any
 
     let mut cpu = Cpu::new(bus);
     cpu.reset();
-    cpu.run_for(max_cycles);
-    Ok(cpu)
+    let outcome = cpu.run_for(max_cycles);
+    Ok((cpu, outcome))
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let data = fs::read(&args.prg)?;
-    let _cpu = run_program(&data, args.max_cycles, args.start)?;
+    let (_cpu, _outcome) = run_program(&data, args.max_cycles, args.start)?;
     Ok(())
 }
 
@@ -56,9 +60,11 @@ mod tests {
     fn honors_cycle_budget() {
         // Load address $0600 followed by NOP, NOP, BRK.
         let prg = [0x00, 0x06, 0xEA, 0xEA, 0x00];
-        let cpu = run_program(&prg, 4, None).expect("runner executes program");
+        let (cpu, outcome) = run_program(&prg, 4, None).expect("runner executes program");
 
         assert_eq!(cpu.cycles, 4);
+        assert_eq!(outcome.limit, core6502::RunLimit::CycleBudget);
+        assert_eq!(outcome.cycles, 4);
         // Two NOPs executed; PC should now point to the third byte ($0602).
         assert_eq!(cpu.pc, 0x0602);
     }

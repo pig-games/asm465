@@ -1,5 +1,5 @@
 use bus::Bus;
-use core6502::Cpu;
+use core6502::{Cpu, RunLimit};
 
 fn cpu_with_program(code: &[u8], load_addr: u16) -> Cpu {
     let mut bus = Bus::new();
@@ -27,8 +27,10 @@ fn run_for_executes_brk_instruction() {
     cpu.bus.write(0xFFFE, 0x00);
     cpu.bus.write(0xFFFF, 0x40); // BRK should vector to $4000.
 
-    cpu.run_for(10);
+    let outcome = cpu.run_for(10);
 
+    assert_eq!(outcome.limit, RunLimit::Brk);
+    assert_eq!(outcome.cycles, 7); // BRK consumes 7 cycles.
     assert_eq!(cpu.pc, 0x4000);
     assert_eq!(cpu.sp, 0xFA);
     let mem = cpu.bus.mem_mut();

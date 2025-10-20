@@ -57,6 +57,12 @@ The controller sits between host producers (UI, timers) and the 6502 core. It
 must be thread-safe so host systems can signal interrupts from the Bevy thread
 while the CPU runs on its own worker thread (see follow-up tasks).
 
+When the host requests a bounded CPU run (e.g. after loading a PRG) the worker
+now reports whether the batch stopped because it exhausted the cycle budget or
+because it executed a `BRK`. The outcome is surfaced via the
+`ProgramRunReport`/`RunOutcome` types so debugger tooling can pause on traps and
+resume execution.
+
 ### Responsibilities
 - Keep per-source state: enabled flag, pending bit, trigger mode (edge/level),
   and target line (IRQ/NMI).
@@ -143,8 +149,6 @@ from generating new edges (NMI), mirroring real 6502-era hardware behaviour.
 ## Outstanding Considerations (covered in later steps)
 - CPU worker thread must poll the controller at instruction cadence and honour
   pause/throttle hooks.
-- The worker should report why execution batches stopped (e.g. `BRK` vs.
-  cycle budget) so the host can resume after debugger traps.
 - Timer module design (reload values, scaling relative to host time) will be
   specified during implementation.
 - Input MMIO layout (key matrix vs. FIFO) needs a follow-up doc; the interrupt
