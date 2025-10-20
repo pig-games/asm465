@@ -77,7 +77,7 @@
   - [x] Provide scaffold personalities (e.g. C64 mirror, modern 2D) with documentation for their MMIO ranges.
   - [x] Update docs/tests to cover personality selection and ensure MMIO modules initialise correctly per personality.
 
-- [ ] Add interrupt support from the modern UI layer, including display refresh, input, and timer sources (use `cross465/docs/6502_interrupts_overview.md` as reference).
+- [x] Add interrupt support from the modern UI layer, including display refresh, input, and timer sources (use `cross465/docs/6502_interrupts_overview.md` as reference).
   - [x] Capture the desired interrupt model: document which host events map to IRQ vs NMI, how acknowledgement/clearing works, and how personalities declare available sources (see `crossdev/asm465/docs/interrupt_model.md`).
   - [x] Put the CPU on a dedicated worker thread with a controllable run loop (throttle, pause/resume hooks, graceful shutdown) so it can service interrupts continuously.
   - [x] Introduce a thread-safe interrupt controller that the UI can call into
@@ -95,6 +95,11 @@
   - [x] Update developer documentation and tooling
     - [x] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
     - [x] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
+  - [ ] Integrate interrupt servicing into the 6502 core
+    - [ ] Teach the CPU worker/core to poll the shared `InterruptController` each step and assert IRQ/NMI sequences when pending.
+    - [ ] Make IRQ/NMI handling push PC/status to the stack and jump via `$FFFA/$FFFB` or `$FFFE/$FFFF` vectors.
+    - [ ] Ensure controller bits are cleared/acked appropriately (guest writes still honoured).
+    - [x] Surface the interrupt handling functionality to a `system_mmio` MMIO module.
 
 # rough outlines of additional features, these need to be further explored and documented.
 

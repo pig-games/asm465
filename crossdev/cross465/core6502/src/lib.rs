@@ -121,6 +121,8 @@ pub struct Cpu {
     pub p: P,
     pub cycles: u64,
     pub bus: Bus,
+    pending_nmi: bool,
+    pending_irq: bool,
 }
 
 /// Reason why a bounded CPU run ended.
@@ -156,6 +158,8 @@ impl Cpu {
             p: P::from_bits_truncate(0x24),
             cycles: 0,
             bus,
+            pending_nmi: false,
+            pending_irq: false,
         }
     }
 
@@ -846,6 +850,7 @@ impl Cpu {
         let mut limit = RunLimit::CycleBudget;
         let start_cycles = self.cycles;
         while spent < max_cycles {
+            self.poll_interrupts();
             let opcode = self.bus.read(self.pc);
             let c = self.step() as u64;
             spent += c;
@@ -858,6 +863,19 @@ impl Cpu {
         RunOutcome {
             cycles: self.cycles.saturating_sub(start_cycles),
             limit,
+        }
+    }
+
+    fn poll_interrupts(&mut self) {
+        let controller = self.bus.interrupt_controller();
+        let snapshot = controller.snapshot();
+        if snapshot.nmi_edge_latched {
+            self.pending_nmi = true;
+        }
+        if snapshot.irq_line && !self.p.contains(P::I) {
+            self.pending_irq = true;
+        } else if !snapshot.irq_line {
+            self.pending_irq = false;
         }
     }
 }
