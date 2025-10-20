@@ -67,6 +67,11 @@ while the CPU runs on its own worker thread (see follow-up tasks).
 - Allow the CPU core to query pending masks efficiently (e.g., through atomic
   bitfields) when deciding whether to service an interrupt.
 
+The initial implementation lives in `crossdev/cross465/bus/src/interrupts.rs`.
+It exposes `InterruptController` helpers that use atomics so the UI thread and
+the CPU worker can concurrently raise/clear sources. Unit tests in the same file
+cover the edge/level semantics for NMI/IRQ.
+
 ### Register Map (proposed at `$DF40–$DF47`)
 
 | Address | Name | Access | Description |

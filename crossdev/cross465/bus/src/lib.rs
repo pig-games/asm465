@@ -34,6 +34,7 @@
 
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod display_mmio; // expose display device as bus::display_mmio::*
+pub mod interrupts; // expose shared interrupt controller helpers
 pub mod personality; // personas describing MMIO layouts
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod utils; // expose helpers as bus::utils::*
