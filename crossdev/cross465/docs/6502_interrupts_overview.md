@@ -307,3 +307,68 @@ slot_irq
 
 These patterns apply across all 6502-based systems, including your asm465 targets such as the Mega65, Ultimate64, and modern cross-platform environments.
 
+---
+
+## Sprite Collision Detection: Approaches + Bevy (Host‑side)
+
+This section complements the platform notes with a practical overview of sprite collision strategies, and adds a **modern host‑side** option using the **Rust Bevy** game framework. The goal is to keep your 6502 code lean (use hardware where available) while optionally off‑loading richer collision logic to the host (for tools, editors, simulators, or cross‑run modes in asm465).
+
+### Summary of Platform‑Native Approaches
+
+**Commodore 64 (VIC‑II)**
+
+- **Hardware latches**: `$D01E` (sprite↔sprite), `$D01F` (sprite↔background). Fast trigger; doesn’t identify *which* other sprite.
+- **Hybrid**: Latch as coarse signal → software AABB/pixel mask to disambiguate.
+- **Tile/cell mapping**: Map sprite bounds to char cells for cheap terrain contacts.
+- **Multiplexing note**: If sprites are reused per raster band, sample latches per band and track time slices.
+
+**Atari 8‑bit (ANTIC/GTIA PMG)**
+
+- **Rich hardware collision latches** (players/missiles ↔ playfield and ↔ each other); clear via `HITCLR`.
+- **Hybrid**: Use latches for class‑level hit info → refine among active entities.
+- **Banding via DLI**: Associate collisions with per‑band object IDs before clearing.
+
+**Apple II**
+
+- **Software only**: AABB → (optional) swept AABB → per‑pixel mask tests; often backed by a tile/cell occupancy grid and/or off‑screen test buffer.
+
+### Host‑Side Collision with **Bevy** (Rust)
+
+When running in the cross/modern target (e.g., asm465’s simulator or a host‑driven tool), you can model sprite collisions using Bevy’s ECS. Two common approaches:
+
+1. **Manual AABB in ECS systems** (simple, zero deps)
+
+- Maintain components: `Transform` (pos), `Velocity`, `Hitbox(AABB)`, `SpriteId`, `PlatformTag`.
+- Broad‑phase: spatial grid (hash map from cell→entity list) or sweep‑and‑prune on X; then narrow‑phase AABB or per‑pixel mask.
+- Emit Bevy `CollisionEvent`s; optionally mirror them back to the 6502 world (e.g., poke `$D01E/$D01F` in an emulator or notify a bridge).
+
+2. **Physics plugin** (recommended for richer needs)
+
+- Use **Rapier** via `bevy_rapier2d`. You get broad‑phase, contact filters, continuous collision detection, and events out of the box.
+- Map each 6502 sprite/entity to a Rapier collider; drive positions from hardware registers (read/bridge) each tick; collect `CollisionEvent`s and translate to the platform’s semantics.
+
+#### Data Sync Pattern (6502 ↔ Bevy)
+
+1. **Read** hardware (or emulator) sprite positions/enable bits each frame.
+2. **Update** Bevy entities’ `Transform`/`Hitbox` accordingly.
+3. **Run** collision systems/physics.
+4. **Emit** events back to the 6502 side:
+   - C64: if sprite i collided, set bit i in a software mirror and, if you’re emulating hardware, also set `$D01E/$D01F` (and remember to clear on ISR read).
+   - Atari: synthesize GTIA‑style class collisions and gate through a `HITCLR` analogue.
+   - Apple II: directly call into the game logic.
+
+#### Minimal Bevy example (manual AABB)
+
+```rust
+use bevy::prelude::*;
+
+#[derive(Component)]
+struct Hitbox { half: Vec2 } // half-size AABB
+#[derive(Component)]
+struct SpriteId(u8); // platform sprite index (e.g., VIC id)
+
+fn aabb_overlap(a_pos: Vec2, a: &Hitbox, b_pos: Vec2, b: &Hitbox) -> bool {
+    let dx = (a_pos.x - b_pos.x).abs();
+    let dy = (a_pos.y - b_pos.y).abs();
+    dx <= (a.half.x + b.half.x) && dy <= (a.half.y +
+```
