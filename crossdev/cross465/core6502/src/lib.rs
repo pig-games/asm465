@@ -440,6 +440,10 @@ impl Cpu {
     pub fn step(&mut self) -> u32 {
         use AddrMode::*;
         use Op::*;
+        self.poll_interrupts();
+        if let Some(cycles) = self.service_pending_interrupt() {
+            return cycles;
+        }
         let opcode = self.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         let e = &TABLE[opcode as usize];
@@ -878,6 +882,33 @@ impl Cpu {
             self.pending_irq = false;
         }
     }
+
+    fn service_pending_interrupt(&mut self) -> Option<u32> {
+        if self.pending_nmi {
+            self.pending_nmi = false;
+            self.bus.interrupt_controller().take_nmi_edge();
+            self.push((self.pc >> 8) as u8);
+            self.push((self.pc & 0xFF) as u8);
+            let status = (self.p.bits() & !P::B.bits()) | P::U.bits();
+            self.push(status);
+            self.p.insert(P::I);
+            self.pc = self.read16(0xFFFA);
+            return Some(7);
+        }
+
+        if self.pending_irq && !self.p.contains(P::I) {
+            self.pending_irq = false;
+            self.push((self.pc >> 8) as u8);
+            self.push((self.pc & 0xFF) as u8);
+            let status = (self.p.bits() & !P::B.bits()) | P::U.bits();
+            self.push(status);
+            self.p.insert(P::I);
+            self.pc = self.read16(0xFFFE);
+            return Some(7);
+        }
+
+        None
+    }
 }
 
 // Build the full official 6502 opcode table (undocumented opcodes default to NOP).
@@ -1081,4 +1112,92 @@ const fn build_table() -> [Entry; 256] {
     t[0xFE] = e(INC, AbsX, 7, false);
 
     t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bus::interrupts::InterruptController;
+    use bus::personality;
+    use std::sync::Arc;
+
+    fn cpu_with_program(program: &[u8], start: u16) -> (Cpu, Arc<InterruptController>) {
+        let mut bus = Bus::with_personality(&personality::MODERN_RETRO);
+        for (offset, byte) in program.iter().enumerate() {
+            bus.write(start.wrapping_add(offset as u16), *byte);
+        }
+        bus.set_reset_vector(start);
+        let controller = bus.interrupt_controller();
+        let mut cpu = Cpu::new(bus);
+        cpu.reset();
+        (cpu, controller)
+    }
+
+    #[test]
+    fn services_nmi_and_jumps_to_vector() {
+        let nmi_target = 0x0400;
+        let start = 0x0200u16;
+        let (mut cpu, controller) = cpu_with_program(&[0xEA], start);
+        cpu.bus.write(0xFFFA, (nmi_target & 0xFF) as u8);
+        cpu.bus.write(0xFFFB, (nmi_target >> 8) as u8);
+
+        let initial_sp = cpu.sp;
+        let pc_before = cpu.pc;
+        let i_before = cpu.p.contains(P::I);
+        controller.raise_nmi(1);
+
+        cpu.step();
+        assert_eq!(cpu.pc, nmi_target);
+        assert!(cpu.p.contains(P::I));
+
+        let sp_after = cpu.sp;
+        assert_eq!(sp_after, initial_sp.wrapping_sub(3));
+        let status_addr = 0x0100u16 | sp_after.wrapping_add(1) as u16;
+        let pcl_addr = 0x0100u16 | sp_after.wrapping_add(2) as u16;
+        let pch_addr = 0x0100u16 | sp_after.wrapping_add(3) as u16;
+        let stored_pc = ((cpu.bus.read(pch_addr) as u16) << 8) | cpu.bus.read(pcl_addr) as u16;
+        let status_pushed = cpu.bus.read(status_addr);
+        assert_eq!(status_pushed & P::U.bits(), P::U.bits());
+        if i_before {
+            assert_eq!(status_pushed & P::I.bits(), P::I.bits());
+        } else {
+            assert_eq!(status_pushed & P::I.bits(), 0);
+        }
+        assert!(stored_pc == pc_before || stored_pc == pc_before.wrapping_add(1));
+
+        assert!(!controller.take_nmi_edge());
+    }
+
+    #[test]
+    fn services_irq_when_enabled() {
+        let irq_target = 0x0450;
+        let start = 0x0300u16;
+        let (mut cpu, controller) = cpu_with_program(&[0xEA, 0xEA], start);
+        cpu.bus.write(0xFFFE, (irq_target & 0xFF) as u8);
+        cpu.bus.write(0xFFFF, (irq_target >> 8) as u8);
+
+        controller.set_irq_enable(1);
+        controller.raise_irq(1);
+        cpu.p.remove(P::I);
+
+        let initial_sp = cpu.sp;
+        let pc_before = cpu.pc;
+        cpu.step();
+        assert_eq!(cpu.pc, irq_target);
+        assert!(cpu.p.contains(P::I));
+
+        let sp_after = cpu.sp;
+        assert_eq!(sp_after, initial_sp.wrapping_sub(3));
+        let status_addr = 0x0100u16 | sp_after.wrapping_add(1) as u16;
+        let pcl_addr = 0x0100u16 | sp_after.wrapping_add(2) as u16;
+        let pch_addr = 0x0100u16 | sp_after.wrapping_add(3) as u16;
+        let stored_pc = ((cpu.bus.read(pch_addr) as u16) << 8) | cpu.bus.read(pcl_addr) as u16;
+        let status_pushed = cpu.bus.read(status_addr);
+        assert_eq!(status_pushed & P::U.bits(), P::U.bits());
+        assert_eq!(status_pushed & P::I.bits(), 0);
+        assert!(stored_pc == pc_before || stored_pc == pc_before.wrapping_add(1));
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending & 1, 1);
+    }
 }
