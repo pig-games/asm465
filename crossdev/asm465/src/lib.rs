@@ -10,19 +10,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::prelude::*;
 use bevy::input::gamepad::GamepadEvent;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
+use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::render::mesh::shape::Quad;
 use bevy::render::mesh::Mesh;
 use bevy::sprite::{ColorMaterial, MaterialMesh2dBundle, Mesh2dHandle};
+use bevy::time::{Timer, TimerMode};
 use bevy::window::PrimaryWindow;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
-use bevy::time::{Timer, TimerMode};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::interrupts::{InterruptController, InterruptSnapshot};
@@ -535,7 +535,8 @@ pub fn run_app(config: AppConfig) {
 
     #[allow(unused_mut)]
     let mut emulator = EmulatorState::new(startup, default_max_cycles, personality);
-    let interrupt_bindings = InterruptBindings::from_personality(emulator.interrupts(), personality);
+    let interrupt_bindings =
+        InterruptBindings::from_personality(emulator.interrupts(), personality);
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
@@ -562,7 +563,9 @@ pub fn run_app(config: AppConfig) {
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
         if has_timer {
-            app.insert_resource(TimerInterruptState::new(Duration::from_secs_f32(1.0 / 60.0)));
+            app.insert_resource(TimerInterruptState::new(Duration::from_secs_f32(
+                1.0 / 60.0,
+            )));
         }
         app.insert_resource(bindings);
     }
@@ -664,9 +667,15 @@ impl EmulatorState {
         default_max_cycles: u64,
         personality: &'static Personality,
     ) -> Self {
-        let (cpu, CpuWorkerInit { outputs, status, outcome }) =
-            CpuWorker::spawn(personality, startup)
-                .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
+        let (
+            cpu,
+            CpuWorkerInit {
+                outputs,
+                status,
+                outcome,
+            },
+        ) = CpuWorker::spawn(personality, startup)
+            .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
         let interrupts = outputs.interrupts.clone();
 
@@ -998,7 +1007,7 @@ struct UiState {
     status: Option<String>,
     console_open: bool,
     bridge_connected: Option<bool>,
-    interrupts_open: bool,
+    active_tab: ConsoleTab,
 }
 
 impl UiState {
@@ -1007,9 +1016,15 @@ impl UiState {
             status,
             console_open: true,
             bridge_connected: None,
-            interrupts_open: false,
+            active_tab: ConsoleTab::Console,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsoleTab {
+    Console,
+    Interrupts,
 }
 
 #[derive(Component)]
@@ -1338,18 +1353,10 @@ fn ui_system(
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let interrupts_label = if ui_state.interrupts_open {
-                        "Hide Interrupts"
-                    } else {
-                        "Show Interrupts"
-                    };
-                    if ui.button(interrupts_label).clicked() {
-                        ui_state.interrupts_open = !ui_state.interrupts_open;
-                    }
                     let toggle_label = if ui_state.console_open {
-                        "Hide Console"
+                        "Hide Developer Tools"
                     } else {
-                        "Show Console"
+                        "Show Developer Tools"
                     };
                     if ui.button(toggle_label).clicked() {
                         ui_state.console_open = !ui_state.console_open;
@@ -1406,54 +1413,63 @@ fn ui_system(
 
     egui::TopBottomPanel::bottom("console_panel")
         .resizable(true)
-        .default_height(220.0)
-        .min_height(120.0)
+        .default_height(260.0)
+        .min_height(160.0)
         .show_animated(ctx, ui_state.console_open, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    if let Some(snapshot) = &console_snapshot {
-                        let job = console_layout_job(snapshot);
-                        ui.label(job);
-                    } else {
-                        ui.label("Console unavailable");
-                    }
-                });
-        });
-
-    if ui_state.interrupts_open {
-        egui::Window::new("Interrupt Inspector")
-            .resizable(true)
-            .open(&mut ui_state.interrupts_open)
-            .show(ctx, |ui| {
-                if let Some(bindings) = bindings.as_ref() {
-                    let snapshot = bindings.snapshot();
-                    ui.label(format!(
-                        "IRQ: pending=0x{pending:08X} enabled=0x{enabled:08X} line={}",
-                        snapshot.irq_line,
-                        pending = snapshot.irq_pending,
-                        enabled = snapshot.irq_enabled
-                    ));
-                    ui.label(format!(
-                        "NMI: pending=0x{pending:08X} enabled=0x{enabled:08X} edge={} line={}",
-                        snapshot.nmi_line,
-                        snapshot.nmi_edge_latched,
-                        pending = snapshot.nmi_pending,
-                        enabled = snapshot.nmi_enabled
-                    ));
-
-                    ui.separator();
-                    interrupt_row(ui, "frame_start", bindings.frame_start, &snapshot, true);
-                    interrupt_row(ui, "frame_end", bindings.frame_end, &snapshot, false);
-                    interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
-                    interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
-                    interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
-                } else {
-                    ui.label("Interrupt bindings unavailable.");
-                }
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut ui_state.active_tab, ConsoleTab::Console, "Console");
+                ui.selectable_value(
+                    &mut ui_state.active_tab,
+                    ConsoleTab::Interrupts,
+                    "Interrupts",
+                );
             });
-    }
+
+            ui.separator();
+
+            match ui_state.active_tab {
+                ConsoleTab::Console => {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            if let Some(snapshot) = &console_snapshot {
+                                let job = console_layout_job(snapshot);
+                                ui.label(job);
+                            } else {
+                                ui.label("Console unavailable");
+                            }
+                        });
+                }
+                ConsoleTab::Interrupts => {
+                    if let Some(bindings) = bindings.as_ref() {
+                        let snapshot = bindings.snapshot();
+                        ui.label(format!(
+                            "IRQ: pending=0x{pending:08X} enabled=0x{enabled:08X} line={}",
+                            snapshot.irq_line,
+                            pending = snapshot.irq_pending,
+                            enabled = snapshot.irq_enabled
+                        ));
+                        ui.label(format!(
+                            "NMI: pending=0x{pending:08X} enabled=0x{enabled:08X} edge={} line={}",
+                            snapshot.nmi_line,
+                            snapshot.nmi_edge_latched,
+                            pending = snapshot.nmi_pending,
+                            enabled = snapshot.nmi_enabled
+                        ));
+
+                        ui.separator();
+                        interrupt_row(ui, "frame_start", bindings.frame_start, &snapshot, true);
+                        interrupt_row(ui, "frame_end", bindings.frame_end, &snapshot, false);
+                        interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
+                        interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
+                        interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
+                    } else {
+                        ui.label("Interrupt bindings unavailable.");
+                    }
+                }
+            }
+        });
 }
 
 pub(crate) fn run_program_with_config(

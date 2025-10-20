@@ -7,6 +7,9 @@
 //! runner (threads are not available) but keep the same API surface so the rest
 //! of the app does not need conditional code.
 
+use crate::{
+    run_program_with_config, write_console_line, ProgramRunReport, StartupConfig, WELCOME_MESSAGE,
+};
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
 use bus::interrupts::InterruptController;
@@ -14,9 +17,6 @@ use bus::personality::{InterruptLine, Personality};
 use bus::sprite_mmio::SpriteOutput;
 use bus::Bus;
 use core6502::RunOutcome;
-use crate::{
-    run_program_with_config, write_console_line, ProgramRunReport, StartupConfig, WELCOME_MESSAGE,
-};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -271,9 +271,7 @@ mod native {
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
             match run_program_with_config(Bus::with_personality(self.personality), &config) {
-                Ok((bus, report)) => {
-                    Ok(self.finish_program(bus, report, CpuRunStatus::Success))
-                }
+                Ok((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Success)),
                 Err((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Failure)),
             }
         }
@@ -307,31 +305,27 @@ mod native {
         personality: &'static Personality,
         startup: Option<StartupConfig>,
         interrupts: Arc<InterruptController>,
-    ) -> (
-        Cpu,
-        CpuWorkerOutputs,
-        Option<String>,
-        Option<RunOutcome>,
-    ) {
+    ) -> (Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
         match startup {
-            Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
-            {
-                Ok((bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
-                    let mut cpu = Cpu::new(bus);
-                    cpu.reset();
-                    (cpu, outputs, Some(message), outcome)
+            Some(config) => {
+                match run_program_with_config(Bus::with_personality(personality), &config) {
+                    Ok((bus, report)) => {
+                        let ProgramRunReport { outcome, message } = report;
+                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let mut cpu = Cpu::new(bus);
+                        cpu.reset();
+                        (cpu, outputs, Some(message), outcome)
+                    }
+                    Err((mut bus, report)) => {
+                        let ProgramRunReport { outcome, message } = report;
+                        write_console_line(&mut bus, &message);
+                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let mut cpu = Cpu::new(bus);
+                        cpu.reset();
+                        (cpu, outputs, Some(message), outcome)
+                    }
                 }
-                Err((mut bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    write_console_line(&mut bus, &message);
-                    let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
-                    let mut cpu = Cpu::new(bus);
-                    cpu.reset();
-                    (cpu, outputs, Some(message), outcome)
-                }
-            },
+            }
             None => {
                 let mut bus = Bus::with_personality(personality);
                 write_console_line(&mut bus, WELCOME_MESSAGE);
@@ -523,37 +517,28 @@ mod wasm {
         personality: &'static Personality,
         startup: Option<StartupConfig>,
         interrupts: Arc<InterruptController>,
-    ) -> (
-        Bus,
-        CpuWorkerOutputs,
-        Option<String>,
-        Option<RunOutcome>,
-    ) {
+    ) -> (Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
         match startup {
-            Some(config) => match run_program_with_config(Bus::with_personality(personality), &config)
-            {
-                Ok((bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
-                    (bus, outputs, Some(message), outcome)
+            Some(config) => {
+                match run_program_with_config(Bus::with_personality(personality), &config) {
+                    Ok((bus, report)) => {
+                        let ProgramRunReport { outcome, message } = report;
+                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        (bus, outputs, Some(message), outcome)
+                    }
+                    Err((mut bus, report)) => {
+                        let ProgramRunReport { outcome, message } = report;
+                        write_console_line(&mut bus, &message);
+                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        (bus, outputs, Some(message), outcome)
+                    }
                 }
-                Err((mut bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    write_console_line(&mut bus, &message);
-                    let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
-                    (bus, outputs, Some(message), outcome)
-                }
-            },
+            }
             None => {
                 let mut bus = Bus::with_personality(personality);
                 write_console_line(&mut bus, WELCOME_MESSAGE);
                 let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
-                (
-                    bus,
-                    outputs,
-                    Some(WELCOME_MESSAGE.to_string()),
-                    None,
-                )
+                (bus, outputs, Some(WELCOME_MESSAGE.to_string()), None)
             }
         }
     }
