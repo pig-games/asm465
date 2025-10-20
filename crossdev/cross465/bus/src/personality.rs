@@ -4,9 +4,10 @@
 //! default configuration that higher-level viewers may want to mirror.
 
 use crate::{
-    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, sprite_mmio::SpriteMmio, Memory,
-    MmioDevice,
+    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, sprite_mmio::SpriteMmio,
+    system_mmio::SystemMmio, Memory, MmioDevice,
 };
+use crate::interrupts::InterruptController;
 use core::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
@@ -34,7 +35,7 @@ pub struct DisplayDefaults {
 /// Mapping between an address range and a guest-provided MMIO factory.
 pub struct PersonalityMmio {
     pub range: RangeInclusive<u16>,
-    pub create: fn(&Arc<Mutex<Memory>>) -> Box<dyn MmioDevice>,
+    pub create: fn(&Arc<Mutex<Memory>>, &Arc<InterruptController>) -> Box<dyn MmioDevice>,
     pub kind: PersonalityMmioKind,
 }
 
@@ -73,6 +74,7 @@ pub enum PersonalityMmioKind {
     Console,
     Display,
     Sprite,
+    System,
 }
 
 /// Built-in personality mirroring the current “modern retro 2D” setup.
@@ -82,18 +84,23 @@ pub static MODERN_RETRO: Personality = Personality {
     mmio: &[
         PersonalityMmio {
             range: RangeInclusive::new(0xDF00, 0xDF1F),
-            create: |ram| Box::new(ConsoleMmio::new(ram.clone())),
+            create: |ram, _| Box::new(ConsoleMmio::new(ram.clone())),
             kind: PersonalityMmioKind::Console,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF20, 0xDF21),
-            create: |_| Box::new(DisplayMmio::new()),
+            create: |_, _| Box::new(DisplayMmio::new()),
             kind: PersonalityMmioKind::Display,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF30, 0xDF37),
-            create: |_| Box::new(SpriteMmio::new()),
+            create: |_, _| Box::new(SpriteMmio::new()),
             kind: PersonalityMmioKind::Sprite,
+        },
+        PersonalityMmio {
+            range: RangeInclusive::new(0xDF40, 0xDF46),
+            create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
+            kind: PersonalityMmioKind::System,
         },
     ],
     display: DisplayDefaults {
@@ -114,18 +121,23 @@ pub static C64_COMPAT: Personality = Personality {
     mmio: &[
         PersonalityMmio {
             range: RangeInclusive::new(0xD000, 0xD01F),
-            create: |ram| Box::new(ConsoleMmio::new(ram.clone())),
+            create: |ram, _| Box::new(ConsoleMmio::new(ram.clone())),
             kind: PersonalityMmioKind::Console,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xD020, 0xD021),
-            create: |_| Box::new(DisplayMmio::new()),
+            create: |_, _| Box::new(DisplayMmio::new()),
             kind: PersonalityMmioKind::Display,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xD040, 0xD047),
-            create: |_| Box::new(SpriteMmio::new()),
+            create: |_, _| Box::new(SpriteMmio::new()),
             kind: PersonalityMmioKind::Sprite,
+        },
+        PersonalityMmio {
+            range: RangeInclusive::new(0xD048, 0xD04E),
+            create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
+            kind: PersonalityMmioKind::System,
         },
     ],
     display: DisplayDefaults {

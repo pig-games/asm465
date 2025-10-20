@@ -13,7 +13,7 @@ use crate::{
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
 use bus::interrupts::InterruptController;
-use bus::personality::{InterruptLine, Personality};
+use bus::personality::Personality;
 use bus::sprite_mmio::SpriteOutput;
 use bus::Bus;
 use core6502::RunOutcome;
@@ -31,7 +31,7 @@ pub struct CpuWorkerOutputs {
 
 impl CpuWorkerOutputs {
     /// Snapshot the console/display/sprite handles from the supplied bus.
-    fn new(bus: &Bus, interrupts: Arc<InterruptController>) -> Self {
+    fn new(bus: &Bus) -> Self {
         let console = bus
             .console_output_handle()
             .expect("console MMIO output handle");
@@ -41,6 +41,7 @@ impl CpuWorkerOutputs {
         let sprite = bus
             .sprite_output_handle()
             .expect("sprite MMIO output handle");
+        let interrupts = bus.interrupt_controller();
         Self {
             console,
             display,
@@ -87,22 +88,6 @@ impl CpuThrottle {
             sleep: Duration::from_micros(0),
         }
     }
-}
-
-fn apply_default_enable(controller: &Arc<InterruptController>, personality: &'static Personality) {
-    let mut irq_enable = 0u32;
-    let mut nmi_enable = 0u32;
-    for interrupt in personality.interrupts {
-        let mask = 1u32 << interrupt.id;
-        if interrupt.default_enable {
-            match interrupt.line {
-                InterruptLine::Irq => irq_enable |= mask,
-                InterruptLine::Nmi => nmi_enable |= mask,
-            }
-        }
-    }
-    controller.set_irq_enable(irq_enable);
-    controller.set_nmi_enable(nmi_enable);
 }
 
 impl Default for CpuThrottle {
@@ -157,7 +142,6 @@ mod native {
         paused: bool,
         personality: &'static Personality,
         status: Arc<CpuWorkerStatus>,
-        interrupts: Arc<InterruptController>,
     }
 
     impl WorkerInner {
@@ -167,10 +151,8 @@ mod native {
             startup: Option<StartupConfig>,
             status: Arc<CpuWorkerStatus>,
         ) -> (Self, CpuWorkerInit) {
-            let interrupts = Arc::new(InterruptController::new());
-            apply_default_enable(&interrupts, personality);
             let (cpu, outputs, initial_status, initial_outcome) =
-                initialize_cpu(personality, startup, interrupts.clone());
+                initialize_cpu(personality, startup);
             status.running.store(true, Ordering::SeqCst);
             status.paused.store(false, Ordering::SeqCst);
             let inner = Self {
@@ -180,7 +162,6 @@ mod native {
                 paused: false,
                 personality,
                 status: status.clone(),
-                interrupts: interrupts.clone(),
             };
             let init = CpuWorkerInit {
                 outputs,
@@ -288,7 +269,7 @@ mod native {
             if status == CpuRunStatus::Failure {
                 write_console_line(&mut bus, &message);
             }
-            let outputs = CpuWorkerOutputs::new(&bus, self.interrupts.clone());
+            let outputs = CpuWorkerOutputs::new(&bus);
             self.cpu = Cpu::new(bus);
             self.cpu.reset();
             CpuRunReply {
@@ -304,14 +285,13 @@ mod native {
     fn initialize_cpu(
         personality: &'static Personality,
         startup: Option<StartupConfig>,
-        interrupts: Arc<InterruptController>,
     ) -> (Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
         match startup {
             Some(config) => {
                 match run_program_with_config(Bus::with_personality(personality), &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
                         (cpu, outputs, Some(message), outcome)
@@ -319,7 +299,7 @@ mod native {
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
                         (cpu, outputs, Some(message), outcome)
@@ -329,7 +309,7 @@ mod native {
             None => {
                 let mut bus = Bus::with_personality(personality);
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                let outputs = CpuWorkerOutputs::new(&bus);
                 let mut cpu = Cpu::new(bus);
                 cpu.reset();
                 (cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None)
@@ -427,7 +407,6 @@ mod wasm {
     pub struct CpuWorker {
         bus: Bus,
         personality: &'static Personality,
-        interrupts: Arc<InterruptController>,
     }
 
     impl CpuWorker {
@@ -436,16 +415,9 @@ mod wasm {
             personality: &'static Personality,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
-            let interrupts = Arc::new(InterruptController::new());
-            apply_default_enable(&interrupts, personality);
-            let (bus, outputs, status, outcome) =
-                initialize_bus(personality, startup, interrupts.clone());
+            let (bus, outputs, status, outcome) = initialize_bus(personality, startup);
             Ok((
-                Self {
-                    bus,
-                    personality,
-                    interrupts,
-                },
+                Self { bus, personality },
                 CpuWorkerInit {
                     outputs,
                     status,
@@ -459,7 +431,7 @@ mod wasm {
             match run_program_with_config(Bus::with_personality(self.personality), &config) {
                 Ok((bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
-                    let outputs = CpuWorkerOutputs::new(&bus, self.interrupts.clone());
+                    let outputs = CpuWorkerOutputs::new(&bus);
                     self.bus = bus;
                     Ok(CpuRunReply {
                         summary: message,
@@ -471,7 +443,7 @@ mod wasm {
                 Err((mut bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
                     write_console_line(&mut bus, &message);
-                    let outputs = CpuWorkerOutputs::new(&bus, self.interrupts.clone());
+                    let outputs = CpuWorkerOutputs::new(&bus);
                     self.bus = bus;
                     Ok(CpuRunReply {
                         summary: message,
@@ -516,20 +488,19 @@ mod wasm {
     fn initialize_bus(
         personality: &'static Personality,
         startup: Option<StartupConfig>,
-        interrupts: Arc<InterruptController>,
     ) -> (Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
         match startup {
             Some(config) => {
                 match run_program_with_config(Bus::with_personality(personality), &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus);
                         (bus, outputs, Some(message), outcome)
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus);
                         (bus, outputs, Some(message), outcome)
                     }
                 }
@@ -537,7 +508,7 @@ mod wasm {
             None => {
                 let mut bus = Bus::with_personality(personality);
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus, interrupts.clone());
+                let outputs = CpuWorkerOutputs::new(&bus);
                 (bus, outputs, Some(WELCOME_MESSAGE.to_string()), None)
             }
         }

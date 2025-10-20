@@ -1929,7 +1929,6 @@ mod tests {
         use bus::personality::MODERN_RETRO;
 
         let controller = Arc::new(InterruptController::new());
-        controller.set_nmi_enable(1 << 0);
         controller.set_irq_enable((1 << 1) | (1 << 2) | (1 << 3) | (1 << 4));
 
         let bindings = InterruptBindings::from_personality(controller.clone(), &MODERN_RETRO)

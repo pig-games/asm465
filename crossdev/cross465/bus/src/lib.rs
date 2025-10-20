@@ -37,6 +37,7 @@ pub mod display_mmio; // expose display device as bus::display_mmio::*
 pub mod interrupts; // expose shared interrupt controller helpers
 pub mod personality; // personas describing MMIO layouts
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
+pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
@@ -47,7 +48,8 @@ use std::sync::{Arc, Mutex};
 
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
-use personality::{Personality, PersonalityMmioKind};
+use interrupts::InterruptController;
+use personality::{InterruptLine, Personality, PersonalityMmioKind};
 use sprite_mmio::SpriteMmio;
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
@@ -142,6 +144,7 @@ pub struct Bus {
     ram: Arc<Mutex<Memory>>,
     personality: &'static Personality,
     mmio: Vec<MappedDevice>,
+    controller: Arc<InterruptController>,
 }
 
 struct MappedDevice {
@@ -164,15 +167,24 @@ impl Bus {
     /// Construct the bus using the specified personality.
     pub fn with_personality(personality: &'static Personality) -> Self {
         let ram = Arc::new(Mutex::new(Memory::new()));
+        let controller = Arc::new(InterruptController::new());
         let mut bus = Self {
             ram: ram.clone(),
             personality,
             mmio: Vec::new(),
+            controller: controller.clone(),
         };
         for mapping in personality.mmio {
-            let device = (mapping.create)(&ram);
+            let device = (mapping.create)(&ram, &controller);
             bus.map_mmio_internal(mapping.range.clone(), device, Some(mapping.kind));
         }
+        let mut irq_enable = 0u32;
+        for interrupt in personality.interrupts {
+            if interrupt.default_enable && matches!(interrupt.line, InterruptLine::Irq) {
+                irq_enable |= 1u32 << interrupt.id;
+            }
+        }
+        bus.controller.set_irq_enable(irq_enable);
         bus
     }
 
@@ -210,6 +222,11 @@ impl Bus {
         }
         let mut mem = self.ram.lock().unwrap();
         mem.write(addr, value);
+    }
+
+    /// Access the shared interrupt controller.
+    pub fn interrupt_controller(&self) -> Arc<InterruptController> {
+        self.controller.clone()
     }
 
     /// Optional timing hook (no-op). Can be overridden to simulate cycles.

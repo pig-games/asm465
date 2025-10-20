@@ -55,6 +55,7 @@ The emulated bus dedicates separate windows to console, display, and sprite stat
 - **Console MMIO (`$DF00–$DF1F`)** – console text output helpers used by tooling/tests. Key registers: `PUTC` (`$DF00`), `NL` (`$DF01`), `PUTHEX` (`$DF02`), cursor setters (`SETX/SETY/SETLOC`), colour setters (`SETCOL/SETBGCOL`), and pointer helpers (`SETLPTR/SETHPTR/PRINT`).
 - **Display MMIO (`$DF20–$DF21`)** – border/background colour registers. The border is visible when the output window has a different aspect ratio than the 'virtual display'. It is also possible to provide a minimum border size, which mimics the borders on many vintage 8 bit systems.
 - **Sprite MMIO (`$DF30–$DF37`)** – sprite pipeline state. `SPRSEL` selects the slot, `SPRNUM/SPRANIM` control the asset, `SPRXHI/SPRXLO` and `SPRYHI/SPRYLO` hold 8.8 positions, and `SPRSCL` stores per-axis power-of-two scale factors. The viewer reads this snapshot to position and size each sprite.
+- **System MMIO (`$DF40–$DF47`)** – interrupt controller registers. Guests can read pending/enabled masks, enable/disable sources, and acknowledge IRQ/NMI lines via this window.
 
 ## Development philosophy
 - **Parity functionality on retro/vintage and modern platforms:** Crossdev accelerates feature development and ensures parity across targets.

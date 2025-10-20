@@ -98,9 +98,10 @@ pending/enabled state at runtime.
 | `$DF42` | `IRQ_ACK` | W | Writing a bit clears the corresponding pending IRQ source. Reads return `IRQ_PENDING`. |
 | `$DF43` | `IRQ_SOURCE` | R | Highest-priority pending IRQ source (lowest set bit), or `0xFF` if none. |
 | `$DF44` | `NMI_PENDING` | R | Bitmask of pending NMI sources. |
-| `$DF45` | `NMI_ENABLE` | R/W | Bitmask selecting which NMI sources may generate an edge. |
-| `$DF46` | `NMI_ACK` | W | Writing a bit clears the corresponding pending NMI source and drops the NMI line. Reads return `NMI_PENDING`. |
-| `$DF47` | `CTRL_STATUS` | R | Debug/status bitfield (e.g., latched line state, overflow counters); reserved bits read as zero. |
+| `$DF45` | `NMI_ACK` | W | Writing a bit clears the corresponding pending NMI source and drops the NMI line. Reads return `NMI_PENDING`. |
+| `$DF46` | `CTRL_STATUS` | R | Debug/status bitfield (e.g., latched line state, overflow counters); reserved bits read as zero. |
+
+This register block is implemented by the `system_mmio` device (`crossdev/cross465/bus/src/system_mmio.rs`), which fronts the shared `InterruptController`.
 
 All registers are personality-agnostic; unused bits read as zero and ignore
 writes. Personalities describe which IDs are meaningful.

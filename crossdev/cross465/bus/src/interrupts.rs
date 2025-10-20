@@ -83,25 +83,6 @@ impl InterruptController {
         self.irq.line()
     }
 
-    /// Enable the supplied NMI source bits.
-    pub fn enable_nmi(&self, mask: u32) {
-        if mask != 0 {
-            self.nmi.enable_bits(mask);
-        }
-    }
-
-    /// Disable the supplied NMI source bits.
-    pub fn disable_nmi(&self, mask: u32) {
-        if mask != 0 {
-            self.nmi.disable_bits(mask);
-        }
-    }
-
-    /// Replace the NMI enable mask outright.
-    pub fn set_nmi_enable(&self, mask: u32) {
-        self.nmi.set_enable(mask);
-    }
-
     /// Raise one or more NMI sources (edge-triggered).
     pub fn raise_nmi(&self, mask: u32) {
         if mask != 0 {
@@ -121,11 +102,6 @@ impl InterruptController {
         self.nmi.pending()
     }
 
-    /// Currently enabled NMI sources.
-    pub fn nmi_enabled(&self) -> u32 {
-        self.nmi.enabled()
-    }
-
     /// Whether the NMI line is currently asserted (low).
     pub fn nmi_line(&self) -> bool {
         self.nmi.line()
@@ -143,7 +119,7 @@ impl InterruptController {
             irq_enabled: self.irq.enabled(),
             irq_line: self.irq.line(),
             nmi_pending: self.nmi.pending(),
-            nmi_enabled: self.nmi.enabled(),
+            nmi_enabled: u32::MAX,
             nmi_line: self.nmi.line(),
             nmi_edge_latched: self.nmi.edge_latched(),
         }
@@ -215,7 +191,6 @@ impl LevelLine {
 
 struct EdgeLine {
     pending: AtomicU32,
-    enabled: AtomicU32,
     line: AtomicBool,
     edge: AtomicBool,
 }
@@ -224,7 +199,6 @@ impl EdgeLine {
     fn new() -> Self {
         Self {
             pending: AtomicU32::new(0),
-            enabled: AtomicU32::new(0),
             line: AtomicBool::new(false),
             edge: AtomicBool::new(false),
         }
@@ -242,29 +216,8 @@ impl EdgeLine {
         self.update_line(new_pending);
     }
 
-    fn enable_bits(&self, mask: u32) {
-        let prev = self.enabled.fetch_or(mask, Ordering::SeqCst);
-        let _ = prev;
-        self.update_line(self.pending.load(Ordering::SeqCst));
-    }
-
-    fn disable_bits(&self, mask: u32) {
-        let prev = self.enabled.fetch_and(!mask, Ordering::SeqCst);
-        let _ = prev;
-        self.update_line(self.pending.load(Ordering::SeqCst));
-    }
-
-    fn set_enable(&self, value: u32) {
-        self.enabled.store(value, Ordering::SeqCst);
-        self.update_line(self.pending.load(Ordering::SeqCst));
-    }
-
     fn pending(&self) -> u32 {
         self.pending.load(Ordering::SeqCst)
-    }
-
-    fn enabled(&self) -> u32 {
-        self.enabled.load(Ordering::SeqCst)
     }
 
     fn line(&self) -> bool {
@@ -280,8 +233,7 @@ impl EdgeLine {
     }
 
     fn update_line(&self, pending: u32) {
-        let enabled = self.enabled.load(Ordering::SeqCst);
-        let should_assert = (pending & enabled) != 0;
+        let should_assert = pending != 0;
         let was_asserted = self.line.swap(should_assert, Ordering::SeqCst);
         if should_assert && !was_asserted {
             self.edge.store(true, Ordering::SeqCst);
@@ -334,7 +286,6 @@ mod tests {
     #[test]
     fn nmi_edge_latches_once_per_assertion() {
         let ctrl = InterruptController::new();
-        ctrl.enable_nmi(SOURCE0);
 
         ctrl.raise_nmi(SOURCE0);
         assert!(ctrl.nmi_line());
@@ -353,7 +304,6 @@ mod tests {
     #[test]
     fn nmi_reasserts_after_clear() {
         let ctrl = InterruptController::new();
-        ctrl.enable_nmi(SOURCE0);
 
         ctrl.raise_nmi(SOURCE0);
         assert!(ctrl.take_nmi_edge());
@@ -369,9 +319,18 @@ mod tests {
     fn enable_nmi_mid_stream_asserts_line() {
         let ctrl = InterruptController::new();
         ctrl.raise_nmi(SOURCE0);
+        assert!(ctrl.nmi_line());
+        assert!(ctrl.take_nmi_edge());
+
+        // Raising again while pending should not generate a new edge until cleared.
+        ctrl.raise_nmi(SOURCE0);
+        assert!(ctrl.nmi_line());
+        assert!(!ctrl.take_nmi_edge());
+
+        ctrl.clear_nmi(SOURCE0);
         assert!(!ctrl.nmi_line());
 
-        ctrl.enable_nmi(SOURCE0);
+        ctrl.raise_nmi(SOURCE0);
         assert!(ctrl.nmi_line());
         assert!(ctrl.take_nmi_edge());
     }
