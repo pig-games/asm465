@@ -95,10 +95,10 @@
   - [x] Update developer documentation and tooling
     - [x] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
     - [x] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
-  - [ ] Integrate interrupt servicing into the 6502 core
+  - [x] Integrate interrupt servicing into the 6502 core
     - [x] Teach the CPU worker/core to poll the shared `InterruptController` each step and assert IRQ/NMI sequences when pending.
     - [x] Make IRQ/NMI handling push PC/status to the stack and jump via `$FFFA/$FFFB` or `$FFFE/$FFFF` vectors.
-    - [ ] Ensure controller bits are cleared/acked appropriately (guest writes still honoured).
+    - [x] Ensure controller bits are cleared/acked appropriately (guest writes still honoured).
     - [x] Surface the interrupt handling functionality to a `system_mmio` MMIO module.
 
 # rough outlines of additional features, these need to be further explored and documented.
