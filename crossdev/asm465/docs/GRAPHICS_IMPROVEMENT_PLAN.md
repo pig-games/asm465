@@ -43,26 +43,62 @@
   - [x] Update `graphics_pipeline_audit.md` with conclusions  
   - [x] Write commit message summarising the exploration findings
 
-- [ ] Support configurable off-screen margins for sprites  
-  - [ ] Add a setting describing the maximum sprite size to tolerate when off-screen  
-  - [ ] Implement linear MMIO→virtual mapping using the agreed scale/offset (Option 1 + per-sprite power-of-two scale) and apply configurable negative offsets for top-left margins (see sprite_coord_remap.md)
-  - [ ] Ensure sprites can move beyond right/bottom edges by mapping the full MMIO range after offsets  
-  - [ ] Ensure clipping/overlay still masks sprites that remain outside the visible content area  
-  - [ ] Cover the updated mapping with unit tests that check extreme values (negative offsets, fully-hidden sprites, etc.)  
-  - [ ] Update `graphics_pipeline_audit.md` to reflect the changes
-  - [ ] Write commit message summarising off-screen margin changes
+- [x] Support configurable off-screen margins for sprites  
+  - [x] Add a setting describing the maximum sprite size to tolerate when off-screen  
+  - [x] Implement linear MMIO→virtual mapping using the agreed scale/offset (Option 1 + per-sprite power-of-two scale) and apply configurable negative offsets for top-left margins (see `sprite_coord_remap.md`)
+  - [x] Ensure sprites can move beyond right/bottom edges by mapping the full MMIO range after offsets  
+  - [x] Ensure clipping/overlay still masks sprites that remain outside the visible content area  
+  - [x] Cover the updated mapping with unit tests that check extreme values (negative offsets, fully-hidden sprites, etc.)  
+  - [x] Update `graphics_pipeline_audit.md` to reflect the changes
+  - [x] Write commit message summarising off-screen margin changes
 
-- [ ] Polish & cleanup  
-  - [ ] Remove temporary logging/instrumentation or behind a feature flag  
-  - [ ] Document the new settings in README / inline rustdoc  
-  - [ ] Re-verify native and wasm builds, including asset bundling  
-  - [ ] Ensure `graphics_pipeline_audit.md` captures the final state
-  - [ ] Write commit message summarising polish/cleanup
+- [x] Polish & cleanup  
+  - [x] Remove temporary logging/instrumentation or behind a feature flag  
+  - [x] Document the new settings in README / inline rustdoc  
+  - [x] Re-verify native and wasm builds, including asset bundling  
+  - [x] Ensure `graphics_pipeline_audit.md` captures the final state
+  - [x] Write commit message summarising polish/cleanup
 
-- [ ] Extend MMIO interface with colour registers  
+- [x] Extend MMIO interface with colour registers  
   - [x] Add read/write registers for border colour  
   - [x] Add read/write registers for background colour  
-  - [ ] Surface new values in Bevy so the enforced borders/background pick them up  
+  - [x] Create a new MMIO module for generic display settings
+  - [x] Rename graphics_mmio.rs to sprites_mmio.rs (and take care of dependencies)
+  - [x] Move color registers to the new display MMIO module.
+  - [x] Surface new values in Bevy so the enforced borders/background pick them up  
   - [x] Add tests (or assertions in instrumentation) to confirm writes propagate to the frontend  
-  - [ ] Update `graphics_pipeline_audit.md` to reflect the changes
-  - [ ] Write commit message summarising colour-register integration
+  - [x] Update `graphics_pipeline_audit.md` to reflect the changes
+  - [x] Write commit message summarising colour-register integration
+
+- [x] Refactor the bus/MMIO architecture to support 'personalities' (see `graphics_pipeline_audit.md`)
+  - [x] Define a `Personality` descriptor that lists MMIO mappings + default viewer config.
+  - [x] Convert the current Modern Retro mapping into a default personality implemented via the descriptor.
+  - [x] Add a loader/registry so the bus can be constructed from a selected personality (including CLI flag support in the viewer tools).
+  - [x] Provide scaffold personalities (e.g. C64 mirror, modern 2D) with documentation for their MMIO ranges.
+  - [x] Update docs/tests to cover personality selection and ensure MMIO modules initialise correctly per personality.
+
+# rough outlines of additional features, these need to be further explored and documented.
+- [ ] Add interrupt support from the modern UI layer, including display refresh, input, and timer sources (use `cross465/docs/6502_interrupts_overview.md` as reference).
+  - [ ] Capture the desired interrupt model: document which host events map to IRQ vs NMI, how acknowledgement/clearing works, and how personalities declare available sources.
+  - [ ] Put the CPU on a dedicated worker thread with a controllable run loop (throttle, pause/resume hooks, graceful shutdown) so it can service interrupts continuously.
+  - [ ] Introduce a thread-safe interrupt controller that the UI can call into
+    - [ ] Provide APIs to raise/clear IRQ and NMI, queue multiple sources, and report pending state back to the CPU core.
+    - [ ] Cover the controller with unit tests to confirm edge-triggered NMIs and level-triggered IRQs behave correctly.
+  - [ ] Extend personality descriptors with interrupt definitions
+    - [ ] Allow personalities to register named interrupt sources, associate them with IRQ/NMI lines, and expose configuration knobs (priority, enable bits, default masks).
+    - [ ] Ensure personalities can subscribe to host-side producers (display loop, input manager, timers) and translate those events into controller calls.
+  - [ ] Wire up interrupt sources for the ModernRetro personality
+    - [ ] Display: raise `frame_start`/`frame_end` interrupts tied to the renderer’s vblank lifecycle and debounce duplicate triggers.
+    - [ ] Timer: implement a host-driven programmable timer module in `cross465/asm465`, expose period registers via MMIO, and verify cadence with tests.
+    - [ ] Keyboard: surface key state/register interface to the guest, fire interrupts on press/release, and document scan-code expectations.
+    - [ ] Game controller: mirror the keyboard approach for controller state changes, including hot-plug/idle handling.
+  - [ ] Update developer documentation and tooling
+    - [ ] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
+    - [ ] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
+
+
+- [ ] Add sprite collision support (possibly interupt driven or just some value that can be read)
+
+- [ ] Implement color palettes and support for index colored sprites
+
+- [ ] Implement SPRANIM support ('sub frames' per SPRNUM)
