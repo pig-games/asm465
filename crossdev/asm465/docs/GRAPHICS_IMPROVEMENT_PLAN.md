@@ -77,7 +77,6 @@
   - [x] Provide scaffold personalities (e.g. C64 mirror, modern 2D) with documentation for their MMIO ranges.
   - [x] Update docs/tests to cover personality selection and ensure MMIO modules initialise correctly per personality.
 
-# rough outlines of additional features, these need to be further explored and documented.
 - [ ] Add interrupt support from the modern UI layer, including display refresh, input, and timer sources (use `cross465/docs/6502_interrupts_overview.md` as reference).
   - [x] Capture the desired interrupt model: document which host events map to IRQ vs NMI, how acknowledgement/clearing works, and how personalities declare available sources (see `crossdev/asm465/docs/interrupt_model.md`).
   - [x] Put the CPU on a dedicated worker thread with a controllable run loop (throttle, pause/resume hooks, graceful shutdown) so it can service interrupts continuously.
@@ -97,6 +96,7 @@
     - [ ] Add an interrupt wiring section to the bus/personality docs so new personalities can opt in.
     - [ ] Provide an integration test or harness that asserts ModernRetro receives interrupts when the host fires synthetic events.
 
+# rough outlines of additional features, these need to be further explored and documented.
 
 - [ ] Add sprite collision support (possibly interupt driven or just some value that can be read)
 

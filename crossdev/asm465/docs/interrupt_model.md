@@ -85,7 +85,9 @@ cover the edge/level semantics for NMI/IRQ.
 `InterruptBindings` inside `crossdev/asm465/src/lib.rs` wires these sources to
 the viewer: frame lifecycle interrupts fire once per Bevy frame, a 60 Hz host
 timer raises `timer0`, and keyboard/gamepad events raise the corresponding IRQ
-when input is observed on the host side.
+when input is observed on the host side. The Bevy UI exposes an “Interrupts”
+inspector window that surfaces the controller snapshot so developers can check
+pending/enabled state at runtime.
 
 ### Register Map (proposed at `$DF40–$DF47`)
 

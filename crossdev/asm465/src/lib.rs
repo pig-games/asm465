@@ -25,7 +25,7 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bevy::time::{Timer, TimerMode};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
-use bus::interrupts::InterruptController;
+use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::personality::{self, Personality};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
@@ -840,6 +840,10 @@ impl InterruptBindings {
         self.gamepad.is_some()
     }
 
+    fn snapshot(&self) -> InterruptSnapshot {
+        self.controller.snapshot()
+    }
+
     fn raise_frame_start(&self) {
         if let Some(mask) = self.frame_start {
             self.raise_nmi(mask);
@@ -913,11 +917,11 @@ fn timer_interrupt_system(
     bindings: Option<Res<InterruptBindings>>,
     state: Option<ResMut<TimerInterruptState>>,
 ) {
-    let (bindings, mut state) = match (bindings, state) {
-        (Some(bindings), Some(state)) if bindings.has_timer() => (bindings, state),
-        _ => return,
-    };
-
+    let Some(bindings) = bindings else { return };
+    if !bindings.has_timer() {
+        return;
+    }
+    let Some(mut state) = state else { return };
     if state.timer.tick(time.delta()).just_finished() {
         bindings.raise_timer0();
     }
@@ -954,11 +958,47 @@ fn gamepad_interrupt_system(
     }
 }
 
+fn interrupt_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    mask: Option<u32>,
+    snapshot: &InterruptSnapshot,
+    is_nmi: bool,
+) {
+    if let Some(mask) = mask {
+        let pending = if is_nmi {
+            snapshot.nmi_pending
+        } else {
+            snapshot.irq_pending
+        };
+        let enabled = if is_nmi {
+            snapshot.nmi_enabled
+        } else {
+            snapshot.irq_enabled
+        };
+        let line = if is_nmi {
+            snapshot.nmi_line
+        } else {
+            snapshot.irq_line
+        };
+        let pending_set = (pending & mask) != 0;
+        let enabled_set = (enabled & mask) != 0;
+        ui.horizontal(|ui| {
+            ui.label(name);
+            ui.label(format!(
+                "mask=0x{mask:08X} pending={} enabled={} line={}",
+                pending_set, enabled_set, line
+            ));
+        });
+    }
+}
+
 #[derive(Resource)]
 struct UiState {
     status: Option<String>,
     console_open: bool,
     bridge_connected: Option<bool>,
+    interrupts_open: bool,
 }
 
 impl UiState {
@@ -967,6 +1007,7 @@ impl UiState {
             status,
             console_open: true,
             bridge_connected: None,
+            interrupts_open: false,
         }
     }
 }
@@ -1201,6 +1242,7 @@ fn ui_system(
         &mut Sprite,
         &mut Handle<Image>,
     )>,
+    bindings: Option<Res<InterruptBindings>>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
     #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
 ) {
@@ -1296,6 +1338,14 @@ fn ui_system(
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let interrupts_label = if ui_state.interrupts_open {
+                        "Hide Interrupts"
+                    } else {
+                        "Show Interrupts"
+                    };
+                    if ui.button(interrupts_label).clicked() {
+                        ui_state.interrupts_open = !ui_state.interrupts_open;
+                    }
                     let toggle_label = if ui_state.console_open {
                         "Hide Console"
                     } else {
@@ -1371,6 +1421,39 @@ fn ui_system(
                     }
                 });
         });
+
+    if ui_state.interrupts_open {
+        egui::Window::new("Interrupt Inspector")
+            .resizable(true)
+            .open(&mut ui_state.interrupts_open)
+            .show(ctx, |ui| {
+                if let Some(bindings) = bindings.as_ref() {
+                    let snapshot = bindings.snapshot();
+                    ui.label(format!(
+                        "IRQ: pending=0x{pending:08X} enabled=0x{enabled:08X} line={}",
+                        snapshot.irq_line,
+                        pending = snapshot.irq_pending,
+                        enabled = snapshot.irq_enabled
+                    ));
+                    ui.label(format!(
+                        "NMI: pending=0x{pending:08X} enabled=0x{enabled:08X} edge={} line={}",
+                        snapshot.nmi_line,
+                        snapshot.nmi_edge_latched,
+                        pending = snapshot.nmi_pending,
+                        enabled = snapshot.nmi_enabled
+                    ));
+
+                    ui.separator();
+                    interrupt_row(ui, "frame_start", bindings.frame_start, &snapshot, true);
+                    interrupt_row(ui, "frame_end", bindings.frame_end, &snapshot, false);
+                    interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
+                    interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
+                    interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
+                } else {
+                    ui.label("Interrupt bindings unavailable.");
+                }
+            });
+    }
 }
 
 pub(crate) fn run_program_with_config(
