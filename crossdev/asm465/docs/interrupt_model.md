@@ -127,6 +127,11 @@ from generating new edges (NMI), mirroring real 6502-era hardware behaviour.
   construction time. For ModernRetro this includes handing display/timer/input
   handles to the interrupt subsystem.
 
+The base descriptors now expose these fields via the
+`PersonalityInterrupt`, `InterruptLine`, and `InterruptTrigger` types defined in
+`crossdev/cross465/bus/src/personality.rs`. Existing personalities provide an
+empty slice until their sources are wired in later steps.
+
 ### Host Wiring Strategy
 - Display loop publishes frame lifecycle callbacks; the personality registers
   them to raise `frame_start` (NMI) and `frame_end` (IRQ).

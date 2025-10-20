@@ -20,6 +20,8 @@ pub struct Personality {
     pub mmio: &'static [PersonalityMmio],
     /// Default palette values for the display MMIO (optional metadata).
     pub display: DisplayDefaults,
+    /// Interrupt sources exposed by this personality.
+    pub interrupts: &'static [PersonalityInterrupt],
 }
 
 /// Default palette values applied when the display MMIO is initialised.
@@ -34,6 +36,35 @@ pub struct PersonalityMmio {
     pub range: RangeInclusive<u16>,
     pub create: fn(&Arc<Mutex<Memory>>) -> Box<dyn MmioDevice>,
     pub kind: PersonalityMmioKind,
+}
+
+/// Metadata describing an interrupt source published by a personality.
+#[derive(Clone, Copy)]
+pub struct PersonalityInterrupt {
+    /// Stable numeric identifier for the source (used by MMIO registers).
+    pub id: u8,
+    /// Human-readable name surfaced in tooling.
+    pub name: &'static str,
+    /// Which CPU line this source drives.
+    pub line: InterruptLine,
+    /// Trigger semantics for the source (level or edge).
+    pub trigger: InterruptTrigger,
+    /// Whether the source is enabled by default when the personality loads.
+    pub default_enable: bool,
+}
+
+/// Interrupt line driven by a personality interrupt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InterruptLine {
+    Irq,
+    Nmi,
+}
+
+/// Trigger style for a personality interrupt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InterruptTrigger {
+    Level,
+    Edge,
 }
 
 /// Enumeration of built-in MMIO module kinds.
@@ -69,6 +100,7 @@ pub static MODERN_RETRO: Personality = Personality {
         border_color: 0x00,
         background_color: 0x00,
     },
+    interrupts: &[],
 };
 
 /// Scaffold personality that loosely mirrors the C64 MMIO layout. It reuses the
@@ -100,6 +132,7 @@ pub static C64_COMPAT: Personality = Personality {
         border_color: 0x0E,
         background_color: 0x06,
     },
+    interrupts: &[],
 };
 
 static PERSONALITIES: &[&Personality] = &[&MODERN_RETRO, &C64_COMPAT];

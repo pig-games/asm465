@@ -86,7 +86,7 @@
     - [x] Cover the controller with unit tests to confirm edge-triggered NMIs and level-triggered IRQs behave correctly.
   - [x] Expose CPU run-batch outcomes (cycle budget vs. `BRK`, etc.) to the host so debugger scenarios can resume execution after traps (see `ProgramRunReport` in `crossdev/asm465/src/lib.rs`).
   - [ ] Extend personality descriptors with interrupt definitions
-    - [ ] Allow personalities to register named interrupt sources, associate them with IRQ/NMI lines, and expose configuration knobs (priority, enable bits, default masks).
+    - [x] Allow personalities to register named interrupt sources, associate them with IRQ/NMI lines, and expose configuration knobs (priority, enable bits, default masks).
     - [ ] Ensure personalities can subscribe to host-side producers (display loop, input manager, timers) and translate those events into controller calls.
   - [ ] Wire up interrupt sources for the ModernRetro personality
     - [ ] Display: raise `frame_start`/`frame_end` interrupts tied to the renderer’s vblank lifecycle and debounce duplicate triggers.
