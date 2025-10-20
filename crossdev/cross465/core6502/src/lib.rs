@@ -886,12 +886,7 @@ impl Cpu {
     fn service_pending_interrupt(&mut self) -> Option<u32> {
         if self.pending_nmi {
             self.pending_nmi = false;
-            let controller = self.bus.interrupt_controller();
-            let snapshot = controller.snapshot();
-            controller.take_nmi_edge();
-            if snapshot.nmi_pending != 0 {
-                controller.clear_nmi(snapshot.nmi_pending);
-            }
+            self.bus.interrupt_controller().take_nmi_edge();
             self.push((self.pc >> 8) as u8);
             self.push((self.pc & 0xFF) as u8);
             let status = (self.p.bits() & !P::B.bits()) | P::U.bits();
@@ -903,12 +898,6 @@ impl Cpu {
 
         if self.pending_irq && !self.p.contains(P::I) {
             self.pending_irq = false;
-            let controller = self.bus.interrupt_controller();
-            let snapshot = controller.snapshot();
-            let mask = snapshot.irq_pending & snapshot.irq_enabled;
-            if mask != 0 {
-                controller.clear_irq(mask);
-            }
             self.push((self.pc >> 8) as u8);
             self.push((self.pc & 0xFF) as u8);
             let status = (self.p.bits() & !P::B.bits()) | P::U.bits();
@@ -1177,7 +1166,7 @@ mod tests {
         assert!(stored_pc == pc_before || stored_pc == pc_before.wrapping_add(1));
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.nmi_pending & 1, 0);
+        assert_eq!(snapshot.nmi_pending & 1, 1);
         assert!(!controller.take_nmi_edge());
     }
 
@@ -1211,6 +1200,6 @@ mod tests {
         assert!(stored_pc == pc_before || stored_pc == pc_before.wrapping_add(1));
 
         let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending & 1, 0);
+        assert_eq!(snapshot.irq_pending & 1, 1);
     }
 }
