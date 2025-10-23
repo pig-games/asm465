@@ -12,6 +12,7 @@
 //! enable a PETSCII‑ish translation mode by calling
 //! [`Bus::with_console_petscii`](crate::Bus::with_console_petscii).
 
+use crate::mmio::{ConsoleReg, Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc};
 use crate::Memory;
 use crate::MmioDevice;
 use crate::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii};
@@ -212,6 +213,56 @@ pub struct ConsoleMmio {
     output: Arc<Mutex<ConsoleOutput>>,
 }
 
+const CONSOLE_REGS: &[RegisterDesc] = &[
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::WriteChar),
+        1,
+        0,
+        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(RegId::Console(ConsoleReg::Newline), 1, 0, false, true, &[]),
+    RegisterDesc::new(RegId::Console(ConsoleReg::WriteHex), 1, 0, false, true, &[]),
+    RegisterDesc::new(RegId::Console(ConsoleReg::Clear), 1, 0, false, true, &[]),
+    RegisterDesc::new(RegId::Console(ConsoleReg::CursorX), 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Console(ConsoleReg::CursorY), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::CursorApply),
+        1,
+        0,
+        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::Foreground),
+        1,
+        7,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::Background),
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(RegId::Console(ConsoleReg::PointerLo), 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Console(ConsoleReg::PointerHi), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::PrintBlock),
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+];
+
 impl ConsoleMmio {
     /// Create a new console device with an empty buffer and ASCII‑ish mode.
     pub fn new(ram: Arc<Mutex<Memory>>) -> Self {
@@ -401,5 +452,97 @@ impl MmioDevice for ConsoleMmio {
             0x0b => self.print(value), // only requires previous call to set_lptr(val), the passed value is the high ptr for the text to be printed.
             _ => { /* reserved for future features (cursor, color, clear, etc.) */ }
         }
+    }
+}
+
+impl Module for ConsoleMmio {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Console
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        CONSOLE_REGS
+    }
+
+    fn read_reg(&mut self, reg: RegId) -> u8 {
+        match reg {
+            RegId::Console(ConsoleReg::WriteChar)
+            | RegId::Console(ConsoleReg::Newline)
+            | RegId::Console(ConsoleReg::WriteHex)
+            | RegId::Console(ConsoleReg::Clear)
+            | RegId::Console(ConsoleReg::CursorApply) => 0,
+            RegId::Console(ConsoleReg::CursorX) => self.x,
+            RegId::Console(ConsoleReg::CursorY) => self.y,
+            RegId::Console(ConsoleReg::Foreground) => self.color,
+            RegId::Console(ConsoleReg::Background) => self.bg_color,
+            RegId::Console(ConsoleReg::PointerLo) => self.lptr,
+            RegId::Console(ConsoleReg::PointerHi) => self.hptr,
+            RegId::Console(ConsoleReg::PrintBlock) => self.plength,
+            _ => 0,
+        }
+    }
+
+    fn write_reg(&mut self, reg: RegId, value: u8) {
+        match reg {
+            RegId::Console(ConsoleReg::WriteChar) => self.push_char(value),
+            RegId::Console(ConsoleReg::Newline) => self.newline(),
+            RegId::Console(ConsoleReg::WriteHex) => self.push_hex(value),
+            RegId::Console(ConsoleReg::Clear) => self.clear(),
+            RegId::Console(ConsoleReg::CursorX) => self.set_x(value),
+            RegId::Console(ConsoleReg::CursorY) => self.set_y(value),
+            RegId::Console(ConsoleReg::CursorApply) => self.set_location(),
+            RegId::Console(ConsoleReg::Foreground) => self.set_color(value),
+            RegId::Console(ConsoleReg::Background) => self.set_bg_color(value),
+            RegId::Console(ConsoleReg::PointerLo) => self.set_lptr(value),
+            RegId::Console(ConsoleReg::PointerHi) => self.set_hptr(value),
+            RegId::Console(ConsoleReg::PrintBlock) => self.print(value),
+            _ => {}
+        }
+    }
+}
+
+pub struct ConsoleModuleFactory;
+
+pub const CONSOLE_FACTORY: ConsoleModuleFactory = ConsoleModuleFactory;
+
+impl ModuleFactory for ConsoleModuleFactory {
+    fn id(&self) -> &'static str {
+        "console.text"
+    }
+
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Console
+    }
+
+    fn create(&self, deps: &ModuleDeps) -> Box<dyn Module> {
+        Box::new(ConsoleMmio::new(deps.ram.clone()))
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        CONSOLE_REGS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mmio::{Module, ModuleKind, RegId};
+    use crate::Memory;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn console_registers_match_runtime_state() {
+        let ram = Arc::new(Mutex::new(Memory::new()));
+        let mut mmio = ConsoleMmio::new(ram);
+        assert_eq!(mmio.kind(), ModuleKind::Console);
+        assert!(mmio
+            .regs()
+            .iter()
+            .any(|desc| desc.id == RegId::Console(ConsoleReg::Foreground)));
+
+        mmio.write_reg(RegId::Console(ConsoleReg::Foreground), 3);
+        assert_eq!(mmio.read_reg(RegId::Console(ConsoleReg::Foreground)), 3);
+        mmio.write_reg(RegId::Console(ConsoleReg::CursorX), 12);
+        assert_eq!(mmio.read_reg(RegId::Console(ConsoleReg::CursorX)), 12);
     }
 }

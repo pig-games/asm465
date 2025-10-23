@@ -1,4 +1,5 @@
 use crate::interrupts::InterruptController;
+use crate::mmio::{Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc, SystemReg};
 use crate::MmioDevice;
 use std::sync::Arc;
 
@@ -6,6 +7,23 @@ use std::sync::Arc;
 pub struct SystemMmio {
     controller: Arc<InterruptController>,
 }
+
+const SYSTEM_REGS: &[RegisterDesc] = &[
+    RegisterDesc::new(RegId::System(SystemReg::IrqPending), 1, 0, true, false, &[]),
+    RegisterDesc::new(RegId::System(SystemReg::IrqEnable), 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::System(SystemReg::IrqAck), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::System(SystemReg::IrqSource),
+        1,
+        0xFF,
+        true,
+        false,
+        &[],
+    ),
+    RegisterDesc::new(RegId::System(SystemReg::NmiPending), 1, 0, true, false, &[]),
+    RegisterDesc::new(RegId::System(SystemReg::NmiAck), 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::System(SystemReg::Status), 1, 0, true, false, &[]),
+];
 
 impl SystemMmio {
     pub fn new(controller: Arc<InterruptController>) -> Self {
@@ -80,9 +98,95 @@ impl MmioDevice for SystemMmio {
     }
 }
 
+impl Module for SystemMmio {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::System
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        SYSTEM_REGS
+    }
+
+    fn read_reg(&mut self, reg: RegId) -> u8 {
+        match reg {
+            RegId::System(SystemReg::IrqPending) => self.irq_pending(),
+            RegId::System(SystemReg::IrqEnable) => self.irq_enabled(),
+            RegId::System(SystemReg::IrqAck) => self.irq_pending(),
+            RegId::System(SystemReg::IrqSource) => {
+                let mask = self.controller.irq_pending() & self.controller.irq_enabled();
+                if mask == 0 {
+                    0xFF
+                } else {
+                    mask.trailing_zeros() as u8
+                }
+            }
+            RegId::System(SystemReg::NmiPending) => self.nmi_pending(),
+            RegId::System(SystemReg::NmiAck) => self.nmi_pending(),
+            RegId::System(SystemReg::Status) => {
+                let snapshot = self.controller.snapshot();
+                let mut status = 0u8;
+                if snapshot.irq_line {
+                    status |= 0x01;
+                }
+                if snapshot.nmi_line {
+                    status |= 0x02;
+                }
+                if snapshot.nmi_edge_latched {
+                    status |= 0x04;
+                }
+                status
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn write_reg(&mut self, reg: RegId, value: u8) {
+        let mask = value as u32;
+        match reg {
+            RegId::System(SystemReg::IrqEnable) => {
+                self.controller.set_irq_enable(mask);
+            }
+            RegId::System(SystemReg::IrqAck) => {
+                if mask != 0 {
+                    self.controller.clear_irq(mask);
+                }
+            }
+            RegId::System(SystemReg::NmiAck) => {
+                if mask != 0 {
+                    self.controller.clear_nmi(mask);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+pub struct SystemModuleFactory;
+
+pub const SYSTEM_FACTORY: SystemModuleFactory = SystemModuleFactory;
+
+impl ModuleFactory for SystemModuleFactory {
+    fn id(&self) -> &'static str {
+        "system.interrupts"
+    }
+
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::System
+    }
+
+    fn create(&self, deps: &ModuleDeps) -> Box<dyn Module> {
+        Box::new(SystemMmio::new(deps.controller.clone()))
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        SYSTEM_REGS
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mmio::{Module, ModuleKind, RegId};
 
     #[test]
     fn read_write_registers() {
@@ -110,5 +214,12 @@ mod tests {
         mmio.write(0xDF45, 0b0000_0001);
         assert_eq!(controller.irq_pending(), 0);
         assert_eq!(controller.nmi_pending(), 0);
+
+        assert_eq!(mmio.kind(), ModuleKind::System);
+        mmio.write_reg(RegId::System(SystemReg::IrqEnable), 0b0000_0100);
+        assert_eq!(
+            mmio.read_reg(RegId::System(SystemReg::IrqEnable)),
+            0b0000_0100
+        );
     }
 }

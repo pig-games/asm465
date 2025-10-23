@@ -7,9 +7,9 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Inventory existing module implementations and identify missing register descriptors versus the v2 model.
 
 ## Milestone 1 – Module Runtime Upgrades
-- [ ] Introduce shared enums/traits (`ModuleKind`, `RegId`, `Module`, `RegisterDesc`) to support address-free registers.
-- [ ] Wrap each implementation in a `ModuleFactory` and register it in a central `ModuleRegistry`.
-- [ ] Populate `regs()` descriptors with reset/RO/WO metadata for each module, adding spot tests where needed.
+- [x] Introduce shared enums/traits (`ModuleKind`, `RegId`, `Module`, `RegisterDesc`) to support address-free registers. (see `crossdev/cross465/bus/src/mmio.rs`)
+- [x] Wrap each implementation in a `ModuleFactory` and register it in a central `ModuleRegistry`. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Populate `regs()` descriptors with reset/RO/WO metadata for each module, adding spot tests where needed. (see `PersonalitiesMilestone1Notes.md`)
 
 ## Milestone 2 – Personality Data Model
 - [ ] Define in-memory structures mirroring the v2 TOML schema (modules, maps, transforms, conditions, interrupts, value builders).

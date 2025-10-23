@@ -3,11 +3,11 @@
 //! A personality bundles which MMIO modules should be mapped where, plus any
 //! default configuration that higher-level viewers may want to mirror.
 
+use crate::interrupts::InterruptController;
 use crate::{
     console_mmio::ConsoleMmio, display_mmio::DisplayMmio, sprite_mmio::SpriteMmio,
     system_mmio::SystemMmio, Memory, MmioDevice,
 };
-use crate::interrupts::InterruptController;
 use core::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 

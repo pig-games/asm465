@@ -312,7 +312,10 @@ mod tests {
 
         ctrl.raise_nmi(SOURCE0);
         assert!(ctrl.nmi_line());
-        assert!(ctrl.take_nmi_edge(), "clearing the line should allow a new edge");
+        assert!(
+            ctrl.take_nmi_edge(),
+            "clearing the line should allow a new edge"
+        );
     }
 
     #[test]

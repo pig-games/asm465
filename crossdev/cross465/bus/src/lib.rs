@@ -35,10 +35,38 @@
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod display_mmio; // expose display device as bus::display_mmio::*
 pub mod interrupts; // expose shared interrupt controller helpers
+pub mod mmio; // shared module trait/registry scaffold
 pub mod personality; // personas describing MMIO layouts
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
+
+/// Build a registry populated with the built-in module implementations.
+pub fn builtin_module_registry() -> mmio::ModuleRegistry {
+    let mut registry = mmio::ModuleRegistry::new();
+    registry.register(&console_mmio::CONSOLE_FACTORY);
+    registry.register(&display_mmio::DISPLAY_FACTORY);
+    registry.register(&sprite_mmio::SPRITE_FACTORY);
+    registry.register(&system_mmio::SYSTEM_FACTORY);
+    registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mmio::ModuleKind;
+
+    #[test]
+    fn builtin_registry_contains_expected_factories() {
+        let registry = builtin_module_registry();
+        assert!(registry.by_id("console.text").is_some());
+        assert_eq!(
+            registry.by_kind(ModuleKind::Display).count(),
+            1,
+            "exactly one display implementation expected"
+        );
+    }
+}
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
 
