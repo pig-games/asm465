@@ -3,8 +3,8 @@
 Progress tracker for rolling out the cross465 Personalities v2 architecture.
 
 ## Milestone 0 – Baseline Audit
-- [ ] Catalogue current bus/MMIO wiring and document where register addresses and semantics live.
-- [ ] Inventory existing module implementations and identify missing register descriptors versus the v2 model.
+- [x] Catalogue current bus/MMIO wiring and document where register addresses and semantics live. (see `PersonalitiesMilestone0Audit.md`)
+- [x] Inventory existing module implementations and identify missing register descriptors versus the v2 model.
 
 ## Milestone 1 – Module Runtime Upgrades
 - [ ] Introduce shared enums/traits (`ModuleKind`, `RegId`, `Module`, `RegisterDesc`) to support address-free registers.
