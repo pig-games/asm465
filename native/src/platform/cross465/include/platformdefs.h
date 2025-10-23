@@ -43,6 +43,10 @@ cross465 .namespace
         CTRL_STATUS  = $DF46  ; R   | Debug/status bitfield (e.g., latched line state, overflow counters); reserved bits read as zero. 
     .endnamespace ; sytem
     gcontroller .namespace
+        JOYBASE1         = $DF50   ; Joystick Port 1 directions + fire. Bits 0–4 active low: Up, Down, Left, Right, Fire.
+        JOYBASE2         = $DF51   ; Joystick Port 2 directions + fire  bits 0–4 active low: Up, Down, Left, Right, Fire.
+        JOYBASE3         = $DF52   ; Joystick Port 3 directions + fire. Bits 0–4 active low: Up, Down, Left, Right, Fire.
+        JOYBASE4         = $DF53   ; Joystick Port 4 directions + fire  bits 0–4 active low: Up, Down, Left, Right, Fire.
 
     .endnamespace ; gcontroller
 .endnamespace ; cross465

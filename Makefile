@@ -13,7 +13,7 @@ ifeq (,$(filter $(TARGET),$(VALID_TARGETS)))
 endif
 
 # ---- Network config (for Ultimate64 uploads) --------------------------------
-ULTIMATE_IP ?= 192.168.0.188
+ULTIMATE_IP ?= 192.168.0.214
 -include native/config.mk   # optional local overrides (legacy path)
 -include config.mk          # optional local overrides (git-ignored)
 
