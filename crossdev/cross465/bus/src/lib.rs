@@ -37,6 +37,7 @@ pub mod display_mmio; // expose display device as bus::display_mmio::*
 pub mod interrupts; // expose shared interrupt controller helpers
 pub mod mmio; // shared module trait/registry scaffold
 pub mod personality; // personas describing MMIO layouts
+pub mod personality_v2; // data-driven personality definitions and loader
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
@@ -66,18 +67,91 @@ mod tests {
             "exactly one display implementation expected"
         );
     }
+
+    #[test]
+    fn bus_from_personality_def_maps_display_registers() {
+        let toml = r#"
+[personality]
+id = "modern-retro"
+title = "Modern Retro (Range)"
+
+[modules.display]
+impl = "display.basic2d"
+
+[modules.console]
+impl = "console.text"
+
+[[map]]
+decode = { range = { addr = "DF20..=DF21", kind = "display", order = ["BorderColor","BackgroundColor"] } }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        bus.write(0xDF20, 0x11);
+        bus.write(0xDF21, 0x22);
+
+        let snapshot = bus
+            .display_output_handle()
+            .expect("display handle")
+            .lock()
+            .unwrap()
+            .snapshot();
+
+        assert_eq!(snapshot.border_color, 0x11);
+        assert_eq!(snapshot.background_color, 0x22);
+    }
+
+    #[test]
+    fn value_builder_packs_signal_bits() {
+        let toml = r#"
+[personality]
+id = "signals"
+title = "Signal Test"
+
+[modules.system]
+impl = "system.interrupts"
+
+[[map]]
+decode = { sparse = [ { addr="DF40", kind="system", id="IrqPending", value_builder = { width = 1, bits = [ { bit = 0, src = "irq0" } ], const_set = "00000000" } } ] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        assert_eq!(bus.read(0xDF40), 0x00);
+
+        bus.set_signal_bool("irq0", true);
+        assert_eq!(bus.read(0xDF40), 0x01);
+
+        bus.set_signal_bool("irq0", false);
+        assert_eq!(bus.read(0xDF40), 0x00);
+
+        bus.clear_signals();
+        assert_eq!(bus.read(0xDF40), 0x00);
+    }
 }
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
 
 use std::any::Any;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
+use crate::mmio::{Module, ModuleDeps, ModuleKind, RegId};
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
 use interrupts::InterruptController;
 use personality::{InterruptLine, Personality, PersonalityMmioKind};
+use personality_v2::{
+    CompileError as PersonalityCompileError, Condition, InputSignals, InterruptConfig, Map,
+    MapDecode, PersonalityDef, PersonalityMetadata, Transform, ValueBuilder,
+};
 use sprite_mmio::SpriteMmio;
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
@@ -170,9 +244,10 @@ impl dyn MmioDevice {
 /// Everything else goes to RAM.
 pub struct Bus {
     ram: Arc<Mutex<Memory>>,
-    personality: &'static Personality,
+    personality_legacy: Option<&'static Personality>,
     mmio: Vec<MappedDevice>,
     controller: Arc<InterruptController>,
+    runtime_v2: Option<PersonalityRuntime>,
 }
 
 struct MappedDevice {
@@ -181,10 +256,396 @@ struct MappedDevice {
     kind: Option<PersonalityMmioKind>,
 }
 
+struct PersonalityRuntime {
+    #[allow(dead_code)]
+    metadata: PersonalityMetadata,
+    modules: Vec<ModuleInstance>,
+    module_lookup: BTreeMap<ModuleKind, usize>,
+    address_table: Vec<Option<AddressSlot>>,
+    #[allow(dead_code)]
+    conditions: BTreeMap<String, Condition>,
+    signals: SignalStore,
+    #[allow(dead_code)]
+    interrupts: InterruptConfig,
+}
+
+struct ModuleInstance {
+    #[allow(dead_code)]
+    kind: ModuleKind,
+    #[allow(dead_code)]
+    impl_id: String,
+    module: Box<dyn Module>,
+    #[allow(dead_code)]
+    options: crate::mmio::ModuleOptions,
+}
+
+#[derive(Clone)]
+struct AddressSlot {
+    priority: i32,
+    module_index: usize,
+    reg: RegId,
+    transform: Transform,
+    value_builder: Option<ValueBuilder>,
+    #[allow(dead_code)]
+    conditions: Vec<String>,
+}
+
+#[derive(Default)]
+struct SignalStore {
+    bools: HashMap<String, bool>,
+    ints: HashMap<String, i32>,
+    floats: HashMap<String, f32>,
+}
+
+impl SignalStore {
+    fn set_bool<S: Into<String>>(&mut self, name: S, value: bool) {
+        self.bools.insert(name.into(), value);
+    }
+
+    fn set_int<S: Into<String>>(&mut self, name: S, value: i32) {
+        self.ints.insert(name.into(), value);
+    }
+
+    fn set_float<S: Into<String>>(&mut self, name: S, value: f32) {
+        self.floats.insert(name.into(), value);
+    }
+
+    fn clear(&mut self) {
+        self.bools.clear();
+        self.ints.clear();
+        self.floats.clear();
+    }
+}
+
+impl InputSignals for SignalStore {
+    fn get_bool(&mut self, name: &str) -> Option<bool> {
+        self.bools.get(name).copied()
+    }
+
+    fn get_int(&mut self, name: &str) -> Option<i32> {
+        self.ints.get(name).copied()
+    }
+
+    fn get_f32(&mut self, name: &str) -> Option<f32> {
+        self.floats.get(name).copied()
+    }
+}
+
+fn compile_address_table(
+    maps: Vec<Map>,
+    lookup: &BTreeMap<ModuleKind, usize>,
+) -> Result<Vec<Option<AddressSlot>>, PersonalityCompileError> {
+    let mut table = vec![None; 0x10000];
+    for map in maps {
+        let Map {
+            priority,
+            active_when,
+            decode,
+        } = map;
+        match decode {
+            MapDecode::Range(range) => {
+                compile_range_map(&mut table, priority, &active_when, range, lookup)?;
+            }
+            MapDecode::Sparse(entries) => {
+                compile_sparse_map(&mut table, priority, &active_when, entries, lookup)?;
+            }
+        }
+    }
+    Ok(table)
+}
+
+fn compile_range_map(
+    table: &mut [Option<AddressSlot>],
+    priority: i32,
+    conditions: &[String],
+    range: personality_v2::RangeMap,
+    lookup: &BTreeMap<ModuleKind, usize>,
+) -> Result<(), PersonalityCompileError> {
+    let module_index = *lookup
+        .get(&range.module)
+        .ok_or(PersonalityCompileError::MissingModule(range.module))?;
+
+    let stride = if range.stride == 0 { 1 } else { range.stride };
+    for (idx, register) in range.order.into_iter().enumerate() {
+        let offset = (idx as u32)
+            .checked_mul(stride as u32)
+            .and_then(|v| u16::try_from(v).ok())
+            .ok_or(PersonalityCompileError::AddressOutOfRange {
+                addr: range.range.start,
+            })?;
+
+        let target_addr = range.range.start.checked_add(offset).ok_or(
+            PersonalityCompileError::AddressOutOfRange {
+                addr: range.range.start,
+            },
+        )?;
+
+        if target_addr > range.range.end {
+            return Err(PersonalityCompileError::AddressOutOfRange { addr: target_addr });
+        }
+
+        let slot = AddressSlot {
+            priority,
+            module_index,
+            reg: register.id,
+            transform: range.default_transform.clone().unwrap_or_default(),
+            value_builder: None,
+            conditions: conditions.to_vec(),
+        };
+
+        insert_slot(table, target_addr, slot)?;
+    }
+
+    Ok(())
+}
+
+fn compile_sparse_map(
+    table: &mut [Option<AddressSlot>],
+    priority: i32,
+    conditions: &[String],
+    entries: Vec<personality_v2::SparseEntry>,
+    lookup: &BTreeMap<ModuleKind, usize>,
+) -> Result<(), PersonalityCompileError> {
+    for entry in entries {
+        let module_index = *lookup
+            .get(&entry.module)
+            .ok_or(PersonalityCompileError::MissingModule(entry.module))?;
+
+        let slot = AddressSlot {
+            priority,
+            module_index,
+            reg: entry.register.id,
+            transform: entry.transform.unwrap_or_default(),
+            value_builder: entry.value_builder,
+            conditions: conditions.to_vec(),
+        };
+
+        insert_slot(table, entry.addr, slot)?;
+    }
+
+    Ok(())
+}
+
+fn insert_slot(
+    table: &mut [Option<AddressSlot>],
+    addr: u16,
+    slot: AddressSlot,
+) -> Result<(), PersonalityCompileError> {
+    let priority = slot.priority;
+    let cell = &mut table[addr as usize];
+    match cell {
+        Some(existing) => {
+            if existing.priority == priority {
+                return Err(PersonalityCompileError::AddressOverlap {
+                    addr,
+                    existing_priority: existing.priority,
+                    new_priority: priority,
+                });
+            }
+            if priority > existing.priority {
+                *existing = slot;
+            }
+        }
+        None => {
+            *cell = Some(slot);
+        }
+    }
+    Ok(())
+}
+
+impl PersonalityRuntime {
+    fn from_def(
+        def: PersonalityDef,
+        ram: Arc<Mutex<Memory>>,
+        controller: Arc<InterruptController>,
+    ) -> Result<Self, PersonalityCompileError> {
+        let PersonalityDef {
+            metadata,
+            modules,
+            conditions,
+            maps,
+            interrupts,
+        } = def;
+
+        let mut instances = Vec::with_capacity(modules.len());
+        let mut lookup = BTreeMap::new();
+
+        for (kind, config) in modules {
+            let deps = ModuleDeps::new(ram.clone(), controller.clone());
+            let module = config.factory.create(&deps, &config.options);
+            let index = instances.len();
+            lookup.insert(kind, index);
+            instances.push(ModuleInstance {
+                kind,
+                impl_id: config.impl_id,
+                module,
+                options: config.options,
+            });
+        }
+
+        let address_table = compile_address_table(maps, &lookup)?;
+
+        Ok(Self {
+            metadata,
+            modules: instances,
+            module_lookup: lookup,
+            address_table,
+            conditions,
+            signals: SignalStore::default(),
+            interrupts,
+        })
+    }
+
+    fn read(&mut self, addr: u16) -> Option<u8> {
+        let slot = self
+            .address_table
+            .get(addr as usize)
+            .and_then(|cell| cell.as_ref())?;
+
+        let module = self.modules.get_mut(slot.module_index)?.module.as_mut();
+
+        let mut value = if let Some(builder) = slot.value_builder.as_ref() {
+            builder
+                .build(&mut self.signals)
+                .get(0)
+                .copied()
+                .unwrap_or(0)
+        } else {
+            module.read_reg(slot.reg)
+        };
+
+        value = apply_shift(value, slot.transform.shift);
+        value ^= slot.transform.invert_mask;
+        if slot.transform.wo_mask != 0 {
+            value &= !slot.transform.wo_mask;
+        }
+
+        Some(value)
+    }
+
+    fn write(&mut self, addr: u16, mut value: u8) -> bool {
+        let slot = match self
+            .address_table
+            .get(addr as usize)
+            .and_then(|cell| cell.as_ref())
+        {
+            Some(slot) => slot,
+            None => return false,
+        };
+
+        let module = match self.modules.get_mut(slot.module_index) {
+            Some(m) => m.module.as_mut(),
+            None => return false,
+        };
+
+        value = reverse_shift(value, slot.transform.shift);
+        value ^= slot.transform.invert_mask;
+
+        if slot.transform.ro_mask != 0 {
+            let current = module.read_reg(slot.reg);
+            value = (value & !slot.transform.ro_mask) | (current & slot.transform.ro_mask);
+        }
+
+        module.write_reg(slot.reg, value);
+        true
+    }
+
+    fn module_index(&self, kind: ModuleKind) -> Option<usize> {
+        self.module_lookup.get(&kind).copied()
+    }
+
+    fn module(&self, kind: ModuleKind) -> Option<&dyn Module> {
+        let index = self.module_index(kind)?;
+        Some(self.modules[index].module.as_ref())
+    }
+
+    fn module_mut(&mut self, kind: ModuleKind) -> Option<&mut dyn Module> {
+        let index = self.module_index(kind)?;
+        Some(self.modules[index].module.as_mut())
+    }
+
+    fn module_downcast<T: 'static>(&self, kind: ModuleKind) -> Option<&T> {
+        self.module(kind).and_then(|module| {
+            let device: &dyn crate::MmioDevice = module;
+            device.as_any().downcast_ref::<T>()
+        })
+    }
+
+    fn module_downcast_mut<T: 'static>(&mut self, kind: ModuleKind) -> Option<&mut T> {
+        self.module_mut(kind).and_then(|module| {
+            let device: &mut dyn crate::MmioDevice = module;
+            device.as_any_mut().downcast_mut::<T>()
+        })
+    }
+
+    fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
+        self.module_downcast::<ConsoleMmio>(ModuleKind::Console)
+            .map(|console| console.output())
+    }
+
+    fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
+        self.module_downcast::<DisplayMmio>(ModuleKind::Display)
+            .map(|display| display.output())
+    }
+
+    fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
+        self.module_downcast::<SpriteMmio>(ModuleKind::Sprite)
+            .map(|sprite| sprite.output())
+    }
+
+    fn clear_console_buffer(&mut self) {
+        if let Some(console) = self.module_downcast_mut::<ConsoleMmio>(ModuleKind::Console) {
+            console.clear();
+        }
+    }
+
+    fn set_console_petscii(&mut self, petscii: bool) {
+        if let Some(console) = self.module_downcast_mut::<ConsoleMmio>(ModuleKind::Console) {
+            console.petscii_mode = petscii;
+        }
+    }
+
+    fn set_signal_bool<S: Into<String>>(&mut self, name: S, value: bool) {
+        self.signals.set_bool(name, value);
+    }
+
+    fn set_signal_int<S: Into<String>>(&mut self, name: S, value: i32) {
+        self.signals.set_int(name, value);
+    }
+
+    fn set_signal_float<S: Into<String>>(&mut self, name: S, value: f32) {
+        self.signals.set_float(name, value);
+    }
+
+    fn clear_signals(&mut self) {
+        self.signals.clear();
+    }
+}
+
+fn apply_shift(value: u8, shift: i8) -> u8 {
+    if shift > 0 {
+        value.wrapping_shl(shift as u32)
+    } else if shift < 0 {
+        value.wrapping_shr((-shift) as u32)
+    } else {
+        value
+    }
+}
+
+fn reverse_shift(value: u8, shift: i8) -> u8 {
+    if shift > 0 {
+        value.wrapping_shr(shift as u32)
+    } else if shift < 0 {
+        value.wrapping_shl((-shift) as u32)
+    } else {
+        value
+    }
+}
+
 impl Bus {
     /// Active personality descriptor backing this bus.
-    pub fn personality(&self) -> &'static Personality {
-        self.personality
+    pub fn personality(&self) -> Option<&'static Personality> {
+        self.personality_legacy
     }
 
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
@@ -198,9 +659,10 @@ impl Bus {
         let controller = Arc::new(InterruptController::new());
         let mut bus = Self {
             ram: ram.clone(),
-            personality,
+            personality_legacy: Some(personality),
             mmio: Vec::new(),
             controller: controller.clone(),
+            runtime_v2: None,
         };
         for mapping in personality.mmio {
             let device = (mapping.create)(&ram, &controller);
@@ -214,6 +676,20 @@ impl Bus {
         }
         bus.controller.set_irq_enable(irq_enable);
         bus
+    }
+
+    /// Construct the bus from a data-driven [`PersonalityDef`].
+    pub fn from_personality_def(def: PersonalityDef) -> Result<Self, PersonalityCompileError> {
+        let ram = Arc::new(Mutex::new(Memory::new()));
+        let controller = Arc::new(InterruptController::new());
+        let runtime = PersonalityRuntime::from_def(def, ram.clone(), controller.clone())?;
+        Ok(Self {
+            ram,
+            personality_legacy: None,
+            mmio: Vec::new(),
+            controller,
+            runtime_v2: Some(runtime),
+        })
     }
 
     /// Map an MMIO device to a specific address range (inclusive).
@@ -235,6 +711,11 @@ impl Bus {
 
     /// Read a byte from the bus (MMIO devices intercept their ranges).
     pub fn read(&mut self, addr: u16) -> u8 {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            if let Some(value) = runtime.read(addr) {
+                return value;
+            }
+        }
         if let Some(dev) = self.find_mmio(addr) {
             return dev.read(addr);
         }
@@ -244,6 +725,11 @@ impl Bus {
 
     /// Write a byte to the bus (MMIO devices intercept their ranges).
     pub fn write(&mut self, addr: u16, value: u8) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            if runtime.write(addr, value) {
+                return;
+            }
+        }
         if let Some(dev) = self.find_mmio(addr) {
             dev.write(addr, value);
             return;
@@ -279,6 +765,10 @@ impl Bus {
 
     /// Enable/disable PETSCII translation on the default console device.
     pub fn with_console_petscii(mut self, petscii: bool) -> Self {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.set_console_petscii(petscii);
+            return self;
+        }
         for mapped in self.mmio.iter_mut() {
             if mapped.kind == Some(PersonalityMmioKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
@@ -291,6 +781,11 @@ impl Bus {
 
     /// Expose the console device's shared output buffer.
     pub fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
+        if let Some(runtime) = &self.runtime_v2 {
+            if let Some(handle) = runtime.console_output_handle() {
+                return Some(handle);
+            }
+        }
         for mapped in self.mmio.iter() {
             if mapped.kind == Some(PersonalityMmioKind::Console) {
                 if let Some(c) = mapped.device.as_any().downcast_ref::<ConsoleMmio>() {
@@ -303,6 +798,11 @@ impl Bus {
 
     /// Expose the display device's shared output buffer (border/background).
     pub fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
+        if let Some(runtime) = &self.runtime_v2 {
+            if let Some(handle) = runtime.display_output_handle() {
+                return Some(handle);
+            }
+        }
         for mapped in self.mmio.iter() {
             if mapped.kind == Some(PersonalityMmioKind::Display) {
                 if let Some(d) = mapped.device.as_any().downcast_ref::<DisplayMmio>() {
@@ -315,6 +815,11 @@ impl Bus {
 
     /// Expose the sprite device's shared output buffer.
     pub fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
+        if let Some(runtime) = &self.runtime_v2 {
+            if let Some(handle) = runtime.sprite_output_handle() {
+                return Some(handle);
+            }
+        }
         for mapped in self.mmio.iter() {
             if mapped.kind == Some(PersonalityMmioKind::Sprite) {
                 if let Some(s) = mapped.device.as_any().downcast_ref::<SpriteMmio>() {
@@ -333,12 +838,40 @@ impl Bus {
 
     /// Clear the console buffer (if present).
     pub fn clear_console_buffer(&mut self) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.clear_console_buffer();
+            return;
+        }
         for mapped in self.mmio.iter_mut() {
             if mapped.kind == Some(PersonalityMmioKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.clear();
                 }
             }
+        }
+    }
+
+    pub fn set_signal_bool<S: Into<String>>(&mut self, name: S, value: bool) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.set_signal_bool(name, value);
+        }
+    }
+
+    pub fn set_signal_int<S: Into<String>>(&mut self, name: S, value: i32) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.set_signal_int(name, value);
+        }
+    }
+
+    pub fn set_signal_float<S: Into<String>>(&mut self, name: S, value: f32) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.set_signal_float(name, value);
+        }
+    }
+
+    pub fn clear_signals(&mut self) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.clear_signals();
         }
     }
 }

@@ -1,7 +1,8 @@
 //! Sprite MMIO device that exposes sprite register state.
 
 use crate::mmio::{
-    BitField, Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc, SpriteReg,
+    BitField, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
+    SpriteReg,
 };
 use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
@@ -82,15 +83,40 @@ const SPRITE_SCALE_FIELDS: &[BitField] = &[
 ];
 
 const SPRITE_REGS: &[RegisterDesc] = &[
-    RegisterDesc::new(RegId::Sprite(SpriteReg::Select), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::Number), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::Anim), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::XHi), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::XLo), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::YHi), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Sprite(SpriteReg::YLo), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Select),
+        "Select",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Number),
+        "Number",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Anim),
+        "Anim",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::XHi), "XHi", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::XLo), "XLo", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::YHi), "YHi", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::YLo), "YLo", 1, 0, true, true, &[]),
     RegisterDesc::new(
         RegId::Sprite(SpriteReg::Scale),
+        "Scale",
         1,
         0,
         true,
@@ -306,7 +332,7 @@ impl ModuleFactory for SpriteModuleFactory {
         ModuleKind::Sprite
     }
 
-    fn create(&self, _deps: &ModuleDeps) -> Box<dyn Module> {
+    fn create(&self, _deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
         Box::new(SpriteMmio::new())
     }
 

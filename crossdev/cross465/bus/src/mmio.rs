@@ -1,14 +1,45 @@
 use std::sync::{Arc, Mutex};
 
 use crate::{interrupts::InterruptController, Memory, MmioDevice};
+use toml::value::Table;
 
 /// Logical grouping of a module implementation exposed to the bus.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ModuleKind {
     Console,
     Display,
     Sprite,
     System,
+    Input,
+    Video,
+    Audio,
+}
+
+impl ModuleKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModuleKind::Console => "console",
+            ModuleKind::Display => "display",
+            ModuleKind::Sprite => "sprite",
+            ModuleKind::System => "system",
+            ModuleKind::Input => "input",
+            ModuleKind::Video => "video",
+            ModuleKind::Audio => "audio",
+        }
+    }
+
+    pub fn from_str(kind: &str) -> Option<Self> {
+        match kind {
+            "console" => Some(ModuleKind::Console),
+            "display" => Some(ModuleKind::Display),
+            "sprite" => Some(ModuleKind::Sprite),
+            "system" => Some(ModuleKind::System),
+            "input" => Some(ModuleKind::Input),
+            "video" => Some(ModuleKind::Video),
+            "audio" => Some(ModuleKind::Audio),
+            _ => None,
+        }
+    }
 }
 
 /// Stable identifier for a personality-visible register.
@@ -103,6 +134,7 @@ pub enum SystemReg {
 #[derive(Copy, Clone, Debug)]
 pub struct RegisterDesc {
     pub id: RegId,
+    pub name: &'static str,
     pub width: u8,
     pub reset: u32,
     pub readable: bool,
@@ -113,6 +145,7 @@ pub struct RegisterDesc {
 impl RegisterDesc {
     pub const fn new(
         id: RegId,
+        name: &'static str,
         width: u8,
         reset: u32,
         readable: bool,
@@ -121,12 +154,17 @@ impl RegisterDesc {
     ) -> Self {
         Self {
             id,
+            name,
             width,
             reset,
             readable,
             writable,
             bitfields,
         }
+    }
+
+    pub fn matches_name(&self, name: &str) -> bool {
+        self.name.eq_ignore_ascii_case(name)
     }
 }
 
@@ -166,6 +204,8 @@ pub struct ModuleDeps {
     pub controller: Arc<InterruptController>,
 }
 
+pub type ModuleOptions = Table;
+
 impl ModuleDeps {
     pub fn new(ram: Arc<Mutex<Memory>>, controller: Arc<InterruptController>) -> Self {
         Self { ram, controller }
@@ -191,7 +231,7 @@ pub trait Module: MmioDevice {
 pub trait ModuleFactory: Send + Sync {
     fn id(&self) -> &'static str;
     fn kind(&self) -> ModuleKind;
-    fn create(&self, deps: &ModuleDeps) -> Box<dyn Module>;
+    fn create(&self, deps: &ModuleDeps, options: &ModuleOptions) -> Box<dyn Module>;
     fn regs(&self) -> &'static [RegisterDesc];
 }
 

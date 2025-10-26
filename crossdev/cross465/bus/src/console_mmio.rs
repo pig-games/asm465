@@ -12,7 +12,9 @@
 //! enable a PETSCII‑ish translation mode by calling
 //! [`Bus::with_console_petscii`](crate::Bus::with_console_petscii).
 
-use crate::mmio::{ConsoleReg, Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc};
+use crate::mmio::{
+    ConsoleReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
+};
 use crate::Memory;
 use crate::MmioDevice;
 use crate::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii};
@@ -216,19 +218,61 @@ pub struct ConsoleMmio {
 const CONSOLE_REGS: &[RegisterDesc] = &[
     RegisterDesc::new(
         RegId::Console(ConsoleReg::WriteChar),
+        "WriteChar",
         1,
         0,
         false,
         true,
         &[],
     ),
-    RegisterDesc::new(RegId::Console(ConsoleReg::Newline), 1, 0, false, true, &[]),
-    RegisterDesc::new(RegId::Console(ConsoleReg::WriteHex), 1, 0, false, true, &[]),
-    RegisterDesc::new(RegId::Console(ConsoleReg::Clear), 1, 0, false, true, &[]),
-    RegisterDesc::new(RegId::Console(ConsoleReg::CursorX), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Console(ConsoleReg::CursorY), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::Newline),
+        "Newline",
+        1,
+        0,
+        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::WriteHex),
+        "WriteHex",
+        1,
+        0,
+        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::Clear),
+        "Clear",
+        1,
+        0,
+        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::CursorX),
+        "CursorX",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::CursorY),
+        "CursorY",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
     RegisterDesc::new(
         RegId::Console(ConsoleReg::CursorApply),
+        "CursorApply",
         1,
         0,
         false,
@@ -237,6 +281,7 @@ const CONSOLE_REGS: &[RegisterDesc] = &[
     ),
     RegisterDesc::new(
         RegId::Console(ConsoleReg::Foreground),
+        "Foreground",
         1,
         7,
         true,
@@ -245,16 +290,34 @@ const CONSOLE_REGS: &[RegisterDesc] = &[
     ),
     RegisterDesc::new(
         RegId::Console(ConsoleReg::Background),
+        "Background",
         1,
         0,
         true,
         true,
         &[],
     ),
-    RegisterDesc::new(RegId::Console(ConsoleReg::PointerLo), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::Console(ConsoleReg::PointerHi), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::PointerLo),
+        "PointerLo",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Console(ConsoleReg::PointerHi),
+        "PointerHi",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
     RegisterDesc::new(
         RegId::Console(ConsoleReg::PrintBlock),
+        "PrintBlock",
         1,
         0,
         true,
@@ -514,7 +577,7 @@ impl ModuleFactory for ConsoleModuleFactory {
         ModuleKind::Console
     }
 
-    fn create(&self, deps: &ModuleDeps) -> Box<dyn Module> {
+    fn create(&self, deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
         Box::new(ConsoleMmio::new(deps.ram.clone()))
     }
 

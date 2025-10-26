@@ -1,5 +1,7 @@
 use crate::interrupts::InterruptController;
-use crate::mmio::{Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc, SystemReg};
+use crate::mmio::{
+    Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc, SystemReg,
+};
 use crate::MmioDevice;
 use std::sync::Arc;
 
@@ -9,20 +11,69 @@ pub struct SystemMmio {
 }
 
 const SYSTEM_REGS: &[RegisterDesc] = &[
-    RegisterDesc::new(RegId::System(SystemReg::IrqPending), 1, 0, true, false, &[]),
-    RegisterDesc::new(RegId::System(SystemReg::IrqEnable), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::System(SystemReg::IrqAck), 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::System(SystemReg::IrqPending),
+        "IrqPending",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::IrqEnable),
+        "IrqEnable",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::IrqAck),
+        "IrqAck",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
     RegisterDesc::new(
         RegId::System(SystemReg::IrqSource),
+        "IrqSource",
         1,
         0xFF,
         true,
         false,
         &[],
     ),
-    RegisterDesc::new(RegId::System(SystemReg::NmiPending), 1, 0, true, false, &[]),
-    RegisterDesc::new(RegId::System(SystemReg::NmiAck), 1, 0, true, true, &[]),
-    RegisterDesc::new(RegId::System(SystemReg::Status), 1, 0, true, false, &[]),
+    RegisterDesc::new(
+        RegId::System(SystemReg::NmiPending),
+        "NmiPending",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::NmiAck),
+        "NmiAck",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::Status),
+        "Status",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
 ];
 
 impl SystemMmio {
@@ -174,7 +225,7 @@ impl ModuleFactory for SystemModuleFactory {
         ModuleKind::System
     }
 
-    fn create(&self, deps: &ModuleDeps) -> Box<dyn Module> {
+    fn create(&self, deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
         Box::new(SystemMmio::new(deps.controller.clone()))
     }
 

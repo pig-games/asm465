@@ -12,9 +12,9 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Populate `regs()` descriptors with reset/RO/WO metadata for each module, adding spot tests where needed. (see `PersonalitiesMilestone1Notes.md`)
 
 ## Milestone 2 – Personality Data Model
-- [ ] Define in-memory structures mirroring the v2 TOML schema (modules, maps, transforms, conditions, interrupts, value builders).
-- [ ] Implement the TOML loader with validation for module IDs, register IDs, hooks, and transforms.
-- [ ] Provide clear diagnostics for invalid personalities and surface loader errors to callers.
+- [x] Define in-memory structures mirroring the v2 TOML schema (modules, maps, transforms, conditions, interrupts, value builders). (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Implement the TOML loader with validation for module IDs, register IDs, hooks, and transforms. (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Provide clear diagnostics for invalid personalities and surface loader errors to callers. (see `PersonalitiesMilestone2Notes.md`)
 
 ## Milestone 3 – Decoder Integration
 - [ ] Compile range and sparse maps into an address lookup table with priority resolution.

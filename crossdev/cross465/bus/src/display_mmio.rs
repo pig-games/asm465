@@ -4,7 +4,9 @@
 //! content background colours.  The sprite device exposes the remaining sprite
 //! state so display concerns can evolve independently.
 
-use crate::mmio::{DisplayReg, Module, ModuleDeps, ModuleFactory, ModuleKind, RegId, RegisterDesc};
+use crate::mmio::{
+    DisplayReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
+};
 use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
 
@@ -61,6 +63,7 @@ pub struct DisplayMmio {
 const DISPLAY_REGS: &[RegisterDesc] = &[
     RegisterDesc::new(
         RegId::Display(DisplayReg::BorderColor),
+        "BorderColor",
         1,
         0,
         true,
@@ -69,6 +72,7 @@ const DISPLAY_REGS: &[RegisterDesc] = &[
     ),
     RegisterDesc::new(
         RegId::Display(DisplayReg::BackgroundColor),
+        "BackgroundColor",
         1,
         0,
         true,
@@ -170,7 +174,7 @@ impl ModuleFactory for DisplayModuleFactory {
         ModuleKind::Display
     }
 
-    fn create(&self, _deps: &ModuleDeps) -> Box<dyn Module> {
+    fn create(&self, _deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
         Box::new(DisplayMmio::new())
     }
 
