@@ -14,6 +14,7 @@
 - Added `Bus::from_personality_def`, which compiles a `PersonalityDef` into a `PersonalityRuntime` with instantiated modules, a 64 KB address table, and cached condition metadata.
 - Range/sparse maps insert `AddressSlot`s with priority resolution (higher priorities override lower while same-priority collisions error).
 - Legacy personalities remain available via `Bus::with_personality`; v2 runtime coexists alongside the legacy `mmio` mapping and reuses host helpers (console/display/sprite accessors).
+- Condition descriptors are evaluated on MMIO writes; when a condition’s value changes, the runtime rebuilds the address table so `active_when` overlays activate/deactivate immediately.
 
 ## Value Builder Engine & Signals
 - `ValueBuilder::build` executes bit bindings against a `SignalStore` implementing the spec’s `InputSignals` trait.

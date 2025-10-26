@@ -134,6 +134,49 @@ decode = { sparse = [ { addr="DF40", kind="system", id="IrqPending", value_build
         bus.clear_signals();
         assert_eq!(bus.read(0xDF40), 0x00);
     }
+
+    #[test]
+    fn conditions_toggle_sparse_overlays() {
+        let toml = r#"
+[personality]
+id = "banking"
+title = "Condition Banking"
+
+[modules.system]
+impl = "system.interrupts"
+
+[conditions]
+bank1 = { kind = "system", reg = "IrqEnable", equals = 1 }
+
+[[map]]
+priority = 0
+decode = { sparse = [
+  { addr = "DF40", kind = "system", id = "IrqPending" },
+  { addr = "DF41", kind = "system", id = "IrqEnable" }
+] }
+
+[[map]]
+priority = 1
+active_when = "bank1"
+decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        // Initially the lower-priority IrqPending map is active.
+        assert_eq!(bus.read(0xDF40), 0x00);
+
+        // Enable IRQ bit via the underlying module; this satisfies `bank1` and should swap to IrqEnable view.
+        bus.write(0xDF41, 0x01);
+        assert_eq!(bus.read(0xDF40), 0x01);
+
+        // Clearing the enable bit should revert to the pending register mapping.
+        bus.write(0xDF41, 0x00);
+        assert_eq!(bus.read(0xDF40), 0x00);
+    }
 }
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
@@ -261,9 +304,10 @@ struct PersonalityRuntime {
     metadata: PersonalityMetadata,
     modules: Vec<ModuleInstance>,
     module_lookup: BTreeMap<ModuleKind, usize>,
+    maps: Vec<Map>,
     address_table: Vec<Option<AddressSlot>>,
-    #[allow(dead_code)]
     conditions: BTreeMap<String, Condition>,
+    condition_states: BTreeMap<String, bool>,
     signals: SignalStore,
     #[allow(dead_code)]
     interrupts: InterruptConfig,
@@ -286,8 +330,6 @@ struct AddressSlot {
     reg: RegId,
     transform: Transform,
     value_builder: Option<ValueBuilder>,
-    #[allow(dead_code)]
-    conditions: Vec<String>,
 }
 
 #[derive(Default)]
@@ -332,22 +374,25 @@ impl InputSignals for SignalStore {
 }
 
 fn compile_address_table(
-    maps: Vec<Map>,
+    maps: &[Map],
     lookup: &BTreeMap<ModuleKind, usize>,
+    condition_states: &BTreeMap<String, bool>,
 ) -> Result<Vec<Option<AddressSlot>>, PersonalityCompileError> {
     let mut table = vec![None; 0x10000];
     for map in maps {
-        let Map {
-            priority,
-            active_when,
-            decode,
-        } = map;
-        match decode {
+        if !map
+            .active_when
+            .iter()
+            .all(|name| *condition_states.get(name).unwrap_or(&false))
+        {
+            continue;
+        }
+        match &map.decode {
             MapDecode::Range(range) => {
-                compile_range_map(&mut table, priority, &active_when, range, lookup)?;
+                compile_range_map(&mut table, map.priority, range, lookup)?;
             }
             MapDecode::Sparse(entries) => {
-                compile_sparse_map(&mut table, priority, &active_when, entries, lookup)?;
+                compile_sparse_map(&mut table, map.priority, entries, lookup)?;
             }
         }
     }
@@ -357,8 +402,7 @@ fn compile_address_table(
 fn compile_range_map(
     table: &mut [Option<AddressSlot>],
     priority: i32,
-    conditions: &[String],
-    range: personality_v2::RangeMap,
+    range: &personality_v2::RangeMap,
     lookup: &BTreeMap<ModuleKind, usize>,
 ) -> Result<(), PersonalityCompileError> {
     let module_index = *lookup
@@ -366,7 +410,7 @@ fn compile_range_map(
         .ok_or(PersonalityCompileError::MissingModule(range.module))?;
 
     let stride = if range.stride == 0 { 1 } else { range.stride };
-    for (idx, register) in range.order.into_iter().enumerate() {
+    for (idx, register) in range.order.iter().enumerate() {
         let offset = (idx as u32)
             .checked_mul(stride as u32)
             .and_then(|v| u16::try_from(v).ok())
@@ -390,7 +434,6 @@ fn compile_range_map(
             reg: register.id,
             transform: range.default_transform.clone().unwrap_or_default(),
             value_builder: None,
-            conditions: conditions.to_vec(),
         };
 
         insert_slot(table, target_addr, slot)?;
@@ -402,8 +445,7 @@ fn compile_range_map(
 fn compile_sparse_map(
     table: &mut [Option<AddressSlot>],
     priority: i32,
-    conditions: &[String],
-    entries: Vec<personality_v2::SparseEntry>,
+    entries: &[personality_v2::SparseEntry],
     lookup: &BTreeMap<ModuleKind, usize>,
 ) -> Result<(), PersonalityCompileError> {
     for entry in entries {
@@ -415,9 +457,8 @@ fn compile_sparse_map(
             priority,
             module_index,
             reg: entry.register.id,
-            transform: entry.transform.unwrap_or_default(),
-            value_builder: entry.value_builder,
-            conditions: conditions.to_vec(),
+            transform: entry.transform.clone().unwrap_or_default(),
+            value_builder: entry.value_builder.clone(),
         };
 
         insert_slot(table, entry.addr, slot)?;
@@ -483,17 +524,22 @@ impl PersonalityRuntime {
             });
         }
 
-        let address_table = compile_address_table(maps, &lookup)?;
-
-        Ok(Self {
+        let mut runtime = Self {
             metadata,
             modules: instances,
             module_lookup: lookup,
-            address_table,
+            maps,
+            address_table: Vec::new(),
             conditions,
+            condition_states: BTreeMap::new(),
             signals: SignalStore::default(),
             interrupts,
-        })
+        };
+
+        runtime.update_condition_states()?;
+        runtime.rebuild_address_table()?;
+
+        Ok(runtime)
     }
 
     fn read(&mut self, addr: u16) -> Option<u8> {
@@ -547,11 +593,51 @@ impl PersonalityRuntime {
         }
 
         module.write_reg(slot.reg, value);
+        self.recompute_conditions_if_needed();
         true
     }
 
     fn module_index(&self, kind: ModuleKind) -> Option<usize> {
         self.module_lookup.get(&kind).copied()
+    }
+
+    fn update_condition_states(&mut self) -> Result<bool, PersonalityCompileError> {
+        let mut changed = false;
+        for (name, cond) in &self.conditions {
+            let module_index = *self
+                .module_lookup
+                .get(&cond.module)
+                .ok_or(PersonalityCompileError::MissingModule(cond.module))?;
+            let module = &mut self.modules[module_index].module;
+            let value = module.read_reg(cond.register.id);
+            let satisfied = (value as i32) == cond.equals;
+            let previous = self.condition_states.insert(name.clone(), satisfied);
+            if previous.map(|prev| prev != satisfied).unwrap_or(true) {
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
+    fn rebuild_address_table(&mut self) -> Result<(), PersonalityCompileError> {
+        self.address_table = compile_address_table(
+            &self.maps,
+            &self.module_lookup,
+            &self.condition_states,
+        )?;
+        Ok(())
+    }
+
+    fn recompute_conditions_if_needed(&mut self) {
+        match self.update_condition_states() {
+            Ok(true) => {
+                if let Err(err) = self.rebuild_address_table() {
+                    panic!("failed to rebuild address table after condition update: {}", err);
+                }
+            }
+            Ok(false) => {}
+            Err(err) => panic!("failed to update condition states: {}", err),
+        }
     }
 
     fn module(&self, kind: ModuleKind) -> Option<&dyn Module> {
