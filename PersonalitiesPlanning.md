@@ -17,14 +17,14 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Provide clear diagnostics for invalid personalities and surface loader errors to callers. (see `PersonalitiesMilestone2Notes.md`)
 
 ## Milestone 3 – Decoder Integration
-- [ ] Compile range and sparse maps into an address lookup table with priority resolution.
-- [ ] Update bus construction to instantiate modules via the registry and apply the compiled decoder output.
-- [ ] Wire condition tracking so decoder tables rebuild when personality-defined triggers change.
+- [x] Compile range and sparse maps into an address lookup table with priority resolution. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Update bus construction to instantiate modules via the registry and apply the compiled decoder output. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Wire condition tracking so decoder tables rebuild when personality-defined triggers change. (see `crossdev/cross465/bus/src/lib.rs`)
 
 ## Milestone 4 – Value Builder Pipeline
-- [ ] Implement the value-builder engine and input signal resolution API with cached lookups.
-- [ ] Execute builders in the bus read path ahead of module `read` calls, then apply transforms.
-- [ ] Cover boolean bit packing, numeric field packing, multi-byte outputs, and post-processing with targeted tests.
+- [x] Implement the value-builder engine and input signal resolution API with cached lookups. (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Execute builders in the bus read path ahead of module `read` calls, then apply transforms. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Cover boolean bit packing, numeric field packing, multi-byte outputs, and post-processing with targeted tests. (see `crossdev/cross465/bus/src/lib.rs` tests)
 
 ## Milestone 5 – Reference Personalities
 - [ ] Author a range-based personality that reproduces today’s contiguous layout as a regression baseline.

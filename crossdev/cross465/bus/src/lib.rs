@@ -56,6 +56,7 @@ pub fn builtin_module_registry() -> mmio::ModuleRegistry {
 mod tests {
     use super::*;
     use crate::mmio::ModuleKind;
+    use crate::personality;
 
     #[test]
     fn builtin_registry_contains_expected_factories() {
@@ -133,6 +134,88 @@ decode = { sparse = [ { addr="DF40", kind="system", id="IrqPending", value_build
 
         bus.clear_signals();
         assert_eq!(bus.read(0xDF40), 0x00);
+    }
+
+    #[test]
+    fn modern_retro_range_matches_legacy() {
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(
+            include_str!("../../personality_defs/modern-retro-range.toml"),
+            &registry,
+        )
+        .expect("load personality");
+        let mut bus_v2 = Bus::from_personality_def(def).expect("build v2 bus");
+        let mut bus_legacy = Bus::with_personality(personality::default());
+
+        // Display: writes mirror legacy colours.
+        bus_v2.write(0xDF20, 0x0E);
+        bus_legacy.write(0xDF20, 0x0E);
+        bus_v2.write(0xDF21, 0x04);
+        bus_legacy.write(0xDF21, 0x04);
+        assert_eq!(bus_v2.read(0xDF20), bus_legacy.read(0xDF20));
+        assert_eq!(bus_v2.read(0xDF21), bus_legacy.read(0xDF21));
+        let v2_display = bus_v2
+            .display_output_handle()
+            .expect("v2 display handle")
+            .lock()
+            .unwrap()
+            .snapshot();
+        let legacy_display = bus_legacy
+            .display_output_handle()
+            .expect("legacy display handle")
+            .lock()
+            .unwrap()
+            .snapshot();
+        assert_eq!(v2_display.border_color, legacy_display.border_color);
+        assert_eq!(
+            v2_display.background_color,
+            legacy_display.background_color
+        );
+
+        // Sprite MMIO (slot select + properties).
+        bus_v2.write(0xDF30, 0x02);
+        bus_legacy.write(0xDF30, 0x02);
+        bus_v2.write(0xDF31, 0x07);
+        bus_legacy.write(0xDF31, 0x07);
+        bus_v2.write(0xDF32, 0x03);
+        bus_legacy.write(0xDF32, 0x03);
+        bus_v2.write(0xDF33, 0x12);
+        bus_legacy.write(0xDF33, 0x12);
+        bus_v2.write(0xDF34, 0x34);
+        bus_legacy.write(0xDF34, 0x34);
+        bus_v2.write(0xDF35, 0x56);
+        bus_legacy.write(0xDF35, 0x56);
+        bus_v2.write(0xDF36, 0x78);
+        bus_legacy.write(0xDF36, 0x78);
+        bus_v2.write(0xDF37, 0x21);
+        bus_legacy.write(0xDF37, 0x21);
+        for addr in 0xDF30..=0xDF37 {
+            assert_eq!(
+                bus_v2.read(addr),
+                bus_legacy.read(addr),
+                "sprite register {addr:#06X} mismatch"
+            );
+        }
+
+        // System MMIO (IRQ enable/pending mirrors).
+        bus_v2.write(0xDF41, 0x05);
+        bus_legacy.write(0xDF41, 0x05);
+        assert_eq!(bus_v2.read(0xDF41), bus_legacy.read(0xDF41));
+        // Simulate IRQ raise via controller.
+        let controller = bus_v2.interrupt_controller();
+        controller.raise_irq(0x02);
+        let legacy_controller = bus_legacy.interrupt_controller();
+        legacy_controller.raise_irq(0x02);
+        assert_eq!(bus_v2.read(0xDF40), bus_legacy.read(0xDF40));
+        assert_eq!(bus_v2.read(0xDF43), bus_legacy.read(0xDF43));
+
+        // Console pointer registers (readable slots).
+        bus_v2.write(0xDF09, 0xAA);
+        bus_legacy.write(0xDF09, 0xAA);
+        bus_v2.write(0xDF0A, 0x55);
+        bus_legacy.write(0xDF0A, 0x55);
+        assert_eq!(bus_v2.read(0xDF09), bus_legacy.read(0xDF09));
+        assert_eq!(bus_v2.read(0xDF0A), bus_legacy.read(0xDF0A));
     }
 
     #[test]

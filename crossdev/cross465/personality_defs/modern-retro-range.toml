@@ -1,0 +1,48 @@
+[personality]
+id = "modern-retro-range"
+title = "Modern Retro (Range)"
+default_map_priority = 10
+
+[modules.console]
+impl = "console.text"
+
+[modules.display]
+impl = "display.basic2d"
+
+[modules.sprite]
+impl = "sprite.basic"
+
+[modules.system]
+impl = "system.interrupts"
+
+[[map]]
+priority = 10
+decode = { range = { addr = "DF00..=DF1F", kind = "console", order = [
+  "WriteChar","Newline","WriteHex","Clear",
+  "CursorX","CursorY","CursorApply","Foreground","Background",
+  "PointerLo","PointerHi","PrintBlock"
+] } }
+
+[[map]]
+priority = 10
+decode = { range = { addr = "DF20..=DF21", kind = "display", order = [
+  "BorderColor","BackgroundColor"
+] } }
+
+[[map]]
+priority = 10
+decode = { range = { addr = "DF30..=DF37", kind = "sprite", order = [
+  "Select","Number","Anim","XHi","XLo","YHi","YLo","Scale"
+] } }
+
+[[map]]
+priority = 10
+decode = { range = { addr = "DF40..=DF46", kind = "system", order = [
+  "IrqPending","IrqEnable","IrqAck","IrqSource",
+  "NmiPending","NmiAck","Status"
+] } }
+
+[interrupts]
+irq_sources = [
+  { kind = "system", id = "IrqPending" }
+]
