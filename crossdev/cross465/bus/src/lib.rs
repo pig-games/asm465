@@ -167,10 +167,7 @@ decode = { sparse = [ { addr="DF40", kind="system", id="IrqPending", value_build
             .unwrap()
             .snapshot();
         assert_eq!(v2_display.border_color, legacy_display.border_color);
-        assert_eq!(
-            v2_display.background_color,
-            legacy_display.background_color
-        );
+        assert_eq!(v2_display.background_color, legacy_display.background_color);
 
         // Sprite MMIO (slot select + properties).
         bus_v2.write(0xDF30, 0x02);
@@ -703,11 +700,8 @@ impl PersonalityRuntime {
     }
 
     fn rebuild_address_table(&mut self) -> Result<(), PersonalityCompileError> {
-        self.address_table = compile_address_table(
-            &self.maps,
-            &self.module_lookup,
-            &self.condition_states,
-        )?;
+        self.address_table =
+            compile_address_table(&self.maps, &self.module_lookup, &self.condition_states)?;
         Ok(())
     }
 
@@ -715,7 +709,10 @@ impl PersonalityRuntime {
         match self.update_condition_states() {
             Ok(true) => {
                 if let Err(err) = self.rebuild_address_table() {
-                    panic!("failed to rebuild address table after condition update: {}", err);
+                    panic!(
+                        "failed to rebuild address table after condition update: {}",
+                        err
+                    );
                 }
             }
             Ok(false) => {}

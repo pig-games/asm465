@@ -32,7 +32,9 @@ use bus::{unicode_to_screen, Bus};
 use core6502::{Cpu, RunLimit, RunOutcome};
 
 mod cpu_worker;
-use cpu_worker::{CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs};
+use cpu_worker::{
+    CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs, PersonalitySelection,
+};
 
 #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
@@ -53,6 +55,50 @@ use std::thread;
 
 pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
+const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] =
+    &[("modern-retro-range", "Modern Retro (Range)")];
+
+#[cfg(feature = "native-service")]
+fn builtin_personality_path(id: &str) -> Option<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cross465/personality_defs");
+    match id {
+        "modern-retro-range" => Some(base.join("modern-retro-range.toml")),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "native-service")]
+fn print_personality_list() {
+    println!("Legacy personalities:");
+    for persona in personality::all() {
+        println!("  {:<20} {}", persona.name, persona.description);
+    }
+    println!("\nTOML personalities:");
+    for (id, desc) in BUILTIN_TOML_PERSONALITIES {
+        println!("  {:<20} {}", id, desc);
+    }
+    println!("  <path>               Load personality from TOML file");
+}
+
+#[cfg(feature = "native-service")]
+fn resolve_personality_selection(name: &str) -> Result<PersonalitySelection, String> {
+    if let Some(persona) = personality::find(name) {
+        return Ok(PersonalitySelection::Legacy(persona));
+    }
+
+    if let Some(path) = builtin_personality_path(name) {
+        return Ok(PersonalitySelection::with_legacy(path, personality::default()));
+    }
+
+    let path = PathBuf::from(name);
+    if path.exists() {
+        return Ok(PersonalitySelection::from_path(path));
+    }
+
+    Err(format!(
+        "unknown personality '{name}'. Use --list-personalities to inspect the available options.",
+    ))
+}
 const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
 const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
 const SPRITE_VIRTUAL_WIDTH: f32 = 40.0;
@@ -323,7 +369,7 @@ pub struct AppConfig {
     pub default_max_cycles: u64,
     pub virtual_resolution: VirtualResolution,
     pub display: DisplaySettings,
-    pub personality: &'static Personality,
+    pub personality: PersonalitySelection,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -459,19 +505,11 @@ fn mmio_color(value: u8, fallback: Color) -> Color {
 pub fn run_native() -> Result<(), String> {
     let args = Args::parse();
     if args.list_personalities {
-        println!("Available personalities:");
-        for personality in personality::all() {
-            println!("  {:<16} {}", personality.name, personality.description);
-        }
+        print_personality_list();
         return Ok(());
     }
 
-    let persona = personality::find(&args.personality).ok_or_else(|| {
-        format!(
-            "unknown personality '{}'. Use --list-personalities to inspect the available options.",
-            args.personality
-        )
-    })?;
+    let personality_selection = resolve_personality_selection(&args.personality)?;
     let startup_path = args.prg.clone().or_else(|| args.program.clone());
     let startup = startup_path.map(|path| StartupConfig {
         source: ProgramSource::File(path),
@@ -514,7 +552,7 @@ pub fn run_native() -> Result<(), String> {
         default_max_cycles: args.max_cycles,
         virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
         display,
-        personality: persona,
+        personality: personality_selection,
         #[cfg(feature = "native-service")]
         service,
     });
@@ -533,10 +571,11 @@ pub fn run_app(config: AppConfig) {
         service,
     } = config;
 
+    let legacy_persona = personality.legacy_personality();
     #[allow(unused_mut)]
-    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality);
-    let interrupt_bindings =
-        InterruptBindings::from_personality(emulator.interrupts(), personality);
+    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality.clone());
+    let interrupt_bindings = legacy_persona
+        .and_then(|legacy| InterruptBindings::from_personality(emulator.interrupts(), legacy));
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
@@ -665,7 +704,7 @@ impl EmulatorState {
     fn new(
         startup: Option<StartupConfig>,
         default_max_cycles: u64,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
     ) -> Self {
         let (
             cpu,

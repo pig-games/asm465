@@ -13,10 +13,14 @@ use crate::{
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
 use bus::interrupts::InterruptController;
-use bus::personality::Personality;
+use bus::personality::{self, Personality};
+use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
 use bus::Bus;
 use core6502::RunOutcome;
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -140,19 +144,19 @@ mod native {
         throttle: CpuThrottle,
         running: bool,
         paused: bool,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
         status: Arc<CpuWorkerStatus>,
     }
 
     impl WorkerInner {
         /// Build the worker state and gather initial MMIO handles.
         fn new(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
             status: Arc<CpuWorkerStatus>,
-        ) -> (Self, CpuWorkerInit) {
+        ) -> Result<(Self, CpuWorkerInit), String> {
             let (cpu, outputs, initial_status, initial_outcome) =
-                initialize_cpu(personality, startup);
+                initialize_cpu(&personality, startup)?;
             status.running.store(true, Ordering::SeqCst);
             status.paused.store(false, Ordering::SeqCst);
             let inner = Self {
@@ -168,7 +172,7 @@ mod native {
                 status: initial_status,
                 outcome: initial_outcome,
             };
-            (inner, init)
+            Ok((inner, init))
         }
 
         /// Main worker loop: polls commands, runs the CPU, and respects throttle settings.
@@ -251,7 +255,7 @@ mod native {
 
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            match run_program_with_config(Bus::with_personality(self.personality), &config) {
+            match run_program_with_config(self.personality.build_bus()?, &config) {
                 Ok((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Success)),
                 Err((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Failure)),
             }
@@ -283,18 +287,19 @@ mod native {
 
     /// Helper that prepares the initial CPU/bus state for the worker thread.
     fn initialize_cpu(
-        personality: &'static Personality,
+        personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
-    ) -> (Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
+    ) -> Result<(Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                match run_program_with_config(Bus::with_personality(personality), &config) {
+                let bus = personality.build_bus()?;
+                match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         let outputs = CpuWorkerOutputs::new(&bus);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
-                        (cpu, outputs, Some(message), outcome)
+                        Ok((cpu, outputs, Some(message), outcome))
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
@@ -302,17 +307,17 @@ mod native {
                         let outputs = CpuWorkerOutputs::new(&bus);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
-                        (cpu, outputs, Some(message), outcome)
+                        Ok((cpu, outputs, Some(message), outcome))
                     }
                 }
             }
             None => {
-                let mut bus = Bus::with_personality(personality);
+                let mut bus = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
                 let outputs = CpuWorkerOutputs::new(&bus);
                 let mut cpu = Cpu::new(bus);
                 cpu.reset();
-                (cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None)
+                Ok((cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None))
             }
         }
     }
@@ -320,12 +325,12 @@ mod native {
     impl CpuWorker {
         /// Spawn the worker thread and return the handles the UI needs for rendering.
         pub fn spawn(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
             let (command_tx, command_rx) = mpsc::channel();
             let status = Arc::new(CpuWorkerStatus::default());
-            let (inner, init) = WorkerInner::new(personality, startup, status.clone());
+            let (inner, init) = WorkerInner::new(personality, startup, status.clone())?;
             let handle = thread::Builder::new()
                 .name("cpu-worker".into())
                 .spawn(move || inner.run(command_rx))
@@ -406,16 +411,16 @@ mod wasm {
     /// Synchronous worker used in wasm builds (threads are unavailable).
     pub struct CpuWorker {
         bus: Bus,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
     }
 
     impl CpuWorker {
         /// Create the worker and return the initial MMIO handles.
         pub fn spawn(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
-            let (bus, outputs, status, outcome) = initialize_bus(personality, startup);
+            let (bus, outputs, status, outcome) = initialize_bus(&personality, startup)?;
             Ok((
                 Self { bus, personality },
                 CpuWorkerInit {
@@ -428,7 +433,7 @@ mod wasm {
 
         /// Run the supplied program immediately on the single-threaded executor.
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            match run_program_with_config(Bus::with_personality(self.personality), &config) {
+            match run_program_with_config(self.personality.build_bus()?, &config) {
                 Ok((bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
                     let outputs = CpuWorkerOutputs::new(&bus);
@@ -486,30 +491,31 @@ mod wasm {
 
     /// Helper mirroring [`initialize_cpu`] for the single-threaded wasm runner.
     fn initialize_bus(
-        personality: &'static Personality,
+        personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
-    ) -> (Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
+    ) -> Result<(Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                match run_program_with_config(Bus::with_personality(personality), &config) {
+                let bus = personality.build_bus()?;
+                match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         let outputs = CpuWorkerOutputs::new(&bus);
-                        (bus, outputs, Some(message), outcome)
+                        Ok((bus, outputs, Some(message), outcome))
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
                         let outputs = CpuWorkerOutputs::new(&bus);
-                        (bus, outputs, Some(message), outcome)
+                        Ok((bus, outputs, Some(message), outcome))
                     }
                 }
             }
             None => {
-                let mut bus = Bus::with_personality(personality);
+                let mut bus = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
                 let outputs = CpuWorkerOutputs::new(&bus);
-                (bus, outputs, Some(WELCOME_MESSAGE.to_string()), None)
+                Ok((bus, outputs, Some(WELCOME_MESSAGE.to_string()), None))
             }
         }
     }
@@ -519,3 +525,56 @@ mod wasm {
 pub use native::CpuWorker;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::CpuWorker;
+#[derive(Clone)]
+pub enum PersonalitySelection {
+    Legacy(&'static Personality),
+    Toml {
+        path: PathBuf,
+        legacy: Option<&'static Personality>,
+    },
+}
+
+impl PersonalitySelection {
+    pub fn legacy_default() -> Self {
+        PersonalitySelection::Legacy(personality::default())
+    }
+
+    pub fn from_path(path: PathBuf) -> Self {
+        PersonalitySelection::Toml { path, legacy: None }
+    }
+
+    pub fn with_legacy(path: PathBuf, legacy: &'static Personality) -> Self {
+        PersonalitySelection::Toml {
+            path,
+            legacy: Some(legacy),
+        }
+    }
+
+    pub fn legacy_personality(&self) -> Option<&'static Personality> {
+        match self {
+            PersonalitySelection::Legacy(p) => Some(*p),
+            PersonalitySelection::Toml { legacy, .. } => *legacy,
+        }
+    }
+
+    pub fn build_bus(&self) -> Result<Bus, String> {
+        match self {
+            PersonalitySelection::Legacy(p) => Ok(Bus::with_personality(p)),
+            PersonalitySelection::Toml { path, .. } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    return Err("TOML personalities are not supported on wasm builds".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let toml = fs::read_to_string(path)
+                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+                    let registry = bus::builtin_module_registry();
+                    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+                        .map_err(|err| err.to_string())?;
+                    Bus::from_personality_def(def).map_err(|err| err.to_string())
+                }
+            }
+        }
+    }
+}

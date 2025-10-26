@@ -24,8 +24,8 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::UrlSearchParams;
 
 use crate::{
-    run_app, AppConfig, DisplaySettings, ServiceCommand, ServiceRequestPayload,
-    ServiceResponseMessage, VirtualResolution,
+    run_app, AppConfig, DisplaySettings, PersonalitySelection, ServiceCommand,
+    ServiceRequestPayload, ServiceResponseMessage, VirtualResolution,
 };
 use bus::personality;
 
@@ -204,7 +204,7 @@ pub fn start_web_app() -> Result<(), JsValue> {
         default_max_cycles: DEFAULT_MAX_CYCLES,
         virtual_resolution: VirtualResolution::default(),
         display: DisplaySettings::default(),
-        personality: personality::default(),
+        personality: PersonalitySelection::legacy_default(),
         #[cfg(feature = "native-service")]
         service: None,
     });
