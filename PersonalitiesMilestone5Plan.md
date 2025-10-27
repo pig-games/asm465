@@ -16,11 +16,10 @@
    - `atari-compat-sparse`: Demonstrate split trigger registers, float/numeric value builders once implemented.
    - Each personality lives under `crossdev/cross465/personality_defs/` (or similar) with accompanying README snippets.
 
-3. **CLI & Runner Hooks**
-   - Extend `crossdev/cross465/runner` (and the `asm465` frontend) with:
+3. **CLI Tooling**
+   - Extend the `asm465` frontend with:
      - `--personality <id>` to select a TOML file at launch.
-     - `--list-personalities` to enumerate bundled definitions (both legacy and v2).
-     - `--list-modules` and optional map viewer stub (textual dump showing active maps/conditions).
+     - `--list-personalities` / `--list-modules` / `--dump-maps` for inspecting bundled definitions and module registry.
    - Provide graceful fallback to legacy personalities when TOML loading fails.
 
 4. **Documentation Updates**
@@ -35,5 +34,5 @@
 ## Next Actions
 1. Finalise repository layout for TOML personalities and document loader expectations.
 2. Author `modern-retro-range.toml` and verify parity with legacy mapping through automated tests. — ✅ created `personality_defs/modern-retro-range.toml`.
-3. Implement CLI flags and loader/map inspection tooling, ensuring existing workflows keep working without extra arguments. — ✅ `runner`/`asm465` expose `--personality`, `--list-personalities`, `--list-modules`, `--dump-maps`.
+3. Implement CLI flags and loader/map inspection tooling, ensuring existing workflows keep working without extra arguments. — ✅ `asm465` exposes `--personality`, `--list-personalities`, `--list-modules`, `--dump-maps`.
 4. Backfill sparse/vintage personalities leveraging value builders and condition overlays. — ✅ Added `c64-compat-sparse.toml` with active-low joystick builder (Atari still pending).

@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `cross465/` is the shared workspace: `bus/` provides memory-mapped devices, `core6502/` implements the CPU (tests live in `core6502/tests/`), and `runner/` offers a CLI harness.  
+- `cross465/` is the shared workspace: `bus/` provides memory-mapped devices and `core6502/` implements the CPU (tests live in `core6502/tests/`).  
 - `asm465/` hosts the Bevy/wgpu UI for desktop and web; shared textures and PRG samples sit in `assets/`.  
 - `asm465-server/` exposes the TCP↔WebSocket bridge for tooling.  
 - `asm465-wasm/` wraps the Bevy client for browsers; `Makefile` builds into `web-dist/` (treat as build output).
@@ -18,7 +18,7 @@
 - Use `rustfmt` before committing; add `#[allow]` only when accompanied by a brief inline rationale.
 
 ## Testing Guidelines
-- Run `cargo test --manifest-path cross465/Cargo.toml --workspace` before opening a PR; this exercises the CPU and runner crates.  
+- Run `cargo test --manifest-path cross465/Cargo.toml --workspace` before opening a PR; this exercises the CPU and bus crates.  
 - New CPU behaviors require targeted integration tests under `core6502/tests/` (follow the existing file-per-domain pattern like `opcodes.rs`).  
 - When adding async or networking code, include smoke tests or example commands for the expected JSON payload. Document manual test steps in the PR if automation is impractical.
 

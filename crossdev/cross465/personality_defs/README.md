@@ -13,10 +13,10 @@ id = "modern-retro-range"
 title = "Modern Retro (Range)"
 ```
 
-Load via CLI (once integrated):
+Inspect via CLI:
 
 ```sh
-cross465-runner --personality modern-retro-range
+cargo run -p asm465 -- --dump-maps modern-retro-range
 ```
 
 ## c64-compat-sparse
@@ -33,5 +33,5 @@ title = "C64-Compatible Sparse Layout"
 Example usage:
 
 ```sh
-cross465-runner --personality c64-compat-sparse
+cargo run -p asm465 -- --dump-maps c64-compat-sparse
 ```
