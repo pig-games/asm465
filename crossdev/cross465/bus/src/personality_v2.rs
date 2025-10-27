@@ -37,6 +37,7 @@ pub struct Condition {
     pub equals: i32,
 }
 
+#[derive(Clone)]
 pub struct ResolvedRegister {
     pub id: RegId,
     pub desc: &'static RegisterDesc,
@@ -82,6 +83,10 @@ pub struct Transform {
     pub shift: i8,
     pub on_read: Option<String>,
     pub on_write: Option<String>,
+    pub pre_read_sets: Vec<RegisterSet>,
+    pub post_read_sets: Vec<RegisterSet>,
+    pub pre_write_sets: Vec<RegisterSet>,
+    pub post_write_sets: Vec<RegisterSet>,
 }
 
 #[derive(Default)]
@@ -117,6 +122,13 @@ pub struct BitBinding {
     pub bit: u8,
     pub src: String,
     pub active_low: bool,
+}
+
+#[derive(Clone)]
+pub struct RegisterSet {
+    pub module: ModuleKind,
+    pub register: ResolvedRegister,
+    pub value: u8,
 }
 
 pub trait InputSignals {
@@ -330,7 +342,10 @@ fn resolve_maps(
                     let resolved_order = resolve_register_order(&range.order, module)?;
                     let stride = range.stride.unwrap_or(1);
                     let address_range = parse_range(&range.addr)?;
-                    let default_transform = range.default_transform.map(resolve_transform);
+                    let default_transform = range
+                        .default_transform
+                        .map(|t| resolve_transform(t, modules))
+                        .transpose()?;
                     MapDecode::Range(RangeMap {
                         range: address_range,
                         module: kind,
@@ -345,7 +360,10 @@ fn resolve_maps(
                         let (kind, module) = module_for_kind(&entry.kind, modules)?;
                         let register = resolve_register(&entry.id, module)?;
                         let addr = parse_addr(&entry.addr)?;
-                        let transform = entry.transform.map(resolve_transform);
+                        let transform = entry
+                            .transform
+                            .map(|t| resolve_transform(t, modules))
+                            .transpose()?;
                         let value_builder = entry
                             .value_builder
                             .map(|value| parse_value_builder(value, register.desc))
@@ -475,15 +493,58 @@ fn resolve_register_order(
     Ok(resolved)
 }
 
-fn resolve_transform(raw: RawTransform) -> Transform {
-    Transform {
+fn resolve_transform(
+    raw: RawTransform,
+    modules: &BTreeMap<ModuleKind, ModuleConfig>,
+) -> Result<Transform, LoaderError> {
+    let mut transform = Transform {
         invert_mask: raw.invert_mask.unwrap_or(0),
         ro_mask: raw.ro_mask.unwrap_or(0),
         wo_mask: raw.wo_mask.unwrap_or(0),
         shift: raw.shift.unwrap_or(0),
         on_read: raw.on_read,
         on_write: raw.on_write,
+        pre_read_sets: Vec::new(),
+        post_read_sets: Vec::new(),
+        pre_write_sets: Vec::new(),
+        post_write_sets: Vec::new(),
+    };
+
+    transform.pre_read_sets = resolve_register_sets(&raw.pre_read_sets, modules)?;
+    transform.post_read_sets = resolve_register_sets(&raw.post_read_sets, modules)?;
+    transform.pre_write_sets = resolve_register_sets(&raw.pre_write_sets, modules)?;
+    transform.post_write_sets = resolve_register_sets(&raw.post_write_sets, modules)?;
+
+    Ok(transform)
+}
+
+fn resolve_register_sets(
+    raws: &[RawRegisterSet],
+    modules: &BTreeMap<ModuleKind, ModuleConfig>,
+) -> Result<Vec<RegisterSet>, LoaderError> {
+    let mut sets = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let kind = ModuleKind::from_str(&raw.kind).ok_or_else(|| LoaderError {
+            message: format!("register set references unknown module kind `{}`", raw.kind),
+            line: None,
+            column: None,
+        })?;
+        let module = modules.get(&kind).ok_or_else(|| LoaderError {
+            message: format!(
+                "register set references module kind `{}` without configuration",
+                kind.as_str()
+            ),
+            line: None,
+            column: None,
+        })?;
+        let register = resolve_register(&raw.id, module)?;
+        sets.push(RegisterSet {
+            module: kind,
+            register,
+            value: raw.value,
+        });
     }
+    Ok(sets)
 }
 
 fn parse_value_builder(value: Value, register: &RegisterDesc) -> Result<ValueBuilder, LoaderError> {
@@ -794,6 +855,21 @@ struct RawTransform {
     on_read: Option<String>,
     #[serde(default)]
     on_write: Option<String>,
+    #[serde(default)]
+    pre_read_sets: Vec<RawRegisterSet>,
+    #[serde(default)]
+    post_read_sets: Vec<RawRegisterSet>,
+    #[serde(default)]
+    pre_write_sets: Vec<RawRegisterSet>,
+    #[serde(default)]
+    post_write_sets: Vec<RawRegisterSet>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRegisterSet {
+    kind: String,
+    id: String,
+    value: u8,
 }
 
 #[derive(Debug, Deserialize)]

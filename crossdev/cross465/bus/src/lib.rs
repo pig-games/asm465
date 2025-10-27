@@ -274,6 +274,23 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
         assert_eq!(bus.read(0xD020), 0x06);
         assert_eq!(bus.read(0xD021), 0x03);
 
+        // Sprite 0 registers routed via select pre-sets.
+        bus.write(0xD100, 0x11); // Number
+        bus.write(0xD102, 0x34); // XLo
+        bus.write(0xD104, 0x56); // YLo
+        assert_eq!(bus.read(0xD100), 0x11);
+        assert_eq!(bus.read(0xD102), 0x34);
+        assert_eq!(bus.read(0xD104), 0x56);
+
+        // Sprite 1 should remain independent.
+        bus.write(0xD108, 0x22);
+        bus.write(0xD10A, 0x78);
+        assert_eq!(bus.read(0xD108), 0x22);
+        assert_eq!(bus.read(0xD10A), 0x78);
+        // Ensure sprite 0 values untouched.
+        assert_eq!(bus.read(0xD100), 0x11);
+        assert_eq!(bus.read(0xD102), 0x34);
+
         // Active-low joystick inputs via value builder at $DC00.
         assert_eq!(bus.read(0xDC00), 0xFF);
         bus.set_signal_bool("p0.button_fire", true);
@@ -436,6 +453,17 @@ struct AddressSlot {
     reg: RegId,
     transform: Transform,
     value_builder: Option<ValueBuilder>,
+    pre_read_sets: Vec<AddressRegisterSet>,
+    post_read_sets: Vec<AddressRegisterSet>,
+    pre_write_sets: Vec<AddressRegisterSet>,
+    post_write_sets: Vec<AddressRegisterSet>,
+}
+
+#[derive(Clone)]
+struct AddressRegisterSet {
+    module_index: usize,
+    reg: RegId,
+    value: u8,
 }
 
 #[derive(Default)]
@@ -534,12 +562,22 @@ fn compile_range_map(
             return Err(PersonalityCompileError::AddressOutOfRange { addr: target_addr });
         }
 
+        let transform = range.default_transform.clone().unwrap_or_default();
+        let pre_read_sets = map_register_sets(&transform.pre_read_sets, lookup)?;
+        let post_read_sets = map_register_sets(&transform.post_read_sets, lookup)?;
+        let pre_write_sets = map_register_sets(&transform.pre_write_sets, lookup)?;
+        let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
+
         let slot = AddressSlot {
             priority,
             module_index,
             reg: register.id,
-            transform: range.default_transform.clone().unwrap_or_default(),
+            transform,
             value_builder: None,
+            pre_read_sets,
+            post_read_sets,
+            pre_write_sets,
+            post_write_sets,
         };
 
         insert_slot(table, target_addr, slot)?;
@@ -559,18 +597,46 @@ fn compile_sparse_map(
             .get(&entry.module)
             .ok_or(PersonalityCompileError::MissingModule(entry.module))?;
 
+        let transform = entry.transform.clone().unwrap_or_default();
+        let pre_read_sets = map_register_sets(&transform.pre_read_sets, lookup)?;
+        let post_read_sets = map_register_sets(&transform.post_read_sets, lookup)?;
+        let pre_write_sets = map_register_sets(&transform.pre_write_sets, lookup)?;
+        let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
+
         let slot = AddressSlot {
             priority,
             module_index,
             reg: entry.register.id,
-            transform: entry.transform.clone().unwrap_or_default(),
+            transform,
             value_builder: entry.value_builder.clone(),
+            pre_read_sets,
+            post_read_sets,
+            pre_write_sets,
+            post_write_sets,
         };
 
         insert_slot(table, entry.addr, slot)?;
     }
 
     Ok(())
+}
+
+fn map_register_sets(
+    sets: &[personality_v2::RegisterSet],
+    lookup: &BTreeMap<ModuleKind, usize>,
+) -> Result<Vec<AddressRegisterSet>, PersonalityCompileError> {
+    let mut resolved = Vec::with_capacity(sets.len());
+    for set in sets {
+        let module_index = *lookup
+            .get(&set.module)
+            .ok_or(PersonalityCompileError::MissingModule(set.module))?;
+        resolved.push(AddressRegisterSet {
+            module_index,
+            reg: set.register.id,
+            value: set.value,
+        });
+    }
+    Ok(resolved)
 }
 
 fn insert_slot(
@@ -649,12 +715,16 @@ impl PersonalityRuntime {
     }
 
     fn read(&mut self, addr: u16) -> Option<u8> {
-        let slot = self
+        let slot = match self
             .address_table
             .get(addr as usize)
-            .and_then(|cell| cell.as_ref())?;
+            .and_then(|cell| cell.as_ref())
+        {
+            Some(slot) => slot.clone(),
+            None => return None,
+        };
 
-        let module = self.modules.get_mut(slot.module_index)?.module.as_mut();
+        self.apply_register_sets(&slot.pre_read_sets);
 
         let mut value = if let Some(builder) = slot.value_builder.as_ref() {
             builder
@@ -663,6 +733,7 @@ impl PersonalityRuntime {
                 .copied()
                 .unwrap_or(0)
         } else {
+            let module = self.modules.get_mut(slot.module_index)?.module.as_mut();
             module.read_reg(slot.reg)
         };
 
@@ -671,6 +742,8 @@ impl PersonalityRuntime {
         if slot.transform.wo_mask != 0 {
             value &= !slot.transform.wo_mask;
         }
+
+        self.apply_register_sets(&slot.post_read_sets);
 
         Some(value)
     }
@@ -681,9 +754,11 @@ impl PersonalityRuntime {
             .get(addr as usize)
             .and_then(|cell| cell.as_ref())
         {
-            Some(slot) => slot,
+            Some(slot) => slot.clone(),
             None => return false,
         };
+
+        self.apply_register_sets(&slot.pre_write_sets);
 
         let module = match self.modules.get_mut(slot.module_index) {
             Some(m) => m.module.as_mut(),
@@ -699,8 +774,17 @@ impl PersonalityRuntime {
         }
 
         module.write_reg(slot.reg, value);
+        self.apply_register_sets(&slot.post_write_sets);
         self.recompute_conditions_if_needed();
         true
+    }
+
+    fn apply_register_sets(&mut self, sets: &[AddressRegisterSet]) {
+        for set in sets {
+            if let Some(instance) = self.modules.get_mut(set.module_index) {
+                instance.module.write_reg(set.reg, set.value);
+            }
+        }
     }
 
     fn module_index(&self, kind: ModuleKind) -> Option<usize> {

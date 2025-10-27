@@ -93,9 +93,9 @@ fn resolve_personality_selection(name: &str) -> Result<PersonalitySelection, Str
     }
 
     if let Some((path, maybe_legacy)) = builtin_personality_entry(name) {
-        return Ok(match maybe_legacy {
-            Some(legacy) => PersonalitySelection::with_legacy(path, legacy),
-            None => PersonalitySelection::from_path(path),
+        return Ok(PersonalitySelection::Toml {
+            path,
+            legacy: maybe_legacy,
         });
     }
 

@@ -5,6 +5,7 @@
 - Map decoding supports `range` and `sparse` layouts, compiling address strings into `u16` ranges and resolving register names via the module registry descriptors.
 - Conditions and interrupt sources validate module kinds and register identifiers, surfacing descriptive loader errors when references are missing or mismatched.
 - Value builder definitions are parsed into strongly typed descriptors (`ValueBuilder`, `BitBinding`) tied to the owning sparse entry and register width.
+- Transforms now support `pre_write_sets`/`pre_read_sets` for register-to-register side effects (used by the C64 sparse sprite maps).
 
 ## Registry Integration
 - Module definitions look up factories from the shared `ModuleRegistry`, ensuring personality files only reference registered implementations of the expected `ModuleKind`.

@@ -20,8 +20,9 @@ cross465-runner --personality modern-retro-range
 ```
 
 ## c64-compat-sparse
-- Sparse layout inspired by the Commodore 64: display and sprite registers at `$D020..$D047`.
+- Sparse layout inspired by the Commodore 64: display registers at `$D020/$D021`, per-sprite registers in the `$D100` range.
 - Demonstrates value builders for active-low joystick inputs (`DC00`).
+- Uses `pre_write_sets`/`pre_read_sets` to select the appropriate sprite slot before each register access.
 
 ```toml
 [personality]
