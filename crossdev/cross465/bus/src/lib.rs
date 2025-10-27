@@ -257,6 +257,32 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
         bus.write(0xDF41, 0x00);
         assert_eq!(bus.read(0xDF40), 0x00);
     }
+
+    #[test]
+    fn c64_sparse_personality_supports_active_low_inputs() {
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(
+            include_str!("../../personality_defs/c64-compat-sparse.toml"),
+            &registry,
+        )
+        .expect("load c64 personality");
+        let mut bus = Bus::from_personality_def(def).expect("c64 bus");
+
+        // Display registers mapped at $D020/$D021.
+        bus.write(0xD020, 0x06);
+        bus.write(0xD021, 0x03);
+        assert_eq!(bus.read(0xD020), 0x06);
+        assert_eq!(bus.read(0xD021), 0x03);
+
+        // Active-low joystick inputs via value builder at $DC00.
+        assert_eq!(bus.read(0xDC00), 0xFF);
+        bus.set_signal_bool("p0.button_fire", true);
+        assert_eq!(bus.read(0xDC00), 0xEF);
+        bus.set_signal_bool("p0.dpad_left", true);
+        assert_eq!(bus.read(0xDC00), 0xEB);
+        bus.clear_signals();
+        assert_eq!(bus.read(0xDC00), 0xFF);
+    }
 }
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export

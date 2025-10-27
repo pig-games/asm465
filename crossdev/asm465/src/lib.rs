@@ -26,7 +26,7 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::interrupts::{InterruptController, InterruptSnapshot};
-use bus::personality::{self, Personality};
+use bus::personality::{self, Personality, C64_COMPAT};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::{Cpu, RunLimit, RunOutcome};
@@ -55,14 +55,20 @@ use std::thread;
 
 pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
-const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] =
-    &[("modern-retro-range", "Modern Retro (Range)")];
+const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
+    ("modern-retro-range", "Modern Retro (Range)"),
+    ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
+];
 
 #[cfg(feature = "native-service")]
-fn builtin_personality_path(id: &str) -> Option<PathBuf> {
+fn builtin_personality_entry(id: &str) -> Option<(PathBuf, Option<&'static Personality>)> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cross465/personality_defs");
     match id {
-        "modern-retro-range" => Some(base.join("modern-retro-range.toml")),
+        "modern-retro-range" => Some((
+            base.join("modern-retro-range.toml"),
+            Some(personality::default()),
+        )),
+        "c64-compat-sparse" => Some((base.join("c64-compat-sparse.toml"), Some(&C64_COMPAT))),
         _ => None,
     }
 }
@@ -86,8 +92,11 @@ fn resolve_personality_selection(name: &str) -> Result<PersonalitySelection, Str
         return Ok(PersonalitySelection::Legacy(persona));
     }
 
-    if let Some(path) = builtin_personality_path(name) {
-        return Ok(PersonalitySelection::with_legacy(path, personality::default()));
+    if let Some((path, maybe_legacy)) = builtin_personality_entry(name) {
+        return Ok(match maybe_legacy {
+            Some(legacy) => PersonalitySelection::with_legacy(path, legacy),
+            None => PersonalitySelection::from_path(path),
+        });
     }
 
     let path = PathBuf::from(name);

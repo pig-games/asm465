@@ -18,3 +18,19 @@ Load via CLI (once integrated):
 ```sh
 cross465-runner --personality modern-retro-range
 ```
+
+## c64-compat-sparse
+- Sparse layout inspired by the Commodore 64: display and sprite registers at `$D020..$D047`.
+- Demonstrates value builders for active-low joystick inputs (`DC00`).
+
+```toml
+[personality]
+id = "c64-compat-sparse"
+title = "C64-Compatible Sparse Layout"
+```
+
+Example usage:
+
+```sh
+cross465-runner --personality c64-compat-sparse
+```

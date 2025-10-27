@@ -89,10 +89,7 @@ mod tests {
 #[derive(Clone)]
 enum PersonalitySelection {
     Legacy(&'static personality::Personality),
-    Toml {
-        path: PathBuf,
-        legacy: Option<&'static personality::Personality>,
-    },
+    Toml(PathBuf),
 }
 
 impl PersonalitySelection {
@@ -102,15 +99,9 @@ impl PersonalitySelection {
                 return Ok(Self::Legacy(persona));
             }
             if let Some(path) = builtin_personality_path(value) {
-                return Ok(Self::Toml {
-                    path,
-                    legacy: Some(personality::default()),
-                });
+                return Ok(Self::Toml(path));
             }
-            Ok(Self::Toml {
-                path: PathBuf::from(value),
-                legacy: None,
-            })
+            Ok(Self::Toml(PathBuf::from(value)))
         } else {
             Ok(Self::Legacy(personality::default()))
         }
@@ -119,7 +110,7 @@ impl PersonalitySelection {
     fn build_bus(&self) -> anyhow::Result<Bus> {
         match self {
             PersonalitySelection::Legacy(p) => Ok(Bus::with_personality(p)),
-            PersonalitySelection::Toml { path, .. } => {
+            PersonalitySelection::Toml(path) => {
                 let toml = fs::read_to_string(path)?;
                 let registry = bus::builtin_module_registry();
                 let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)?;
@@ -129,10 +120,16 @@ impl PersonalitySelection {
     }
 }
 
+const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
+    ("modern-retro-range", "Modern Retro (Range)"),
+    ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
+];
+
 fn builtin_personality_path(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../personality_defs");
     match id {
         "modern-retro-range" => Some(base.join("modern-retro-range.toml")),
+        "c64-compat-sparse" => Some(base.join("c64-compat-sparse.toml")),
         _ => None,
     }
 }
@@ -143,6 +140,8 @@ fn list_personalities() {
         println!("  {:<20} — {}", persona.name, persona.description);
     }
     println!("\nTOML personalities:");
-    println!("  modern-retro-range   — Modern Retro (Range)");
+    for (id, desc) in BUILTIN_TOML_PERSONALITIES {
+        println!("  {:<20} {}", id, desc);
+    }
     println!("  <path>               Load personality from TOML file");
 }

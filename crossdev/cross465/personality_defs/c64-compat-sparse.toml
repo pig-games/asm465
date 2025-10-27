@@ -1,0 +1,54 @@
+[personality]
+id = "c64-compat-sparse"
+title = "C64-Compatible Sparse Layout"
+default_map_priority = 10
+
+[modules.console]
+impl = "console.text"
+
+[modules.display]
+impl = "display.basic2d"
+
+[modules.sprite]
+impl = "sprite.basic"
+
+[modules.system]
+impl = "system.interrupts"
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D020", kind = "display", id = "BorderColor" },
+  { addr = "D021", kind = "display", id = "BackgroundColor" }
+] }
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D040", kind = "sprite", id = "Select" },
+  { addr = "D041", kind = "sprite", id = "Number" },
+  { addr = "D042", kind = "sprite", id = "Anim" },
+  { addr = "D043", kind = "sprite", id = "XHi" },
+  { addr = "D044", kind = "sprite", id = "XLo" },
+  { addr = "D045", kind = "sprite", id = "YHi" },
+  { addr = "D046", kind = "sprite", id = "YLo" },
+  { addr = "D047", kind = "sprite", id = "Scale" }
+] }
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D019", kind = "system", id = "IrqPending" },
+  { addr = "D01A", kind = "system", id = "IrqEnable" },
+  { addr = "D01B", kind = "system", id = "IrqAck" },
+  { addr = "D01C", kind = "system", id = "IrqSource" },
+  { addr = "D01D", kind = "system", id = "NmiPending" },
+  { addr = "D01E", kind = "system", id = "NmiAck" },
+  { addr = "D01F", kind = "system", id = "Status" }
+] }
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "DC00", kind = "system", id = "IrqPending", value_builder = { width = 1, const_set = "11111111", bits = [ { bit = 0, src = "p0.dpad_up", active_low = true }, { bit = 1, src = "p0.dpad_down", active_low = true }, { bit = 2, src = "p0.dpad_left", active_low = true }, { bit = 3, src = "p0.dpad_right", active_low = true }, { bit = 4, src = "p0.button_fire", active_low = true } ] } }
+] }
