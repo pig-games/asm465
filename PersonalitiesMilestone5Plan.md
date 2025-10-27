@@ -35,5 +35,5 @@
 ## Next Actions
 1. Finalise repository layout for TOML personalities and document loader expectations.
 2. Author `modern-retro-range.toml` and verify parity with legacy mapping through automated tests. — ✅ created `personality_defs/modern-retro-range.toml`.
-3. Implement CLI flags and loader integration, ensuring existing workflows keep working without extra arguments. — ✅ `runner` and `asm465` now accept `--personality` and `--list-personalities` (legacy IDs or TOML path).
+3. Implement CLI flags and loader/map inspection tooling, ensuring existing workflows keep working without extra arguments. — ✅ `runner`/`asm465` expose `--personality`, `--list-personalities`, `--list-modules`, `--dump-maps`.
 4. Backfill sparse/vintage personalities leveraging value builders and condition overlays. — ✅ Added `c64-compat-sparse.toml` with active-low joystick builder (Atari still pending).

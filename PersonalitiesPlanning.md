@@ -29,7 +29,7 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 ## Milestone 5 – Reference Personalities
 - [x] Author a range-based personality that reproduces today’s contiguous layout as a regression baseline. (see `crossdev/cross465/personality_defs/modern-retro-range.toml`)
 - [x] Create sparse sample personalities (e.g., C64, Atari) demonstrating active-low transforms, read-to-ack hooks, and banking. (see `crossdev/cross465/personality_defs/c64-compat-sparse.toml`)
-- [ ] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, map viewer stubs) for selecting and inspecting personalities.
+- [x] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, `--list-modules`, map dumps) for selecting and inspecting personalities. (runner & asm465 CLI options)
 
 ## Milestone 6 – Conformance & Regression Tests
 - [ ] Add suites validating register contracts (RO/WO, reset values, hook side effects) across module kinds.

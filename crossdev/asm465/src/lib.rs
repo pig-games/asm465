@@ -26,7 +26,8 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::interrupts::{InterruptController, InterruptSnapshot};
-use bus::personality::{self, Personality, C64_COMPAT};
+use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
+use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus};
 use core6502::{Cpu, RunLimit, RunOutcome};
@@ -46,6 +47,8 @@ use clap::Parser;
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "native-service")]
+use std::fs;
 #[cfg(feature = "native-service")]
 use std::io::{BufRead, BufReader, BufWriter, Write};
 #[cfg(feature = "native-service")]
@@ -84,6 +87,100 @@ fn print_personality_list() {
         println!("  {:<20} {}", id, desc);
     }
     println!("  <path>               Load personality from TOML file");
+}
+
+#[cfg(feature = "native-service")]
+fn print_module_list() {
+    println!("Registered module implementations:");
+    for factory in bus::builtin_module_registry().all() {
+        println!("  {:<20} kind={}", factory.id(), factory.kind().as_str());
+    }
+}
+
+#[cfg(feature = "native-service")]
+fn dump_personality_maps(name: &str) -> Result<(), String> {
+    if let Some(persona) = personality::find(name) {
+        println!(
+            "Legacy personality: {} — {}",
+            persona.name, persona.description
+        );
+        for mmio in persona.mmio {
+            println!(
+                "  {}..={} -> {}",
+                format_addr(*mmio.range.start()),
+                format_addr(*mmio.range.end()),
+                describe_mmio_kind(mmio.kind)
+            );
+        }
+        return Ok(());
+    }
+
+    let (path, maybe_legacy) =
+        builtin_personality_entry(name).unwrap_or((PathBuf::from(name), None));
+
+    let toml = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let registry = bus::builtin_module_registry();
+    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+        .map_err(|err| err.to_string())?;
+
+    println!("Personality: {} — {}", def.metadata.id, def.metadata.title);
+    println!("Modules:");
+    for (kind, module) in &def.modules {
+        println!("  {:<10} -> {}", kind.as_str(), module.impl_id);
+    }
+    if let Some(legacy) = maybe_legacy {
+        println!("Legacy fallback: {}", legacy.name);
+    }
+
+    println!("Maps:");
+    for map in &def.maps {
+        println!("- priority {}", map.priority);
+        if !map.active_when.is_empty() {
+            println!("  active_when = {:?}", map.active_when);
+        }
+        match &map.decode {
+            MapDecode::Range(range) => {
+                println!(
+                    "  range {}..={} kind={} stride={}",
+                    format_addr(range.range.start),
+                    format_addr(range.range.end),
+                    range.module.as_str(),
+                    range.stride
+                );
+                for reg in &range.order {
+                    println!("    - {}", reg.desc.name);
+                }
+            }
+            MapDecode::Sparse(entries) => {
+                for entry in entries {
+                    println!(
+                        "  {} -> {}::{}",
+                        format_addr(entry.addr),
+                        entry.module.as_str(),
+                        entry.register.desc.name
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "native-service")]
+fn format_addr(addr: u16) -> String {
+    format!("${:04X}", addr)
+}
+
+#[cfg(feature = "native-service")]
+fn describe_mmio_kind(kind: PersonalityMmioKind) -> &'static str {
+    match kind {
+        PersonalityMmioKind::Console => "console",
+        PersonalityMmioKind::Display => "display",
+        PersonalityMmioKind::Sprite => "sprite",
+        PersonalityMmioKind::System => "system",
+    }
 }
 
 #[cfg(feature = "native-service")]
@@ -226,6 +323,12 @@ pub struct Args {
     /// List available personalities and exit.
     #[arg(long, default_value_t = false)]
     pub list_personalities: bool,
+    /// List available module implementations and exit.
+    #[arg(long, default_value_t = false)]
+    pub list_modules: bool,
+    /// Dump map layout for a personality and exit.
+    #[arg(long, value_name = "PERSONALITY")]
+    pub dump_maps: Option<String>,
 }
 
 /// Source for a PRG payload that should be executed by the emulator.
@@ -513,6 +616,17 @@ fn mmio_color(value: u8, fallback: Color) -> Color {
 #[cfg(feature = "native-service")]
 pub fn run_native() -> Result<(), String> {
     let args = Args::parse();
+
+    if args.list_modules {
+        print_module_list();
+        return Ok(());
+    }
+
+    if let Some(name) = args.dump_maps.as_deref() {
+        dump_personality_maps(name)?;
+        return Ok(());
+    }
+
     if args.list_personalities {
         print_personality_list();
         return Ok(());

@@ -4,7 +4,11 @@
 //! but without a window. It is convenient for quick smoke tests or for
 //! integrating into shell scripts.
 
-use bus::{personality, personality_v2, Bus};
+use bus::{
+    personality,
+    personality_v2::{self, MapDecode},
+    Bus,
+};
 use clap::Parser;
 use core6502::Cpu;
 use std::{fs, path::PathBuf};
@@ -13,7 +17,10 @@ use std::{fs, path::PathBuf};
 #[derive(Parser, Debug)]
 struct Args {
     /// Path to the PRG file to execute.
-    #[arg(value_name = "PRG", required_unless_present = "list_personalities")]
+    #[arg(
+        value_name = "PRG",
+        required_unless_present_any = ["list_personalities", "list_modules", "dump_maps"]
+    )]
     prg: PathBuf,
     /// Maximum number of CPU cycles to execute.
     #[arg(long, default_value_t = 5_000_000u64)]
@@ -27,6 +34,12 @@ struct Args {
     /// List available personalities and exit.
     #[arg(long)]
     list_personalities: bool,
+    /// List available module implementations and exit.
+    #[arg(long)]
+    list_modules: bool,
+    /// Dump map layout for a personality and exit.
+    #[arg(long, value_name = "PERSONALITY")]
+    dump_maps: Option<String>,
 }
 
 fn run_program(
@@ -55,6 +68,16 @@ fn run_program(
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    if args.list_modules {
+        list_modules();
+        return Ok(());
+    }
+
+    if let Some(ref id) = args.dump_maps {
+        dump_maps(id)?;
+        return Ok(());
+    }
 
     if args.list_personalities {
         list_personalities();
@@ -89,7 +112,10 @@ mod tests {
 #[derive(Clone)]
 enum PersonalitySelection {
     Legacy(&'static personality::Personality),
-    Toml(PathBuf),
+    Toml {
+        path: PathBuf,
+        legacy: Option<&'static personality::Personality>,
+    },
 }
 
 impl PersonalitySelection {
@@ -98,10 +124,13 @@ impl PersonalitySelection {
             if let Some(persona) = personality::find(value) {
                 return Ok(Self::Legacy(persona));
             }
-            if let Some(path) = builtin_personality_path(value) {
-                return Ok(Self::Toml(path));
+            if let Some((path, legacy)) = builtin_personality_path(value) {
+                return Ok(Self::Toml { path, legacy });
             }
-            Ok(Self::Toml(PathBuf::from(value)))
+            Ok(Self::Toml {
+                path: PathBuf::from(value),
+                legacy: None,
+            })
         } else {
             Ok(Self::Legacy(personality::default()))
         }
@@ -110,7 +139,7 @@ impl PersonalitySelection {
     fn build_bus(&self) -> anyhow::Result<Bus> {
         match self {
             PersonalitySelection::Legacy(p) => Ok(Bus::with_personality(p)),
-            PersonalitySelection::Toml(path) => {
+            PersonalitySelection::Toml { path, .. } => {
                 let toml = fs::read_to_string(path)?;
                 let registry = bus::builtin_module_registry();
                 let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)?;
@@ -125,11 +154,19 @@ const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
     ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
 ];
 
-fn builtin_personality_path(id: &str) -> Option<PathBuf> {
+fn builtin_personality_path(
+    id: &str,
+) -> Option<(PathBuf, Option<&'static personality::Personality>)> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../personality_defs");
     match id {
-        "modern-retro-range" => Some(base.join("modern-retro-range.toml")),
-        "c64-compat-sparse" => Some(base.join("c64-compat-sparse.toml")),
+        "modern-retro-range" => Some((
+            base.join("modern-retro-range.toml"),
+            Some(personality::default()),
+        )),
+        "c64-compat-sparse" => Some((
+            base.join("c64-compat-sparse.toml"),
+            Some(&personality::C64_COMPAT),
+        )),
         _ => None,
     }
 }
@@ -144,4 +181,90 @@ fn list_personalities() {
         println!("  {:<20} {}", id, desc);
     }
     println!("  <path>               Load personality from TOML file");
+}
+fn list_modules() {
+    let registry = bus::builtin_module_registry();
+    println!("Registered module implementations:");
+    for factory in registry.all() {
+        println!("  {:<20} kind={}", factory.id(), factory.kind().as_str());
+    }
+}
+
+fn dump_maps(id: &str) -> anyhow::Result<()> {
+    if let Some(persona) = personality::find(id) {
+        println!(
+            "Legacy personality: {} — {}",
+            persona.name, persona.description
+        );
+        for mmio in persona.mmio {
+            println!(
+                "  {}..={} -> {}",
+                format_addr(*mmio.range.start()),
+                format_addr(*mmio.range.end()),
+                describe_mmio_kind(mmio.kind)
+            );
+        }
+        return Ok(());
+    }
+
+    let (path, legacy_hint) = builtin_personality_path(id).unwrap_or((PathBuf::from(id), None));
+
+    let toml = fs::read_to_string(&path)?;
+    let registry = bus::builtin_module_registry();
+    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)?;
+
+    println!("Personality: {} — {}", def.metadata.id, def.metadata.title);
+    println!("Modules:");
+    for (kind, module) in &def.modules {
+        println!("  {:<10} -> {}", kind.as_str(), module.impl_id);
+    }
+    if let Some(legacy) = legacy_hint {
+        println!("Legacy fallback: {}", legacy.name);
+    }
+
+    println!("Maps:");
+    for map in &def.maps {
+        println!("- priority {}", map.priority);
+        if !map.active_when.is_empty() {
+            println!("  active_when = {:?}", map.active_when);
+        }
+        match &map.decode {
+            MapDecode::Range(range) => {
+                println!(
+                    "  range {}..={} kind={} stride={}",
+                    format_addr(range.range.start),
+                    format_addr(range.range.end),
+                    range.module.as_str(),
+                    range.stride
+                );
+                for reg in &range.order {
+                    println!("    - {}", reg.desc.name);
+                }
+            }
+            MapDecode::Sparse(entries) => {
+                for entry in entries {
+                    println!(
+                        "  {} -> {}::{}",
+                        format_addr(entry.addr),
+                        entry.module.as_str(),
+                        entry.register.desc.name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_addr(addr: u16) -> String {
+    format!("${:04X}", addr)
+}
+
+fn describe_mmio_kind(kind: personality::PersonalityMmioKind) -> &'static str {
+    match kind {
+        personality::PersonalityMmioKind::Console => "console",
+        personality::PersonalityMmioKind::Display => "display",
+        personality::PersonalityMmioKind::Sprite => "sprite",
+        personality::PersonalityMmioKind::System => "system",
+    }
 }

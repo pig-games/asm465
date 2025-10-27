@@ -23,6 +23,7 @@
 - When adding async or networking code, include smoke tests or example commands for the expected JSON payload. Document manual test steps in the PR if automation is impractical.
 
 ## Commit & Pull Request Guidelines
+- Provide a commit message with a title and a summary of the changes.
 - Match the existing history: concise, capitalized subjects describing the change scope (e.g. “Improve wasm file picker handling”).  
 - Reference issue numbers or affected crates in the body, and note any feature flags or follow-up work.  
 - PRs should link to the relevant issue, list verification commands (`cargo test`, `make build`, etc.), and attach screenshots or terminal captures for UI-facing updates.
