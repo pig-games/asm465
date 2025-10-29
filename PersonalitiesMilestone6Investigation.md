@@ -1,0 +1,43 @@
+# Milestone 6 Plan — C64 Semantic Prototype
+
+## Updated Objective
+Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 code while driving the modern rendering backend. The milestone graduates from investigation to a working semantic prototype, as outlined in `docs/personalities_v2_docs/06-09`.
+
+## Scope and Philosophy
+- Focus on **logical register compatibility**; frame/raster timing hooks are coarse-grained.
+- Implement sprite, IRQ, and collision semantics; defer cycle-accurate DMA or BAD line modelling.
+- Cover VIC-II + CIA pathways that impact sprite graphics, raster IRQs, and latch behaviour.
+
+## Feature Requirements
+1. **Instance Arrays + Scatter/Gather** — Sprite register blocks (`$D000-$D01F`) with `$D010` high bits per Chapter 7.
+2. **Bitfield Policies & Hooks** — `on_read` / `on_write` semantics for IRQ and collision registers (`$D019`, `$D01E/$D01F`).
+3. **Write Fan-out** — Mask registers (`$D015`, `$D01C`) broadcasting enable bits across sprite instances.
+4. **Mirrors & Open Bus** — Declare mirrored ranges and constant/last-read behaviour for unmapped areas (`$DE00-$DEFF`).
+5. **Compute Expressions** — Evaluate raster beam positions and collision summaries for readbacks.
+6. **Adapter Layer** — Sprite/video adapters that translate MMIO operations to engine calls (Chapter 8).
+
+## Implementation Tasks
+- Extend the TOML loader/runtime to materialise instance arrays, scatter fields, and fan-out wiring in the compiled decoder.
+- Wire up bitfield policies with hook callbacks so read-to-clear and latch semantics run through adapters.
+- Implement compute-expression evaluation for beam/collision registers with cached module state.
+- Introduce `SpriteAdapter`/`VideoAdapter` traits (or equivalent) and connect them to the bus runtime.
+- Model mirrors and open-bus defaults in the decoder tables and register metadata.
+- Produce `c64-compat-extended.toml` covering VIC-II sprites, raster IRQ, CIA joystick/keyboard matrix (reuse existing builders), and open-bus policy.
+- Build a functional showcase (CLI or integration test) that exercises sprite movement, IRQ ACK, and collision reads using the modern backend.
+
+## Deliverables
+- `crossdev/cross465/personality_defs/c64-compat-extended.toml`.
+- Adapter implementations bridging the new mapping features to the rendering/input subsystems.
+- Demo or automated scenario proving behavioural parity with legacy expectations.
+- Documentation updates summarising the mapping DSL usage for C64 (link back to Chapter 7).
+
+## Validation Strategy
+- Register-by-register parity checks: X/Y coordinates, enable masks, colours, IRQ status, collision flags.
+- Tests for latch/ack behaviour: verify `on_read` policies clear the correct bits.
+- Scatter/gather accuracy: ensure `$D010` bits map to individual sprite high bits.
+- Performance spot-check: decoder lookups remain O(1) despite new indirections.
+
+## Dependencies & Open Questions
+- Confirm existing value builders cover CIA joystick matrix; extend if multi-column scanning is required.
+- Decide whether raster timing hooks need frame-level scheduling now or can defer to Milestone 7.
+- Determine integration path for adapters within current module registry (trait objects vs. generics).

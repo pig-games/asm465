@@ -36,3 +36,4 @@
 2. Author `modern-retro-range.toml` and verify parity with legacy mapping through automated tests. — ✅ created `personality_defs/modern-retro-range.toml`.
 3. Implement CLI flags and loader/map inspection tooling, ensuring existing workflows keep working without extra arguments. — ✅ `asm465` exposes `--personality`, `--list-personalities`, `--list-modules`, `--dump-maps`.
 4. Backfill sparse/vintage personalities leveraging value builders and condition overlays. — ✅ Added `c64-compat-sparse.toml` with active-low joystick builder (Atari still pending).
+5. Investigate remaining VIC-II behaviours (sprite collisions, priority, timing) needed for a full C64 personality and outline engine hooks. — ☐

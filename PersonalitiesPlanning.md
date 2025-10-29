@@ -31,7 +31,17 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Create sparse sample personalities (e.g., C64, Atari) demonstrating active-low transforms, read-to-ack hooks, and banking. (see `crossdev/cross465/personality_defs/c64-compat-sparse.toml`)
 - [x] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, `--list-modules`, map dumps) for selecting and inspecting personalities. (runner & asm465 CLI options)
 
-## Milestone 6 – Conformance & Regression Tests
-- [ ] Add suites validating register contracts (RO/WO, reset values, hook side effects) across module kinds.
-- [ ] Test decoder behavior for ranges, sparse overlaps, and condition switching scenarios.
-- [ ] Verify value builders (C64 joystick, Atari ports, float scaling) and measure decoder performance for O(1) lookups.
+## Milestone 6 – C64 Semantic Prototype
+- [ ] Implement sprite instance arrays with `$D010` scatter mapping for X-hi bits.
+- [ ] Add bitfield-level policies and `on_read` hooks for VIC-II IRQ/collision registers.
+- [ ] Support write fan-out for sprite enable and mask registers.
+- [ ] Define mirrors and open-bus behaviour for unmapped C64 ranges.
+- [ ] Activate compute expressions for raster/collision status reads.
+- [ ] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
+- [ ] Ship `c64-compat-extended.toml` and an interactive demo proving behavioural parity.
+
+## Milestone 7 – Extended Compatibility & Conformance
+- [ ] Deliver MEGA65 personality with extended sprite attributes and banking.
+- [ ] Introduce conditional layouts and selector front-ends for mode/bank switching.
+- [ ] Build conformance suites covering coordinates, colours, enable masks, scatter/gather accuracy, and read-to-clear semantics.
+- [ ] Benchmark and document decoder performance remaining O(1) with new mapping features.
