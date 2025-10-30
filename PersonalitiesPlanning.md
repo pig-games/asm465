@@ -32,8 +32,9 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, `--list-modules`, map dumps) for selecting and inspecting personalities. (runner & asm465 CLI options)
 
 ## Milestone 6 – C64 Semantic Prototype
-- [ ] Implement sprite instance arrays with `$D010` scatter mapping for X-hi bits.
-- [ ] Add bitfield-level policies and `on_read` hooks for VIC-II IRQ/collision registers.
+- [ ] After completing each task below, update `crossdev/cross465/personality_defs/c64-compat-sparse.toml` and rerun the mapping tests to confirm the C64 layout still behaves correctly.
+- [x] Implement sprite instance arrays with `$D010` scatter mapping for X-hi bits.
+- [x] Add bitfield-level policies and `on_read` hooks for VIC-II IRQ/collision registers.
 - [ ] Support write fan-out for sprite enable and mask registers.
 - [ ] Define mirrors and open-bus behaviour for unmapped C64 ranges.
 - [ ] Activate compute expressions for raster/collision status reads.

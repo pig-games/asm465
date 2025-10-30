@@ -42,6 +42,52 @@ pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
+/// Resolved mapping entry produced by the personality compiler.
+#[derive(Clone, Debug)]
+pub struct AddressMapping {
+    pub addr: u16,
+    pub priority: i32,
+    pub module: ModuleKind,
+    pub module_impl_id: String,
+    pub register: RegId,
+    pub register_name: &'static str,
+    pub value_builder: bool,
+    pub transform: TransformInfo,
+    pub mapping: MappingDetail,
+    pub field_hooks: Vec<FieldHookInfo>,
+}
+
+/// High-level mapping kind for an address slot.
+#[derive(Clone, Debug)]
+pub enum MappingDetail {
+    Direct,
+    DirectInstance { instance: u8 },
+    Scatter {
+        target_bit: u8,
+        source_bit: u8,
+        instance: Option<u8>,
+    },
+}
+
+/// Transform summary used when inspecting compiled maps.
+#[derive(Clone, Debug, Default)]
+pub struct TransformInfo {
+    pub invert_mask: u8,
+    pub ro_mask: u8,
+    pub wo_mask: u8,
+    pub shift: i8,
+    pub on_read: Option<String>,
+    pub on_write: Option<String>,
+}
+
+/// Field-level hook derived from `field_policies`.
+#[derive(Clone, Debug)]
+pub struct FieldHookInfo {
+    pub mask: u8,
+    pub on_read: Option<String>,
+    pub on_write: Option<String>,
+}
+
 /// Build a registry populated with the built-in module implementations.
 pub fn builtin_module_registry() -> mmio::ModuleRegistry {
     let mut registry = mmio::ModuleRegistry::new();
@@ -55,7 +101,8 @@ pub fn builtin_module_registry() -> mmio::ModuleRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmio::ModuleKind;
+    use crate::mmio::{HookAction, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc, SystemReg};
+    use crate::MmioDevice;
     use crate::personality;
 
     #[test]
@@ -300,6 +347,194 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
         bus.clear_signals();
         assert_eq!(bus.read(0xDC00), 0xFF);
     }
+
+    #[test]
+    fn sprite_instance_map_supports_scatter_bits() {
+        let toml = r#"
+[personality]
+id = "sprite-instance"
+title = "Sprite Instance Demo"
+
+[modules.sprite]
+impl = "sprite.basic"
+
+[[map]]
+priority = 10
+
+[map.decode.instances]
+kind = "sprite"
+count = 8
+index_var = "i"
+
+[[map.decode.instances.layout]]
+addr = "D000 + (i*2)"
+id = "XLo"
+
+[[map.decode.instances.layout]]
+addr = "D001 + (i*2)"
+id = "YLo"
+
+[[map.decode.instances.layout]]
+addr = "D010"
+id = "XHi"
+field = { bit = "i" }
+"#;
+
+        let registry = builtin_module_registry();
+        let def =
+            personality_v2::PersonalityDef::from_toml_str(toml, &registry).expect("load instances");
+        let mut bus = Bus::from_personality_def(def).expect("instance bus");
+
+        let sprite_handle = bus
+            .sprite_output_handle()
+            .expect("sprite output handle available");
+
+        let sprite_index = 3u16;
+        let xlo_addr = 0xD000u16 + sprite_index * 2;
+        let ylo_addr = 0xD001u16 + sprite_index * 2;
+
+        bus.write(xlo_addr, 0x34);
+        bus.write(ylo_addr, 0x78);
+
+        // ensure writes target the selected sprite slot automatically
+        {
+            let snapshot = sprite_handle.lock().unwrap().snapshot();
+            let sprite = snapshot.sprite(sprite_index as usize).unwrap();
+            assert_eq!(sprite.x & 0x00FF, 0x34);
+            assert_eq!(sprite.y & 0x00FF, 0x78);
+
+            let sprite0 = snapshot.sprite(0).unwrap();
+            assert_eq!(sprite0.x, 0);
+            assert_eq!(sprite0.y, 0);
+        }
+
+        // Set high X bit through the shared scatter register at $D010.
+        let hi_mask = 1u8 << (sprite_index as u8);
+        bus.write(0xD010, hi_mask);
+        assert_eq!(bus.read(0xD010), hi_mask);
+
+        {
+            let snapshot = sprite_handle.lock().unwrap().snapshot();
+            let sprite = snapshot.sprite(sprite_index as usize).unwrap();
+            assert_eq!(sprite.x, 0x134);
+        }
+
+        // Clear the high bit again.
+        bus.write(0xD010, 0);
+        assert_eq!(bus.read(0xD010), 0);
+        {
+            let snapshot = sprite_handle.lock().unwrap().snapshot();
+            let sprite = snapshot.sprite(sprite_index as usize).unwrap();
+            assert_eq!(sprite.x, 0x34);
+        }
+    }
+
+    #[test]
+    fn field_policy_read_hook_clears_bits() {
+        let toml = r#"
+[personality]
+id = "field-hooks"
+title = "Field Hook Demo"
+
+[modules.system]
+impl = "system.hooks"
+
+[[map]]
+decode = { sparse = [
+  { addr = "DE00", kind = "system", id = "Status", field_policies = [
+      { lsb = 0, msb = 0, on_read = "clear_bits", ro = true }
+  ] }
+] }
+"#;
+
+        let mut registry = mmio::ModuleRegistry::new();
+        registry.register(&HOOKS_FACTORY);
+
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load field hook personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus with hooks");
+
+        // Initial read returns the latched bit and triggers the on_read hook to clear it.
+        assert_eq!(bus.read(0xDE00), 0x01);
+        assert_eq!(bus.read(0xDE00), 0x00);
+
+        // Writes cannot set the read-only bit back to 1.
+        bus.write(0xDE00, 0xFF);
+        assert_eq!(bus.read(0xDE00), 0xFE);
+    }
+
+    const HOOK_REGS: &[RegisterDesc] = &[RegisterDesc::new(
+        RegId::System(SystemReg::Status),
+        "Status",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    )];
+
+    #[derive(Default)]
+    struct HooksModule {
+        value: u8,
+    }
+
+    impl MmioDevice for HooksModule {
+        fn read(&mut self, _addr: u16) -> u8 {
+            self.value
+        }
+
+        fn write(&mut self, _addr: u16, value: u8) {
+            self.value = value;
+        }
+    }
+
+    impl Module for HooksModule {
+        fn kind(&self) -> ModuleKind {
+            ModuleKind::System
+        }
+
+        fn regs(&self) -> &'static [RegisterDesc] {
+            HOOK_REGS
+        }
+
+        fn read_reg(&mut self, _reg: RegId) -> u8 {
+            self.value
+        }
+
+        fn write_reg(&mut self, _reg: RegId, value: u8) {
+            self.value = value;
+        }
+
+        fn handle_hook(&mut self, hook: &str, action: HookAction) {
+            if hook == "clear_bits" {
+                if let HookAction::Read { value, .. } = action {
+                    self.value &= !value;
+                }
+            }
+        }
+    }
+
+    struct HooksFactory;
+
+    static HOOKS_FACTORY: HooksFactory = HooksFactory;
+
+    impl ModuleFactory for HooksFactory {
+        fn id(&self) -> &'static str {
+            "system.hooks"
+        }
+
+        fn kind(&self) -> ModuleKind {
+            ModuleKind::System
+        }
+
+        fn create(&self, _deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
+            Box::new(HooksModule { value: 0x01 })
+        }
+
+        fn regs(&self) -> &'static [RegisterDesc] {
+            HOOK_REGS
+        }
+    }
 }
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
@@ -309,7 +544,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
-use crate::mmio::{Module, ModuleDeps, ModuleKind, RegId};
+use crate::mmio::{HookAction, Module, ModuleDeps, ModuleKind, RegId};
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
 use interrupts::InterruptController;
@@ -449,6 +684,17 @@ struct ModuleInstance {
 #[derive(Clone)]
 struct AddressSlot {
     priority: i32,
+    kind: AddressSlotKind,
+}
+
+#[derive(Clone)]
+enum AddressSlotKind {
+    Direct(DirectSlot),
+    Scatter(ScatterSlot),
+}
+
+#[derive(Clone)]
+struct DirectSlot {
     module_index: usize,
     reg: RegId,
     transform: Transform,
@@ -457,6 +703,34 @@ struct AddressSlot {
     post_read_sets: Vec<AddressRegisterSet>,
     pre_write_sets: Vec<AddressRegisterSet>,
     post_write_sets: Vec<AddressRegisterSet>,
+    field_hooks: Vec<FieldHook>,
+    instance: Option<u8>,
+}
+
+#[derive(Clone)]
+struct ScatterSlot {
+    entries: Vec<ScatterEntry>,
+}
+
+#[derive(Clone)]
+struct ScatterEntry {
+    module_index: usize,
+    reg: RegId,
+    transform: Transform,
+    pre_read_sets: Vec<AddressRegisterSet>,
+    post_read_sets: Vec<AddressRegisterSet>,
+    pre_write_sets: Vec<AddressRegisterSet>,
+    post_write_sets: Vec<AddressRegisterSet>,
+    source_bit: u8,
+    target_bit: u8,
+    instance: Option<u8>,
+}
+
+#[derive(Clone)]
+struct FieldHook {
+    mask: u8,
+    on_read: Option<String>,
+    on_write: Option<String>,
 }
 
 #[derive(Clone)]
@@ -528,6 +802,9 @@ fn compile_address_table(
             MapDecode::Sparse(entries) => {
                 compile_sparse_map(&mut table, map.priority, entries, lookup)?;
             }
+            MapDecode::Instances(instances) => {
+                compile_instance_map(&mut table, map.priority, instances, lookup)?;
+            }
         }
     }
     Ok(table)
@@ -570,14 +847,18 @@ fn compile_range_map(
 
         let slot = AddressSlot {
             priority,
-            module_index,
-            reg: register.id,
-            transform,
-            value_builder: None,
-            pre_read_sets,
-            post_read_sets,
-            pre_write_sets,
-            post_write_sets,
+            kind: AddressSlotKind::Direct(DirectSlot {
+                module_index,
+                reg: register.id,
+                transform,
+                value_builder: None,
+                pre_read_sets,
+                post_read_sets,
+                pre_write_sets,
+                post_write_sets,
+                field_hooks: Vec::new(),
+                instance: None,
+            }),
         };
 
         insert_slot(table, target_addr, slot)?;
@@ -597,25 +878,133 @@ fn compile_sparse_map(
             .get(&entry.module)
             .ok_or(PersonalityCompileError::MissingModule(entry.module))?;
 
-        let transform = entry.transform.clone().unwrap_or_default();
+        let mut transform = entry.transform.clone().unwrap_or_default();
         let pre_read_sets = map_register_sets(&transform.pre_read_sets, lookup)?;
         let post_read_sets = map_register_sets(&transform.post_read_sets, lookup)?;
         let pre_write_sets = map_register_sets(&transform.pre_write_sets, lookup)?;
         let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
+        let field_hooks = compile_field_hooks(&entry.field_policies, &mut transform);
 
         let slot = AddressSlot {
             priority,
-            module_index,
-            reg: entry.register.id,
-            transform,
-            value_builder: entry.value_builder.clone(),
-            pre_read_sets,
-            post_read_sets,
-            pre_write_sets,
-            post_write_sets,
+            kind: AddressSlotKind::Direct(DirectSlot {
+                module_index,
+                reg: entry.register.id,
+                transform,
+                value_builder: entry.value_builder.clone(),
+                pre_read_sets,
+                post_read_sets,
+                pre_write_sets,
+                post_write_sets,
+                field_hooks,
+                instance: None,
+            }),
         };
 
         insert_slot(table, entry.addr, slot)?;
+    }
+
+    Ok(())
+}
+
+fn compile_instance_map(
+    table: &mut [Option<AddressSlot>],
+    priority: i32,
+    map: &personality_v2::InstanceMap,
+    lookup: &BTreeMap<ModuleKind, usize>,
+) -> Result<(), PersonalityCompileError> {
+    let module_index = *lookup
+        .get(&map.module)
+        .ok_or(PersonalityCompileError::MissingModule(map.module))?;
+
+    for instance in 0..map.count {
+        let index_u32 = instance as u32;
+        if index_u32 > u8::MAX as u32 {
+            return Err(PersonalityCompileError::AddressOutOfRange { addr: 0 });
+        }
+        let selector_value = index_u32 as u8;
+        for entry in &map.layout {
+            let addr = match &entry.addr {
+                personality_v2::InstanceAddressExpr::Absolute(expr) => {
+                    let value = expr
+                        .evaluate(index_u32)
+                        .map_err(|_| PersonalityCompileError::AddressOutOfRange { addr: 0 })?;
+                    if value > u16::MAX as u32 {
+                        return Err(PersonalityCompileError::AddressOutOfRange {
+                            addr: u16::MAX,
+                        });
+                    }
+                    value as u16
+                }
+            };
+
+            let mut transform = entry.transform.clone().unwrap_or_default();
+            if let Some(selector) = &map.selector {
+                let set = personality_v2::RegisterSet {
+                    module: map.module,
+                    register: selector.clone(),
+                    value: selector_value,
+                };
+                transform.pre_read_sets.insert(0, set.clone());
+                transform.pre_write_sets.insert(0, set);
+            }
+
+            let pre_read_sets = map_register_sets(&transform.pre_read_sets, lookup)?;
+            let post_read_sets = map_register_sets(&transform.post_read_sets, lookup)?;
+            let pre_write_sets = map_register_sets(&transform.pre_write_sets, lookup)?;
+            let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
+
+            if let Some(field) = &entry.field {
+                let target_bit = field
+                    .target_bit
+                    .evaluate(index_u32)
+                    .map_err(|_| PersonalityCompileError::AddressOutOfRange { addr })?;
+                let source_bit = field
+                    .source_bit
+                    .evaluate(index_u32)
+                    .map_err(|_| PersonalityCompileError::AddressOutOfRange { addr })?;
+                if target_bit > 7 || source_bit > 7 {
+                    return Err(PersonalityCompileError::AddressOutOfRange { addr });
+                }
+                let scatter_entry = ScatterEntry {
+                    module_index,
+                    reg: entry.register.id,
+                    transform,
+                    pre_read_sets,
+                    post_read_sets,
+                    pre_write_sets,
+                    post_write_sets,
+                    source_bit: source_bit as u8,
+                    target_bit: target_bit as u8,
+                    instance: Some(selector_value),
+                };
+                let slot = AddressSlot {
+                    priority,
+                    kind: AddressSlotKind::Scatter(ScatterSlot {
+                        entries: vec![scatter_entry],
+                    }),
+                };
+                insert_slot(table, addr, slot)?;
+            } else {
+                let field_hooks = compile_field_hooks(&entry.field_policies, &mut transform);
+                let slot = AddressSlot {
+                    priority,
+                    kind: AddressSlotKind::Direct(DirectSlot {
+                        module_index,
+                        reg: entry.register.id,
+                        transform,
+                        value_builder: None,
+                        pre_read_sets,
+                        post_read_sets,
+                        pre_write_sets,
+                        post_write_sets,
+                        field_hooks,
+                        instance: Some(selector_value),
+                    }),
+                };
+                insert_slot(table, addr, slot)?;
+            }
+        }
     }
 
     Ok(())
@@ -639,6 +1028,51 @@ fn map_register_sets(
     Ok(resolved)
 }
 
+fn compile_field_hooks(
+    policies: &[personality_v2::FieldPolicy],
+    transform: &mut Transform,
+) -> Vec<FieldHook> {
+    let mut hooks = Vec::new();
+    for policy in policies {
+        if policy.ro {
+            transform.ro_mask |= policy.mask;
+        }
+        if policy.wo {
+            transform.wo_mask |= policy.mask;
+        }
+        if policy.on_read.is_some() || policy.on_write.is_some() {
+            hooks.push(FieldHook {
+                mask: policy.mask,
+                on_read: policy.on_read.clone(),
+                on_write: policy.on_write.clone(),
+            });
+        }
+    }
+    hooks
+}
+
+fn fire_field_read_hooks(module: &mut dyn Module, value: u8, hooks: &[FieldHook]) {
+    for hook in hooks {
+        if let Some(name) = &hook.on_read {
+            let masked = value & hook.mask;
+            if masked != 0 {
+                module.handle_hook(name, HookAction::Read { mask: hook.mask, value: masked });
+            }
+        }
+    }
+}
+
+fn fire_field_write_hooks(module: &mut dyn Module, cpu_value: u8, hooks: &[FieldHook]) {
+    for hook in hooks {
+        if let Some(name) = &hook.on_write {
+            let masked = cpu_value & hook.mask;
+            if masked != 0 {
+                module.handle_hook(name, HookAction::Write { mask: hook.mask, value: masked });
+            }
+        }
+    }
+}
+
 fn insert_slot(
     table: &mut [Option<AddressSlot>],
     addr: u16,
@@ -649,13 +1083,19 @@ fn insert_slot(
     match cell {
         Some(existing) => {
             if existing.priority == priority {
-                return Err(PersonalityCompileError::AddressOverlap {
-                    addr,
-                    existing_priority: existing.priority,
-                    new_priority: priority,
-                });
-            }
-            if priority > existing.priority {
+                match (&mut existing.kind, slot.kind) {
+                    (AddressSlotKind::Scatter(existing_scatter), AddressSlotKind::Scatter(mut new_scatter)) => {
+                        existing_scatter.entries.append(&mut new_scatter.entries);
+                    }
+                    _ => {
+                        return Err(PersonalityCompileError::AddressOverlap {
+                            addr,
+                            existing_priority: existing.priority,
+                            new_priority: priority,
+                        });
+                    }
+                }
+            } else if priority > existing.priority {
                 *existing = slot;
             }
         }
@@ -724,31 +1164,13 @@ impl PersonalityRuntime {
             None => return None,
         };
 
-        self.apply_register_sets(&slot.pre_read_sets);
-
-        let mut value = if let Some(builder) = slot.value_builder.as_ref() {
-            builder
-                .build(&mut self.signals)
-                .get(0)
-                .copied()
-                .unwrap_or(0)
-        } else {
-            let module = self.modules.get_mut(slot.module_index)?.module.as_mut();
-            module.read_reg(slot.reg)
-        };
-
-        value = apply_shift(value, slot.transform.shift);
-        value ^= slot.transform.invert_mask;
-        if slot.transform.wo_mask != 0 {
-            value &= !slot.transform.wo_mask;
+        match slot.kind {
+            AddressSlotKind::Direct(direct) => self.read_direct(direct),
+            AddressSlotKind::Scatter(scatter) => self.read_scatter(scatter),
         }
-
-        self.apply_register_sets(&slot.post_read_sets);
-
-        Some(value)
     }
 
-    fn write(&mut self, addr: u16, mut value: u8) -> bool {
+    fn write(&mut self, addr: u16, value: u8) -> bool {
         let slot = match self
             .address_table
             .get(addr as usize)
@@ -758,6 +1180,64 @@ impl PersonalityRuntime {
             None => return false,
         };
 
+        match slot.kind {
+            AddressSlotKind::Direct(direct) => self.write_direct(value, direct),
+            AddressSlotKind::Scatter(scatter) => self.write_scatter(value, scatter),
+        }
+    }
+
+    fn read_direct(&mut self, slot: DirectSlot) -> Option<u8> {
+        self.apply_register_sets(&slot.pre_read_sets);
+        let module_entry = self.modules.get_mut(slot.module_index)?;
+        let module = module_entry.module.as_mut();
+
+        let mut value = if let Some(builder) = slot.value_builder.as_ref() {
+            builder
+                .build(&mut self.signals)
+                .get(0)
+                .copied()
+                .unwrap_or(0)
+        } else {
+            module.read_reg(slot.reg)
+        };
+
+        value = apply_shift(value, slot.transform.shift);
+        value ^= slot.transform.invert_mask;
+        if slot.transform.wo_mask != 0 {
+            value &= !slot.transform.wo_mask;
+        }
+
+        if !slot.field_hooks.is_empty() {
+            fire_field_read_hooks(module, value, &slot.field_hooks);
+        }
+
+        self.apply_register_sets(&slot.post_read_sets);
+
+        Some(value)
+    }
+
+    fn read_scatter(&mut self, slot: ScatterSlot) -> Option<u8> {
+        let mut result = 0u8;
+        for entry in slot.entries {
+            self.apply_register_sets(&entry.pre_read_sets);
+            let module = self.modules.get_mut(entry.module_index)?.module.as_mut();
+            let mut value = module.read_reg(entry.reg);
+            value = apply_shift(value, entry.transform.shift);
+            value ^= entry.transform.invert_mask;
+            if entry.transform.wo_mask != 0 {
+                value &= !entry.transform.wo_mask;
+            }
+            let bit =
+                (value.wrapping_shr(entry.source_bit as u32) & 1) as u8;
+            if bit != 0 {
+                result |= 1u8 << entry.target_bit;
+            }
+            self.apply_register_sets(&entry.post_read_sets);
+        }
+        Some(result)
+    }
+
+    fn write_direct(&mut self, mut value: u8, slot: DirectSlot) -> bool {
         self.apply_register_sets(&slot.pre_write_sets);
 
         let module = match self.modules.get_mut(slot.module_index) {
@@ -765,6 +1245,7 @@ impl PersonalityRuntime {
             None => return false,
         };
 
+        let cpu_value = value;
         value = reverse_shift(value, slot.transform.shift);
         value ^= slot.transform.invert_mask;
 
@@ -774,9 +1255,50 @@ impl PersonalityRuntime {
         }
 
         module.write_reg(slot.reg, value);
+        if !slot.field_hooks.is_empty() {
+            fire_field_write_hooks(module, cpu_value, &slot.field_hooks);
+        }
         self.apply_register_sets(&slot.post_write_sets);
         self.recompute_conditions_if_needed();
         true
+    }
+
+    fn write_scatter(&mut self, value: u8, slot: ScatterSlot) -> bool {
+        let mut any = false;
+        for entry in slot.entries {
+            self.apply_register_sets(&entry.pre_write_sets);
+            let module = match self.modules.get_mut(entry.module_index) {
+                Some(m) => m.module.as_mut(),
+                None => continue,
+            };
+            let current = module.read_reg(entry.reg);
+            let mut cpu_value = apply_shift(current, entry.transform.shift);
+            cpu_value ^= entry.transform.invert_mask;
+            if entry.transform.wo_mask != 0 {
+                cpu_value &= !entry.transform.wo_mask;
+            }
+            let bit = (value.wrapping_shr(entry.target_bit as u32) & 1) as u8;
+            let mask = 1u8 << entry.source_bit;
+            if bit != 0 {
+                cpu_value |= mask;
+            } else {
+                cpu_value &= !mask;
+            }
+            let mut new_value = reverse_shift(cpu_value, entry.transform.shift);
+            new_value ^= entry.transform.invert_mask;
+            let mut final_value = new_value;
+            if entry.transform.ro_mask != 0 {
+                final_value =
+                    (new_value & !entry.transform.ro_mask) | (current & entry.transform.ro_mask);
+            }
+            module.write_reg(entry.reg, final_value);
+            self.apply_register_sets(&entry.post_write_sets);
+            any = true;
+        }
+        if any {
+            self.recompute_conditions_if_needed();
+        }
+        any
     }
 
     fn apply_register_sets(&mut self, sets: &[AddressRegisterSet]) {
@@ -895,6 +1417,66 @@ impl PersonalityRuntime {
 
     fn clear_signals(&mut self) {
         self.signals.clear();
+    }
+
+    #[allow(dead_code)]
+    fn address_mappings(&self) -> Vec<AddressMapping> {
+        let mut result = Vec::new();
+        for (addr, slot) in self.address_table.iter().enumerate() {
+            let Some(slot) = slot else { continue };
+            match &slot.kind {
+                AddressSlotKind::Direct(direct) => {
+                    let module = &self.modules[direct.module_index];
+                    let mapping_detail = if let Some(instance) = direct.instance {
+                        MappingDetail::DirectInstance { instance }
+                    } else {
+                        MappingDetail::Direct
+                    };
+                    result.push(AddressMapping {
+                        addr: addr as u16,
+                        priority: slot.priority,
+                        module: module.kind,
+                        module_impl_id: module.impl_id.clone(),
+                        register: direct.reg,
+                        register_name: register_name(module, direct.reg),
+                        value_builder: direct.value_builder.is_some(),
+                        transform: TransformInfo::from(&direct.transform),
+                        mapping: mapping_detail,
+                        field_hooks: direct
+                            .field_hooks
+                            .iter()
+                            .map(|hook| FieldHookInfo {
+                                mask: hook.mask,
+                                on_read: hook.on_read.clone(),
+                                on_write: hook.on_write.clone(),
+                            })
+                            .collect(),
+                    });
+                }
+                AddressSlotKind::Scatter(scatter) => {
+                    for entry in &scatter.entries {
+                        let module = &self.modules[entry.module_index];
+                        result.push(AddressMapping {
+                            addr: addr as u16,
+                            priority: slot.priority,
+                            module: module.kind,
+                            module_impl_id: module.impl_id.clone(),
+                            register: entry.reg,
+                            register_name: register_name(module, entry.reg),
+                            value_builder: false,
+                            transform: TransformInfo::from(&entry.transform),
+                            mapping: MappingDetail::Scatter {
+                                target_bit: entry.target_bit,
+                                source_bit: entry.source_bit,
+                                instance: entry.instance,
+                            },
+                            field_hooks: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
+        result
     }
 }
 
@@ -1150,6 +1732,13 @@ impl Bus {
             runtime.clear_signals();
         }
     }
+
+    /// Snapshot the resolved address table for the active TOML personality.
+    pub fn address_mappings(&self) -> Option<Vec<AddressMapping>> {
+        self.runtime_v2
+            .as_ref()
+            .map(|runtime| runtime.address_mappings())
+    }
 }
 
 impl Bus {
@@ -1164,5 +1753,29 @@ impl Bus {
             device: dev,
             kind,
         });
+    }
+}
+
+#[allow(dead_code)]
+fn register_name(instance: &ModuleInstance, reg: RegId) -> &'static str {
+    instance
+        .module
+        .regs()
+        .iter()
+        .find(|desc| desc.id == reg)
+        .map(|desc| desc.name)
+        .unwrap_or("<unknown>")
+}
+
+impl From<&Transform> for TransformInfo {
+    fn from(transform: &Transform) -> Self {
+        Self {
+            invert_mask: transform.invert_mask,
+            ro_mask: transform.ro_mask,
+            wo_mask: transform.wo_mask,
+            shift: transform.shift,
+            on_read: transform.on_read.clone(),
+            on_write: transform.on_write.clone(),
+        }
     }
 }

@@ -24,77 +24,24 @@ decode = { sparse = [
 
 [[map]]
 priority = 10
-decode = { sparse = [
-  { addr = "D100", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D101", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D102", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D103", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D104", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D105", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-  { addr = "D106", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 0 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 0 }] } },
-
-  { addr = "D108", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D109", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D10A", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D10B", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D10C", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D10D", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-  { addr = "D10E", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 1 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 1 }] } },
-
-  { addr = "D110", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D111", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D112", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D113", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D114", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D115", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-  { addr = "D116", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 2 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 2 }] } },
-
-  { addr = "D118", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D119", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D11A", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D11B", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D11C", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D11D", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-  { addr = "D11E", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 3 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 3 }] } },
-
-  { addr = "D120", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D121", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D122", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D123", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D124", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D125", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-  { addr = "D126", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 4 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 4 }] } },
-
-  { addr = "D128", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D129", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D12A", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D12B", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D12C", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D12D", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-  { addr = "D12E", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 5 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 5 }] } },
-
-  { addr = "D130", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D131", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D132", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D133", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D134", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D135", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-  { addr = "D136", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 6 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 6 }] } },
-
-  { addr = "D138", kind = "sprite", id = "Number", transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D139", kind = "sprite", id = "Anim",   transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D13A", kind = "sprite", id = "XLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D13B", kind = "sprite", id = "XHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D13C", kind = "sprite", id = "YLo",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D13D", kind = "sprite", id = "YHi",    transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } },
-  { addr = "D13E", kind = "sprite", id = "Scale",  transform = { pre_write_sets = [{ kind = "sprite", id = "Select", value = 7 }], pre_read_sets = [{ kind = "sprite", id = "Select", value = 7 }] } }
-] }
+decode = { instances = { kind = "sprite", selector = "Select", count = 8, index_var = "i", layout = [
+  { addr = "D100 + (i*8)", id = "Number" },
+  { addr = "D101 + (i*8)", id = "Anim" },
+  { addr = "D102 + (i*8)", id = "XLo" },
+  { addr = "D103 + (i*8)", id = "XHi" },
+  { addr = "D104 + (i*8)", id = "YLo" },
+  { addr = "D105 + (i*8)", id = "YHi" },
+  { addr = "D106 + (i*8)", id = "Scale" },
+  { addr = "D010", id = "XHi", field = { bit = "i" } }
+] } }
 
 
 [[map]]
 priority = 10
 decode = { sparse = [
-  { addr = "D019", kind = "system", id = "IrqPending" },
+  { addr = "D019", kind = "system", id = "IrqPending", field_policies = [
+      { lsb = 0, msb = 7, on_read = "irq_ack_bits" }
+  ] },
   { addr = "D01A", kind = "system", id = "IrqEnable" },
   { addr = "D01B", kind = "system", id = "IrqAck" },
   { addr = "D01C", kind = "system", id = "IrqSource" },

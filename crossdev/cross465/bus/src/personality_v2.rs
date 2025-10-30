@@ -52,6 +52,7 @@ pub struct Map {
 pub enum MapDecode {
     Range(RangeMap),
     Sparse(Vec<SparseEntry>),
+    Instances(InstanceMap),
 }
 
 pub struct RangeMap {
@@ -73,6 +74,60 @@ pub struct SparseEntry {
     pub register: ResolvedRegister,
     pub transform: Option<Transform>,
     pub value_builder: Option<ValueBuilder>,
+    pub field_policies: Vec<FieldPolicy>,
+}
+
+pub struct InstanceMap {
+    pub module: ModuleKind,
+    pub selector: Option<ResolvedRegister>,
+    pub count: usize,
+    pub index_var: String,
+    pub layout: Vec<InstanceLayoutEntry>,
+}
+
+pub struct InstanceLayoutEntry {
+    pub addr: InstanceAddressExpr,
+    pub register: ResolvedRegister,
+    pub transform: Option<Transform>,
+    pub field: Option<InstanceField>,
+    pub field_policies: Vec<FieldPolicy>,
+}
+
+#[derive(Clone)]
+pub enum InstanceAddressExpr {
+    Absolute(InstanceExpr),
+}
+
+#[derive(Clone)]
+pub struct InstanceField {
+    pub source_bit: InstanceExpr,
+    pub target_bit: InstanceExpr,
+}
+
+#[derive(Clone)]
+pub struct FieldPolicy {
+    pub lsb: u8,
+    pub msb: u8,
+    pub mask: u8,
+    pub on_read: Option<String>,
+    pub on_write: Option<String>,
+    pub ro: bool,
+    pub wo: bool,
+}
+
+#[derive(Clone)]
+pub struct InstanceExpr {
+    source: String,
+    tokens: Vec<ExprToken>,
+}
+
+#[derive(Clone)]
+enum ExprToken {
+    Number(u32),
+    Var,
+    Plus,
+    Minus,
+    Star,
 }
 
 #[derive(Clone, Default)]
@@ -335,9 +390,13 @@ fn resolve_maps(
         let priority = raw.priority.unwrap_or(default_priority);
         let active_when = raw.active_when.map(|s| vec![s]).unwrap_or_default();
         let decode = {
-            let RawDecode { range, sparse } = raw.decode;
-            match (range, sparse) {
-                (Some(range), None) => {
+            let RawDecode {
+                range,
+                sparse,
+                instances,
+            } = raw.decode;
+            match (range, sparse, instances) {
+                (Some(range), None, None) => {
                     let (kind, module) = module_for_kind(&range.kind, modules)?;
                     let resolved_order = resolve_register_order(&range.order, module)?;
                     let stride = range.stride.unwrap_or(1);
@@ -354,7 +413,7 @@ fn resolve_maps(
                         default_transform,
                     })
                 }
-                (None, Some(entries)) => {
+                (None, Some(entries), None) => {
                     let mut resolved = Vec::new();
                     for entry in entries {
                         let (kind, module) = module_for_kind(&entry.kind, modules)?;
@@ -368,20 +427,25 @@ fn resolve_maps(
                             .value_builder
                             .map(|value| parse_value_builder(value, register.desc))
                             .transpose()?;
+                        let field_policies = resolve_field_policies(&entry.field_policies, &register)?;
                         resolved.push(SparseEntry {
                             addr,
                             module: kind,
                             register,
                             transform,
                             value_builder,
+                            field_policies,
                         });
                     }
                     MapDecode::Sparse(resolved)
                 }
+                (None, None, Some(instances)) => {
+                    MapDecode::Instances(resolve_instance_map(instances, modules)?)
+                }
                 _ => {
                     return Err(LoaderError {
                         message:
-                            "each [[map]] must define exactly one of decode.range or decode.sparse"
+                            "each [[map]] must define exactly one of decode.range, decode.sparse, or decode.instances"
                                 .to_string(),
                         line: None,
                         column: None,
@@ -397,6 +461,97 @@ fn resolve_maps(
         });
     }
     Ok(maps)
+}
+
+fn resolve_instance_map(
+    raw: RawInstanceMap,
+    modules: &BTreeMap<ModuleKind, ModuleConfig>,
+) -> Result<InstanceMap, LoaderError> {
+    if raw.count == 0 {
+        return Err(LoaderError {
+            message: "decode.instances.count must be > 0".to_string(),
+            line: None,
+            column: None,
+        });
+    }
+
+    let (kind, module) = module_for_kind(&raw.kind, modules)?;
+
+    let selector = if let Some(name) = raw.selector {
+        Some(resolve_register(&name, module)?)
+    } else {
+        module
+            .factory
+            .regs()
+            .iter()
+            .find(|desc| desc.matches_name("Select"))
+            .map(|desc| ResolvedRegister {
+                id: desc.id,
+                desc,
+            })
+    };
+
+    if raw.layout.is_empty() {
+        return Err(LoaderError {
+            message: "decode.instances.layout must contain at least one entry".to_string(),
+            line: None,
+            column: None,
+        });
+    }
+
+    let mut layout = Vec::with_capacity(raw.layout.len());
+    for entry in raw.layout {
+        let register = resolve_register(&entry.id, module)?;
+        let addr_expr = parse_instance_expr(&entry.addr, &raw.index_var)?;
+        let transform = entry
+            .transform
+            .map(|t| resolve_transform(t, modules))
+            .transpose()?;
+        let field = entry
+            .field
+            .map(|field| parse_instance_field(field, &raw.index_var))
+            .transpose()?;
+        let field_policies = resolve_field_policies(&entry.field_policies, &register)?;
+
+        layout.push(InstanceLayoutEntry {
+            addr: InstanceAddressExpr::Absolute(addr_expr),
+            register,
+            transform,
+            field,
+            field_policies,
+        });
+    }
+
+    Ok(InstanceMap {
+        module: kind,
+        selector,
+        count: raw.count,
+        index_var: raw.index_var,
+        layout,
+    })
+}
+
+fn parse_instance_field(
+    raw: RawInstanceField,
+    index_var: &str,
+) -> Result<InstanceField, LoaderError> {
+    let target_expr_str = raw
+        .target_bit
+        .or(raw.bit)
+        .ok_or_else(|| LoaderError {
+            message: "field must specify `bit` or `target_bit`".to_string(),
+            line: None,
+            column: None,
+        })?;
+    let target_bit = parse_instance_expr(&target_expr_str, index_var)?;
+
+    let source_expr_str = raw.source_bit.unwrap_or_else(|| "0".to_string());
+    let source_bit = parse_instance_expr(&source_expr_str, index_var)?;
+
+    Ok(InstanceField {
+        source_bit,
+        target_bit,
+    })
 }
 
 fn resolve_interrupts(
@@ -545,6 +700,70 @@ fn resolve_register_sets(
         });
     }
     Ok(sets)
+}
+
+fn resolve_field_policies(
+    raws: &[RawFieldPolicy],
+    register: &ResolvedRegister,
+) -> Result<Vec<FieldPolicy>, LoaderError> {
+    if raws.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if register.desc.width != 1 {
+        return Err(LoaderError {
+            message: format!(
+                "field_policies currently support 1-byte registers; `{}` is {} bytes wide",
+                register.desc.name, register.desc.width
+            ),
+            line: None,
+            column: None,
+        });
+    }
+
+    let mut policies = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let lsb = raw.lsb.ok_or_else(|| LoaderError {
+            message: "field policy missing `lsb`".to_string(),
+            line: None,
+            column: None,
+        })?;
+        let msb = raw.msb.unwrap_or(lsb);
+        if msb < lsb {
+            return Err(LoaderError {
+                message: format!(
+                    "field policy has msb {} < lsb {} for register `{}`",
+                    msb, lsb, register.desc.name
+                ),
+                line: None,
+                column: None,
+            });
+        }
+        if msb >= register.desc.width.saturating_mul(8) {
+            return Err(LoaderError {
+                message: format!(
+                    "field policy bit {} out of range for register `{}` (width {} bytes)",
+                    msb, register.desc.name, register.desc.width
+                ),
+                line: None,
+                column: None,
+            });
+        }
+
+        let span = msb - lsb + 1;
+        let mask = (((1u16 << span) - 1) << lsb) as u8;
+        policies.push(FieldPolicy {
+            lsb,
+            msb,
+            mask,
+            on_read: raw.on_read.clone(),
+            on_write: raw.on_write.clone(),
+            ro: raw.ro.unwrap_or(false),
+            wo: raw.wo.unwrap_or(false),
+        });
+    }
+
+    Ok(policies)
 }
 
 fn parse_value_builder(value: Value, register: &RegisterDesc) -> Result<ValueBuilder, LoaderError> {
@@ -775,6 +994,299 @@ fn parse_range(range: &str) -> Result<AddressRange, LoaderError> {
     Ok(AddressRange { start, end })
 }
 
+impl InstanceExpr {
+    pub fn constant(value: u32) -> Self {
+        Self {
+            source: format!("{value}"),
+            tokens: vec![ExprToken::Number(value)],
+        }
+    }
+
+    pub fn evaluate(&self, index: u32) -> Result<u32, LoaderError> {
+        let mut output = Vec::with_capacity(self.tokens.len());
+        for token in &self.tokens {
+            output.push(match token {
+                ExprToken::Number(n) => ValueOrOp::Value(*n),
+                ExprToken::Var => ValueOrOp::Value(index),
+                ExprToken::Plus => ValueOrOp::Op(Op::Add),
+                ExprToken::Minus => ValueOrOp::Op(Op::Sub),
+                ExprToken::Star => ValueOrOp::Op(Op::Mul),
+            });
+        }
+        eval_rpn(&output)
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+}
+
+enum ValueOrOp {
+    Value(u32),
+    Op(Op),
+}
+
+#[derive(Copy, Clone)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+}
+
+fn eval_rpn(tokens: &[ValueOrOp]) -> Result<u32, LoaderError> {
+    let mut stack: Vec<i64> = Vec::new();
+    for token in tokens {
+        match token {
+            ValueOrOp::Value(v) => stack.push(*v as i64),
+            ValueOrOp::Op(op) => {
+                if stack.len() < 2 {
+                    return Err(LoaderError {
+                        message: "invalid expression".to_string(),
+                        line: None,
+                        column: None,
+                    });
+                }
+                let rhs = stack.pop().unwrap();
+                let lhs = stack.pop().unwrap();
+                let result = match op {
+                    Op::Add => lhs + rhs,
+                    Op::Sub => lhs - rhs,
+                    Op::Mul => lhs * rhs,
+                };
+                stack.push(result);
+            }
+        }
+    }
+    if stack.len() != 1 {
+        return Err(LoaderError {
+            message: "invalid expression".to_string(),
+            line: None,
+            column: None,
+        });
+    }
+    let value = stack[0];
+    if value < 0 {
+        return Err(LoaderError {
+            message: "expression evaluated to negative value".to_string(),
+            line: None,
+            column: None,
+        });
+    }
+    Ok(value as u32)
+}
+
+fn parse_instance_expr(expr: &str, index_var: &str) -> Result<InstanceExpr, LoaderError> {
+    let tokens = tokenize_expr(expr, index_var)?;
+    let rpn = shunting_yard(&tokens)?;
+    Ok(InstanceExpr {
+        source: expr.trim().to_string(),
+        tokens: rpn,
+    })
+}
+
+#[derive(Clone)]
+enum Token {
+    Number(u32),
+    Var,
+    Op(Op),
+    LParen,
+    RParen,
+}
+
+fn tokenize_expr(expr: &str, index_var: &str) -> Result<Vec<Token>, LoaderError> {
+    let mut tokens = Vec::new();
+    let mut chars = expr.chars().peekable();
+    while let Some(ch) = chars.peek().copied() {
+        match ch {
+            ' ' | '\t' | '\n' | '\r' => {
+                chars.next();
+            }
+            '+' => {
+                chars.next();
+                tokens.push(Token::Op(Op::Add));
+            }
+            '-' => {
+                chars.next();
+                tokens.push(Token::Op(Op::Sub));
+            }
+            '*' => {
+                chars.next();
+                tokens.push(Token::Op(Op::Mul));
+            }
+            '(' => {
+                chars.next();
+                tokens.push(Token::LParen);
+            }
+            ')' => {
+                chars.next();
+                tokens.push(Token::RParen);
+            }
+            _ => {
+                if ch.is_ascii_digit() || ch.is_ascii_hexdigit() {
+                    let mut literal = String::new();
+                    if ch == '0' {
+                        chars.next();
+                        if let Some(next) = chars.peek() {
+                            if *next == 'x' || *next == 'X' {
+                                chars.next();
+                                while let Some(c) = chars.peek() {
+                                    if c.is_ascii_hexdigit() {
+                                        literal.push(*c);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if literal.is_empty() {
+                                    return Err(LoaderError {
+                                        message: format!(
+                                            "invalid literal `0x` in expression `{expr}`"
+                                        ),
+                                        line: None,
+                                        column: None,
+                                    });
+                                }
+                                let value =
+                                    u32::from_str_radix(&literal, 16).map_err(|_| LoaderError {
+                                        message: format!(
+                                            "invalid literal `0x{}` in expression `{expr}`",
+                                            literal
+                                        ),
+                                        line: None,
+                                        column: None,
+                                    })?;
+                                tokens.push(Token::Number(value));
+                                continue;
+                            } else {
+                                literal.push('0');
+                            }
+                        } else {
+                            literal.push('0');
+                        }
+                    } else {
+                        chars.next();
+                        literal.push(ch);
+                    }
+                    while let Some(c) = chars.peek() {
+                        if c.is_ascii_hexdigit() {
+                            literal.push(*c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    let value = u32::from_str_radix(&literal, 16).map_err(|_| LoaderError {
+                        message: format!("invalid literal `{}` in expression `{expr}`", literal),
+                        line: None,
+                        column: None,
+                    })?;
+                    tokens.push(Token::Number(value));
+                } else if ch.is_alphabetic() || ch == '_' {
+                    let mut ident = String::new();
+                    while let Some(c) = chars.peek() {
+                        if c.is_alphanumeric() || *c == '_' {
+                            ident.push(*c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if ident == index_var {
+                        tokens.push(Token::Var);
+                    } else {
+                        return Err(LoaderError {
+                            message: format!(
+                                "unknown identifier `{}` in expression `{expr}`",
+                                ident
+                            ),
+                            line: None,
+                            column: None,
+                        });
+                    }
+                } else {
+                    return Err(LoaderError {
+                        message: format!("unexpected character `{}` in expression `{expr}`", ch),
+                        line: None,
+                        column: None,
+                    });
+                }
+            }
+        }
+    }
+    Ok(tokens)
+}
+
+fn shunting_yard(tokens: &[Token]) -> Result<Vec<ExprToken>, LoaderError> {
+    let mut output = Vec::new();
+    let mut ops: Vec<Token> = Vec::new();
+    for token in tokens {
+        match token {
+            Token::Number(n) => output.push(ExprToken::Number(*n)),
+            Token::Var => output.push(ExprToken::Var),
+            Token::Op(op) => {
+                while let Some(top) = ops.last() {
+                    let push = match (top, op) {
+                        (Token::Op(prev), op) if precedence(prev) >= precedence(op) => true,
+                        _ => false,
+                    };
+                    if push {
+                        let popped = ops.pop().unwrap();
+                        if let Token::Op(o) = popped {
+                            output.push(match o {
+                                Op::Add => ExprToken::Plus,
+                                Op::Sub => ExprToken::Minus,
+                                Op::Mul => ExprToken::Star,
+                            });
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                ops.push(Token::Op(*op));
+            }
+            Token::LParen => ops.push(Token::LParen),
+            Token::RParen => {
+                while let Some(top) = ops.pop() {
+                    match top {
+                        Token::LParen => break,
+                        Token::Op(o) => output.push(match o {
+                            Op::Add => ExprToken::Plus,
+                            Op::Sub => ExprToken::Minus,
+                            Op::Mul => ExprToken::Star,
+                        }),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    while let Some(op) = ops.pop() {
+        match op {
+            Token::Op(o) => output.push(match o {
+                Op::Add => ExprToken::Plus,
+                Op::Sub => ExprToken::Minus,
+                Op::Mul => ExprToken::Star,
+            }),
+            Token::LParen | Token::RParen => {
+                return Err(LoaderError {
+                    message: "mismatched parentheses in expression".to_string(),
+                    line: None,
+                    column: None,
+                });
+            }
+            Token::Number(_) | Token::Var => unreachable!("operands are not pushed to operator stack"),
+        }
+    }
+    Ok(output)
+}
+
+fn precedence(op: &Op) -> u8 {
+    match op {
+        Op::Add | Op::Sub => 1,
+        Op::Mul => 2,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RawPersonalityFile {
     personality: RawMetadata,
@@ -817,6 +1329,8 @@ struct RawDecode {
     range: Option<RawRange>,
     #[serde(default)]
     sparse: Option<Vec<RawSparseEntry>>,
+    #[serde(default)]
+    instances: Option<RawInstanceMap>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -839,6 +1353,65 @@ struct RawSparseEntry {
     transform: Option<RawTransform>,
     #[serde(default)]
     value_builder: Option<Value>,
+    #[serde(default)]
+    field_policies: Vec<RawFieldPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawInstanceMap {
+    kind: String,
+    count: usize,
+    #[serde(default = "default_index_var")]
+    index_var: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    base: Option<String>,
+    #[serde(default)]
+    selector: Option<String>,
+    #[serde(default)]
+    layout: Vec<RawInstanceLayoutEntry>,
+}
+
+fn default_index_var() -> String {
+    "i".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct RawInstanceLayoutEntry {
+    addr: String,
+    id: String,
+    #[serde(default)]
+    transform: Option<RawTransform>,
+    #[serde(default)]
+    field: Option<RawInstanceField>,
+    #[serde(default)]
+    field_policies: Vec<RawFieldPolicy>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawInstanceField {
+    #[serde(default)]
+    bit: Option<String>,
+    #[serde(default)]
+    source_bit: Option<String>,
+    #[serde(default)]
+    target_bit: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawFieldPolicy {
+    #[serde(default)]
+    lsb: Option<u8>,
+    #[serde(default)]
+    msb: Option<u8>,
+    #[serde(default)]
+    on_read: Option<String>,
+    #[serde(default)]
+    on_write: Option<String>,
+    #[serde(default)]
+    ro: Option<bool>,
+    #[serde(default)]
+    wo: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]

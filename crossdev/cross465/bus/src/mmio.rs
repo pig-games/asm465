@@ -225,6 +225,8 @@ pub trait Module: MmioDevice {
         ModuleState::default()
     }
     fn restore(&mut self, _state: &ModuleState) {}
+
+    fn handle_hook(&mut self, _hook: &str, _action: HookAction) {}
 }
 
 /// Factory for constructing module implementations.
@@ -239,6 +241,12 @@ pub trait ModuleFactory: Send + Sync {
 #[derive(Default)]
 pub struct ModuleRegistry {
     builders: Vec<&'static dyn ModuleFactory>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum HookAction {
+    Read { mask: u8, value: u8 },
+    Write { mask: u8, value: u8 },
 }
 
 impl ModuleRegistry {
