@@ -75,6 +75,8 @@ pub struct SparseEntry {
     pub transform: Option<Transform>,
     pub value_builder: Option<ValueBuilder>,
     pub field_policies: Vec<FieldPolicy>,
+    pub write_fanout: Vec<WriteFanout>,
+    pub suppress_primary: bool,
 }
 
 pub struct InstanceMap {
@@ -90,7 +92,9 @@ pub struct InstanceLayoutEntry {
     pub register: ResolvedRegister,
     pub transform: Option<Transform>,
     pub field: Option<InstanceField>,
+    pub write_fanout: Vec<WriteFanout>,
     pub field_policies: Vec<FieldPolicy>,
+    pub suppress_primary: bool,
 }
 
 #[derive(Clone)]
@@ -113,6 +117,25 @@ pub struct FieldPolicy {
     pub on_write: Option<String>,
     pub ro: bool,
     pub wo: bool,
+}
+
+#[derive(Clone)]
+pub struct WriteFanout {
+    pub source_lsb: u8,
+    pub target_lsb: u8,
+    pub width: u8,
+    pub module: ModuleKind,
+    pub register: ResolvedRegister,
+    pub instance: FanoutInstance,
+    pub selector: Option<ResolvedRegister>,
+}
+
+#[derive(Clone)]
+pub enum FanoutInstance {
+    None,
+    Fixed(u8),
+    All,
+    Current,
 }
 
 #[derive(Clone)]
@@ -222,6 +245,7 @@ pub enum CompileError {
     AddressOutOfRange {
         addr: u16,
     },
+    FanoutMissingInstance,
 }
 
 impl std::fmt::Display for CompileError {
@@ -241,6 +265,12 @@ impl std::fmt::Display for CompileError {
             ),
             CompileError::AddressOutOfRange { addr } => {
                 write!(f, "map writes past declared range at address {:#06X}", addr)
+            }
+            CompileError::FanoutMissingInstance => {
+                write!(
+                    f,
+                    "write_fanout requires instance context but none is available"
+                )
             }
         }
     }
@@ -427,7 +457,15 @@ fn resolve_maps(
                             .value_builder
                             .map(|value| parse_value_builder(value, register.desc))
                             .transpose()?;
-                        let field_policies = resolve_field_policies(&entry.field_policies, &register)?;
+                        let field_policies =
+                            resolve_field_policies(&entry.field_policies, &register)?;
+                        let write_fanout = resolve_write_fanouts(
+                            entry.write_fanout,
+                            &register,
+                            modules,
+                            kind,
+                            false,
+                        )?;
                         resolved.push(SparseEntry {
                             addr,
                             module: kind,
@@ -435,6 +473,8 @@ fn resolve_maps(
                             transform,
                             value_builder,
                             field_policies,
+                            write_fanout,
+                            suppress_primary: entry.suppress_write.unwrap_or(false),
                         });
                     }
                     MapDecode::Sparse(resolved)
@@ -485,10 +525,7 @@ fn resolve_instance_map(
             .regs()
             .iter()
             .find(|desc| desc.matches_name("Select"))
-            .map(|desc| ResolvedRegister {
-                id: desc.id,
-                desc,
-            })
+            .map(|desc| ResolvedRegister { id: desc.id, desc })
     };
 
     if raw.layout.is_empty() {
@@ -512,13 +549,17 @@ fn resolve_instance_map(
             .map(|field| parse_instance_field(field, &raw.index_var))
             .transpose()?;
         let field_policies = resolve_field_policies(&entry.field_policies, &register)?;
+        let write_fanout =
+            resolve_write_fanouts(entry.write_fanout, &register, modules, kind, true)?;
 
         layout.push(InstanceLayoutEntry {
             addr: InstanceAddressExpr::Absolute(addr_expr),
             register,
             transform,
             field,
+            write_fanout,
             field_policies,
+            suppress_primary: entry.suppress_write.unwrap_or(false),
         });
     }
 
@@ -535,14 +576,11 @@ fn parse_instance_field(
     raw: RawInstanceField,
     index_var: &str,
 ) -> Result<InstanceField, LoaderError> {
-    let target_expr_str = raw
-        .target_bit
-        .or(raw.bit)
-        .ok_or_else(|| LoaderError {
-            message: "field must specify `bit` or `target_bit`".to_string(),
-            line: None,
-            column: None,
-        })?;
+    let target_expr_str = raw.target_bit.or(raw.bit).ok_or_else(|| LoaderError {
+        message: "field must specify `bit` or `target_bit`".to_string(),
+        line: None,
+        column: None,
+    })?;
     let target_bit = parse_instance_expr(&target_expr_str, index_var)?;
 
     let source_expr_str = raw.source_bit.unwrap_or_else(|| "0".to_string());
@@ -700,6 +738,155 @@ fn resolve_register_sets(
         });
     }
     Ok(sets)
+}
+
+fn resolve_write_fanouts(
+    raws: Vec<RawWriteFanout>,
+    register: &ResolvedRegister,
+    modules: &BTreeMap<ModuleKind, ModuleConfig>,
+    default_module: ModuleKind,
+    allow_self: bool,
+) -> Result<Vec<WriteFanout>, LoaderError> {
+    let mut fanouts = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let (source_lsb, source_msb) = parse_bit_range(&raw.from_bits)?;
+        let width = source_msb - source_lsb + 1;
+
+        let target_lsb = 0;
+        let target_msb = width - 1;
+
+        if (target_msb - target_lsb + 1) != width {
+            return Err(LoaderError {
+                message: format!(
+                    "write_fanout width mismatch for register `{}` ({} source bits -> {} target bits)",
+                    register.desc.name,
+                    width,
+                    target_msb - target_lsb + 1
+                ),
+                line: None,
+                column: None,
+            });
+        }
+
+        let module_kind = default_module;
+        let module = modules.get(&module_kind).ok_or_else(|| LoaderError {
+            message: format!(
+                "write_fanout references module kind `{}` without configuration",
+                default_module.as_str()
+            ),
+            line: None,
+            column: None,
+        })?;
+
+        let target_register = resolve_register(&raw.id, module)?;
+
+        let instance = match raw.instance.as_deref() {
+            None => FanoutInstance::None,
+            Some("*") => FanoutInstance::All,
+            Some("self") => {
+                if !allow_self {
+                    return Err(LoaderError {
+                        message: "write_fanout instance=\"self\" is only supported inside decode.instances".to_string(),
+                        line: None,
+                        column: None,
+                    });
+                }
+                FanoutInstance::Current
+            }
+            Some(value) => {
+                let idx = value.parse::<u8>().map_err(|_| LoaderError {
+                    message: format!(
+                        "write_fanout instance `{}` must be numeric, `*`, or `self`",
+                        value
+                    ),
+                    line: None,
+                    column: None,
+                })?;
+                FanoutInstance::Fixed(idx)
+            }
+        };
+
+        let selector = match instance {
+            FanoutInstance::None => None,
+            _ => resolve_selector_register(module),
+        };
+
+        if matches!(
+            instance,
+            FanoutInstance::All | FanoutInstance::Fixed(_) | FanoutInstance::Current
+        ) && selector.is_none()
+        {
+            return Err(LoaderError {
+                message: format!(
+                    "write_fanout target `{}` requires a `Select` register in module `{}`",
+                    target_register.desc.name,
+                    module_kind.as_str()
+                ),
+                line: None,
+                column: None,
+            });
+        }
+
+        fanouts.push(WriteFanout {
+            source_lsb: source_lsb as u8,
+            target_lsb: target_lsb as u8,
+            width: width as u8,
+            module: module_kind,
+            register: target_register,
+            instance,
+            selector,
+        });
+    }
+    Ok(fanouts)
+}
+
+fn resolve_selector_register(module: &ModuleConfig) -> Option<ResolvedRegister> {
+    module
+        .factory
+        .regs()
+        .iter()
+        .find(|desc| desc.matches_name("Select"))
+        .map(|desc| ResolvedRegister { id: desc.id, desc })
+}
+
+fn parse_bit_range(range: &str) -> Result<(u8, u8), LoaderError> {
+    let trimmed = range.trim();
+    if let Some(pos) = trimmed.find("..") {
+        let (start_str, end_str) = trimmed.split_at(pos);
+        let end_part = if end_str.starts_with("..=") {
+            &end_str[3..]
+        } else {
+            &end_str[2..]
+        };
+        let start = start_str.trim().parse::<u8>().map_err(|_| LoaderError {
+            message: format!("invalid bit index `{}`", start_str.trim()),
+            line: None,
+            column: None,
+        })?;
+        let mut end = end_part.trim().parse::<u8>().map_err(|_| LoaderError {
+            message: format!("invalid bit index `{}`", end_part.trim()),
+            line: None,
+            column: None,
+        })?;
+        if !end_str.starts_with("..=") && end > 0 {
+            end -= 1;
+        }
+        if end < start {
+            return Err(LoaderError {
+                message: format!("bit range end {} is less than start {}", end, start),
+                line: None,
+                column: None,
+            });
+        }
+        Ok((start, end))
+    } else {
+        let bit = trimmed.parse::<u8>().map_err(|_| LoaderError {
+            message: format!("invalid bit index `{}`", trimmed),
+            line: None,
+            column: None,
+        })?;
+        Ok((bit, bit))
+    }
 }
 
 fn resolve_field_policies(
@@ -1274,7 +1461,9 @@ fn shunting_yard(tokens: &[Token]) -> Result<Vec<ExprToken>, LoaderError> {
                     column: None,
                 });
             }
-            Token::Number(_) | Token::Var => unreachable!("operands are not pushed to operator stack"),
+            Token::Number(_) | Token::Var => {
+                unreachable!("operands are not pushed to operator stack")
+            }
         }
     }
     Ok(output)
@@ -1355,6 +1544,10 @@ struct RawSparseEntry {
     value_builder: Option<Value>,
     #[serde(default)]
     field_policies: Vec<RawFieldPolicy>,
+    #[serde(default)]
+    write_fanout: Vec<RawWriteFanout>,
+    #[serde(default)]
+    suppress_write: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1386,6 +1579,10 @@ struct RawInstanceLayoutEntry {
     field: Option<RawInstanceField>,
     #[serde(default)]
     field_policies: Vec<RawFieldPolicy>,
+    #[serde(default)]
+    write_fanout: Vec<RawWriteFanout>,
+    #[serde(default)]
+    suppress_write: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1412,6 +1609,14 @@ struct RawFieldPolicy {
     ro: Option<bool>,
     #[serde(default)]
     wo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawWriteFanout {
+    id: String,
+    from_bits: String,
+    #[serde(default)]
+    instance: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

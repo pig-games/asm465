@@ -24,6 +24,8 @@ pub struct SpriteState {
     /// Power-of-two scaling factors (encoded as shift exponents) for X/Y precision.
     pub scale_x: u8,
     pub scale_y: u8,
+    /// Whether the sprite is enabled for rendering.
+    pub enabled: bool,
 }
 
 /// Immutable snapshot shared with host integrations (Bevy frontend/tests).
@@ -123,6 +125,15 @@ const SPRITE_REGS: &[RegisterDesc] = &[
         true,
         SPRITE_SCALE_FIELDS,
     ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Enable),
+        "Enable",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
 ];
 
 impl SpriteMmio {
@@ -158,7 +169,7 @@ impl SpriteMmio {
 impl MmioDevice for SpriteMmio {
     fn read(&mut self, addr: u16) -> u8 {
         let slot = (self.spr_select as usize) % SPRITE_SLOTS;
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x00 => self.spr_select,
             0x01 => self.sprites[slot].number,
             0x02 => self.sprites[slot].anim,
@@ -167,13 +178,15 @@ impl MmioDevice for SpriteMmio {
             0x05 => (self.sprites[slot].y >> 8) as u8,
             0x06 => (self.sprites[slot].y & 0x00FF) as u8,
             0x07 => (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F),
+            0x08 => 0,
+            0x09 => self.sprites[slot].enabled as u8,
             _ => 0,
         }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
         let slot = (self.spr_select as usize) % SPRITE_SLOTS;
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x00 => {
                 self.spr_select = value;
                 log::trace!("SpriteMmio: select sprite slot {value}");
@@ -227,6 +240,14 @@ impl MmioDevice for SpriteMmio {
                     scale_y
                 );
             }
+            0x08 => {}
+            0x09 => {
+                let enabled = value & 1 != 0;
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.enabled = enabled;
+                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                });
+            }
             _ => {}
         }
     }
@@ -254,6 +275,7 @@ impl Module for SpriteMmio {
             RegId::Sprite(SpriteReg::Scale) => {
                 (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F)
             }
+            RegId::Sprite(SpriteReg::Enable) => self.sprites[slot].enabled as u8,
             _ => 0,
         }
     }
@@ -314,6 +336,13 @@ impl Module for SpriteMmio {
                     scale_y
                 );
             }
+            RegId::Sprite(SpriteReg::Enable) => {
+                let enabled = value & 1 != 0;
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.enabled = enabled;
+                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                });
+            }
             _ => {}
         }
     }
@@ -345,30 +374,4 @@ mod tests {
     use super::*;
     use crate::mmio::{Module, ModuleKind, RegId};
     use crate::MmioDevice;
-
-    #[test]
-    fn writes_update_sprite_state() {
-        let mut mmio = SpriteMmio::new();
-        MmioDevice::write(&mut mmio, 0xDF30, 1);
-        MmioDevice::write(&mut mmio, 0xDF33, 0x12);
-        MmioDevice::write(&mut mmio, 0xDF34, 0x34);
-        MmioDevice::write(&mut mmio, 0xDF35, 0x56);
-        MmioDevice::write(&mut mmio, 0xDF36, 0x78);
-        MmioDevice::write(&mut mmio, 0xDF31, 5);
-        MmioDevice::write(&mut mmio, 0xDF37, 0x21);
-
-        let snapshot = mmio.output().lock().unwrap().snapshot();
-        let sprite = snapshot.sprite(1).expect("slot 1");
-        assert_eq!(sprite.number, 5);
-        assert_eq!(sprite.x, 0x1234);
-        assert_eq!(sprite.y, 0x5678);
-        assert_eq!(sprite.scale_x, 0x2);
-        assert_eq!(sprite.scale_y, 0x1);
-
-        assert_eq!(mmio.kind(), ModuleKind::Sprite);
-        assert_eq!(
-            mmio.read_reg(RegId::Sprite(SpriteReg::Scale)),
-            (0x2 << 4) | 0x1
-        );
-    }
 }

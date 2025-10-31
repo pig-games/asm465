@@ -116,6 +116,7 @@ pub enum SpriteReg {
     YHi,
     YLo,
     Scale,
+    Enable,
 }
 
 /// System/interrupt controller register identifiers.

@@ -291,12 +291,8 @@ fn dump_personality_registers(name: &str) -> Result<(), String> {
             .cmp(&b.addr)
             .then(match (&a.mapping, &b.mapping) {
                 (
-                    bus::MappingDetail::Scatter {
-                        target_bit: ta, ..
-                    },
-                    bus::MappingDetail::Scatter {
-                        target_bit: tb, ..
-                    },
+                    bus::MappingDetail::Scatter { target_bit: ta, .. },
+                    bus::MappingDetail::Scatter { target_bit: tb, .. },
                 ) => ta.cmp(tb),
                 (bus::MappingDetail::Scatter { .. }, _) => Ordering::Greater,
                 (_, bus::MappingDetail::Scatter { .. }) => Ordering::Less,
@@ -346,7 +342,10 @@ fn dump_personality_registers(name: &str) -> Result<(), String> {
             details.push(format!("shift {}", mapping.transform.shift));
         }
         if mapping.transform.invert_mask != 0 {
-            details.push(format!("invert_mask=0x{:02X}", mapping.transform.invert_mask));
+            details.push(format!(
+                "invert_mask=0x{:02X}",
+                mapping.transform.invert_mask
+            ));
         }
         if mapping.transform.ro_mask != 0 {
             details.push(format!("ro_mask=0x{:02X}", mapping.transform.ro_mask));
@@ -370,6 +369,9 @@ fn dump_personality_registers(name: &str) -> Result<(), String> {
             }
             details.push(format!("field_policy({})", parts.join(" ")));
         }
+        if mapping.suppress_primary {
+            details.push("suppress_primary".to_string());
+        }
 
         let detail_str = if details.is_empty() {
             String::new()
@@ -391,11 +393,7 @@ fn dump_personality_registers(name: &str) -> Result<(), String> {
 
         println!(
             "  {} <= {}.{} (priority {}){}",
-            addr_label,
-            module_label,
-            mapping.register_name,
-            mapping.priority,
-            detail_str
+            addr_label, module_label, mapping.register_name, mapping.priority, detail_str
         );
     }
 
@@ -562,7 +560,11 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub list_modules: bool,
     /// Dump map layout for a personality and exit.
-    #[arg(long, value_name = "PERSONALITY", conflicts_with = "dump_map_registers")]
+    #[arg(
+        long,
+        value_name = "PERSONALITY",
+        conflicts_with = "dump_map_registers"
+    )]
     pub dump_maps: Option<String>,
     /// Dump resolved register mappings for a personality and exit.
     #[arg(long, value_name = "PERSONALITY", conflicts_with = "dump_maps")]
@@ -2070,6 +2072,7 @@ mod tests {
             y: clamped_y.round() as u16,
             scale_x: 0,
             scale_y: 0,
+            enabled: true,
         }
     }
 
@@ -2084,6 +2087,7 @@ mod tests {
             y: clamped_y.round() as u16,
             scale_x: shift_x & 0x0F,
             scale_y: shift_y & 0x0F,
+            enabled: true,
         }
     }
 

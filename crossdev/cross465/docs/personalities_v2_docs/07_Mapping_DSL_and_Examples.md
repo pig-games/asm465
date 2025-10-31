@@ -20,15 +20,18 @@ Instead of hardcoding these, we declare them parametrically — improving reusab
 [[map]]
 decode = {
   instances = {
+    kind = "sprite",
+    selector = "Select",        # optional; pre-sets the slot before each access
     count = 8,                  # 8 hardware sprites (C64/MEGA65)
     index_var = "i",            # template variable
-    kind = "sprite",
-    base = "D000",
     layout = [
-      { addr = "D000 + (i*2)", id = "XLo" },
-      { addr = "D001 + (i*2)", id = "YLo" },
-      { addr = "D027 + i",     id = "Color" },
-      { addr = "D015 bit i",   id = "Enable", field = { bit = "i" } }
+      { addr = "D100 + (i*8)", id = "Number" },
+      { addr = "D101 + (i*8)", id = "Anim" },
+      { addr = "D102 + (i*8)", id = "XLo" },
+      { addr = "D103 + (i*8)", id = "XHi" },
+      { addr = "D104 + (i*8)", id = "YLo" },
+      { addr = "D105 + (i*8)", id = "Scale" },
+      { addr = "D010",         id = "XHi", field = { bit = "i" } }
     ]
   }
 }
@@ -99,15 +102,15 @@ A write to one register updates several underlying fields.
 
 ### Example
 ```toml
-{ addr="D01C", kind="sprite", id="EnableMask",
+{ addr = "D015", kind = "sprite", id = "Enable", suppress_write = true,
   write_fanout = [
-    { to={ instance="*", id="Enable" }, from_bits="0..7" }
+    { id = "Enable", instance = "*", from_bits = "0..7" }
   ]
 }
 ```
 ### Use Case
-C64 sprite enable mask `$D015` or `$D01C`.  
-Modern backends can interpret it as enabling a subset of virtual sprites.
+C64 sprite enable mask `$D015`.  
+The personality suppresses the primary write (since the MMIO has no mask register) and fans the bits out into each sprite's `Enable` flag.
 
 ---
 
@@ -197,22 +200,37 @@ Some platforms mirror register blocks, others return undefined values — this k
 ### Complete Definition
 ```toml
 [[map]]
+priority = 10
 decode = { instances = {
-  count=8, index_var="i", kind="sprite", base="D000",
+  kind = "sprite",
+  selector = "Select",
+  count = 8,
+  index_var = "i",
   layout = [
-    { addr="D000 + (i*2)", id="XLo" },
-    { addr="D001 + (i*2)", id="YLo" },
-    { addr="D010 bit i",   id="XHi" },
-    { addr="D015 bit i",   id="Enable" },
-    { addr="D027 + i",     id="Color" }
+    { addr = "D100 + (i*8)", id = "Number" },
+    { addr = "D101 + (i*8)", id = "Anim" },
+    { addr = "D102 + (i*8)", id = "XLo" },
+    { addr = "D103 + (i*8)", id = "XHi" },
+    { addr = "D104 + (i*8)", id = "YLo" },
+    { addr = "D105 + (i*8)", id = "Scale" },
+    { addr = "D010",         id = "XHi", field = { bit = "i" } }
   ]
-}}
+} }
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D015", kind = "sprite", id = "Enable", suppress_write = true,
+    write_fanout = [{ id = "Enable", instance = "*", from_bits = "0..7" }] }
+] }
 ```
 
 ### How It Works
 - Each sprite gets its own registers.
 - Shared registers (e.g., `$D010`) are scattered automatically.
+- `$D015` writes behave like the real C64 mask: the personality fans out the bits, and reads reconstruct the mask from the per-sprite enable flags.
 - Modern backends can map this directly to sprite objects.
+- **Note:** The reference `c64-compat` personality deliberately maps the sprite block to `$D100+`. We expose more per-sprite registers than the VIC-II originally provided, so the classic `$D000..=D03F` range would be too small to host the extended data.
 
 ---
 

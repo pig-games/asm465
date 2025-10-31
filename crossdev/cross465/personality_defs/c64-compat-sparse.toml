@@ -30,11 +30,16 @@ decode = { instances = { kind = "sprite", selector = "Select", count = 8, index_
   { addr = "D102 + (i*8)", id = "XLo" },
   { addr = "D103 + (i*8)", id = "XHi" },
   { addr = "D104 + (i*8)", id = "YLo" },
-  { addr = "D105 + (i*8)", id = "YHi" },
-  { addr = "D106 + (i*8)", id = "Scale" },
+  { addr = "D105 + (i*8)", id = "Scale" },
   { addr = "D010", id = "XHi", field = { bit = "i" } }
 ] } }
 
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D015", kind = "sprite", id = "Enable", suppress_write = true, write_fanout = [{ id = "Enable", instance = "*", from_bits = "0..7" }] }
+] }
 
 [[map]]
 priority = 10

@@ -55,13 +55,16 @@ pub struct AddressMapping {
     pub transform: TransformInfo,
     pub mapping: MappingDetail,
     pub field_hooks: Vec<FieldHookInfo>,
+    pub suppress_primary: bool,
 }
 
 /// High-level mapping kind for an address slot.
 #[derive(Clone, Debug)]
 pub enum MappingDetail {
     Direct,
-    DirectInstance { instance: u8 },
+    DirectInstance {
+        instance: u8,
+    },
     Scatter {
         target_bit: u8,
         source_bit: u8,
@@ -101,9 +104,12 @@ pub fn builtin_module_registry() -> mmio::ModuleRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmio::{HookAction, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc, SystemReg};
-    use crate::MmioDevice;
+    use crate::mmio::{
+        HookAction, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId,
+        RegisterDesc, SystemReg,
+    };
     use crate::personality;
+    use crate::MmioDevice;
 
     #[test]
     fn builtin_registry_contains_expected_factories() {
@@ -430,6 +436,65 @@ field = { bit = "i" }
     }
 
     #[test]
+    fn write_fanout_sets_sprite_enable() {
+        let toml = r#"
+[personality]
+id = "sprite-enable"
+title = "Sprite Enable Fanout"
+
+[modules.sprite]
+impl = "sprite.basic"
+
+[[map]]
+priority = 10
+decode = { instances = { kind = "sprite", selector = "Select", count = 3, index_var = "i", layout = [
+  { addr = "D000 + (i*4)", id = "Number" },
+  { addr = "D001 + (i*4)", id = "XLo" },
+  { addr = "D002 + (i*4)", id = "YLo" },
+  { addr = "D003 + (i*4)", id = "Scale" }
+] } }
+
+[[map]]
+priority = 5
+decode = { sparse = [
+  { addr = "D015", kind = "sprite", id = "Enable", suppress_write = true, write_fanout = [{ id = "Enable", instance = "*", from_bits = "0..2" }] }
+] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        assert_eq!(bus.read(0xD015), 0x00);
+
+        bus.write(0xD015, 0b0000_0101);
+        assert_eq!(bus.read(0xD015), 0b0000_0101);
+
+        let snapshot = bus
+            .sprite_output_handle()
+            .expect("sprite output")
+            .lock()
+            .unwrap()
+            .snapshot();
+        assert!(snapshot.sprite(0).unwrap().enabled);
+        assert!(!snapshot.sprite(1).unwrap().enabled);
+        assert!(snapshot.sprite(2).unwrap().enabled);
+
+        bus.write(0xD015, 0x00);
+        assert_eq!(bus.read(0xD015), 0x00);
+        let snapshot = bus
+            .sprite_output_handle()
+            .expect("sprite output")
+            .lock()
+            .unwrap()
+            .snapshot();
+        assert!(!snapshot.sprite(0).unwrap().enabled);
+        assert!(!snapshot.sprite(1).unwrap().enabled);
+        assert!(!snapshot.sprite(2).unwrap().enabled);
+    }
+
+    #[test]
     fn field_policy_read_hook_clears_bits() {
         let toml = r#"
 [personality]
@@ -705,6 +770,8 @@ struct DirectSlot {
     post_write_sets: Vec<AddressRegisterSet>,
     field_hooks: Vec<FieldHook>,
     instance: Option<u8>,
+    write_fanout: Vec<WriteFanoutAction>,
+    suppress_primary: bool,
 }
 
 #[derive(Clone)]
@@ -731,6 +798,34 @@ struct FieldHook {
     mask: u8,
     on_read: Option<String>,
     on_write: Option<String>,
+}
+
+#[derive(Clone)]
+struct WriteFanoutAction {
+    target_module_index: usize,
+    reg: RegId,
+    source_lsb: u8,
+    target_lsb: u8,
+    width: u8,
+    selector: Option<RegId>,
+    instance: FanoutInstanceResolved,
+}
+
+#[derive(Clone, Copy)]
+enum FanoutInstanceResolved {
+    None,
+    Fixed(u8),
+    SelfInstance,
+}
+
+impl FanoutInstanceResolved {
+    fn index(self, self_instance: Option<u8>) -> Option<u8> {
+        match self {
+            FanoutInstanceResolved::None => None,
+            FanoutInstanceResolved::Fixed(idx) => Some(idx),
+            FanoutInstanceResolved::SelfInstance => self_instance,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -765,6 +860,11 @@ impl SignalStore {
         self.ints.clear();
         self.floats.clear();
     }
+}
+
+struct FanoutContext {
+    self_instance: Option<u8>,
+    instance_count: Option<u8>,
 }
 
 impl InputSignals for SignalStore {
@@ -858,6 +958,8 @@ fn compile_range_map(
                 post_write_sets,
                 field_hooks: Vec::new(),
                 instance: None,
+                write_fanout: Vec::new(),
+                suppress_primary: false,
             }),
         };
 
@@ -885,6 +987,15 @@ fn compile_sparse_map(
         let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
         let field_hooks = compile_field_hooks(&entry.field_policies, &mut transform);
 
+        let write_fanout = compile_write_fanout_actions(
+            &entry.write_fanout,
+            lookup,
+            FanoutContext {
+                self_instance: None,
+                instance_count: None,
+            },
+        )?;
+
         let slot = AddressSlot {
             priority,
             kind: AddressSlotKind::Direct(DirectSlot {
@@ -898,6 +1009,8 @@ fn compile_sparse_map(
                 post_write_sets,
                 field_hooks,
                 instance: None,
+                write_fanout,
+                suppress_primary: entry.suppress_primary,
             }),
         };
 
@@ -930,9 +1043,7 @@ fn compile_instance_map(
                         .evaluate(index_u32)
                         .map_err(|_| PersonalityCompileError::AddressOutOfRange { addr: 0 })?;
                     if value > u16::MAX as u32 {
-                        return Err(PersonalityCompileError::AddressOutOfRange {
-                            addr: u16::MAX,
-                        });
+                        return Err(PersonalityCompileError::AddressOutOfRange { addr: u16::MAX });
                     }
                     value as u16
                 }
@@ -953,6 +1064,14 @@ fn compile_instance_map(
             let post_read_sets = map_register_sets(&transform.post_read_sets, lookup)?;
             let pre_write_sets = map_register_sets(&transform.pre_write_sets, lookup)?;
             let post_write_sets = map_register_sets(&transform.post_write_sets, lookup)?;
+            let write_fanout = compile_write_fanout_actions(
+                &entry.write_fanout,
+                lookup,
+                FanoutContext {
+                    self_instance: Some(selector_value),
+                    instance_count: Some(map.count as u8),
+                },
+            )?;
 
             if let Some(field) = &entry.field {
                 let target_bit = field
@@ -1000,6 +1119,8 @@ fn compile_instance_map(
                         post_write_sets,
                         field_hooks,
                         instance: Some(selector_value),
+                        write_fanout,
+                        suppress_primary: entry.suppress_primary,
                     }),
                 };
                 insert_slot(table, addr, slot)?;
@@ -1008,6 +1129,85 @@ fn compile_instance_map(
     }
 
     Ok(())
+}
+
+fn compile_write_fanout_actions(
+    fanouts: &[personality_v2::WriteFanout],
+    lookup: &BTreeMap<ModuleKind, usize>,
+    context: FanoutContext,
+) -> Result<Vec<WriteFanoutAction>, PersonalityCompileError> {
+    let mut actions = Vec::new();
+    for fanout in fanouts {
+        let target_module_index = *lookup
+            .get(&fanout.module)
+            .ok_or(PersonalityCompileError::MissingModule(fanout.module))?;
+
+        let selector = fanout.selector.as_ref().map(|sel| sel.id);
+
+        match fanout.instance {
+            personality_v2::FanoutInstance::None => {
+                actions.push(WriteFanoutAction {
+                    target_module_index,
+                    reg: fanout.register.id,
+                    source_lsb: fanout.source_lsb,
+                    target_lsb: fanout.target_lsb,
+                    width: fanout.width,
+                    selector,
+                    instance: FanoutInstanceResolved::None,
+                });
+            }
+            personality_v2::FanoutInstance::Fixed(index) => {
+                actions.push(WriteFanoutAction {
+                    target_module_index,
+                    reg: fanout.register.id,
+                    source_lsb: fanout.source_lsb,
+                    target_lsb: fanout.target_lsb,
+                    width: fanout.width,
+                    selector,
+                    instance: FanoutInstanceResolved::Fixed(index),
+                });
+            }
+            personality_v2::FanoutInstance::Current => {
+                if context.self_instance.is_none() {
+                    return Err(PersonalityCompileError::FanoutMissingInstance);
+                }
+                actions.push(WriteFanoutAction {
+                    target_module_index,
+                    reg: fanout.register.id,
+                    source_lsb: fanout.source_lsb,
+                    target_lsb: fanout.target_lsb,
+                    width: fanout.width,
+                    selector,
+                    instance: FanoutInstanceResolved::SelfInstance,
+                });
+            }
+            personality_v2::FanoutInstance::All => {
+                let count = context
+                    .instance_count
+                    .or_else(|| default_instance_count(fanout.module))
+                    .ok_or(PersonalityCompileError::FanoutMissingInstance)?;
+                for offset in 0..count {
+                    actions.push(WriteFanoutAction {
+                        target_module_index,
+                        reg: fanout.register.id,
+                        source_lsb: fanout.source_lsb + offset,
+                        target_lsb: fanout.target_lsb,
+                        width: 1,
+                        selector,
+                        instance: FanoutInstanceResolved::Fixed(offset),
+                    });
+                }
+            }
+        }
+    }
+    Ok(actions)
+}
+
+fn default_instance_count(kind: ModuleKind) -> Option<u8> {
+    match kind {
+        ModuleKind::Sprite => Some(sprite_mmio::SPRITE_SLOTS as u8),
+        _ => None,
+    }
 }
 
 fn map_register_sets(
@@ -1056,7 +1256,13 @@ fn fire_field_read_hooks(module: &mut dyn Module, value: u8, hooks: &[FieldHook]
         if let Some(name) = &hook.on_read {
             let masked = value & hook.mask;
             if masked != 0 {
-                module.handle_hook(name, HookAction::Read { mask: hook.mask, value: masked });
+                module.handle_hook(
+                    name,
+                    HookAction::Read {
+                        mask: hook.mask,
+                        value: masked,
+                    },
+                );
             }
         }
     }
@@ -1067,7 +1273,13 @@ fn fire_field_write_hooks(module: &mut dyn Module, cpu_value: u8, hooks: &[Field
         if let Some(name) = &hook.on_write {
             let masked = cpu_value & hook.mask;
             if masked != 0 {
-                module.handle_hook(name, HookAction::Write { mask: hook.mask, value: masked });
+                module.handle_hook(
+                    name,
+                    HookAction::Write {
+                        mask: hook.mask,
+                        value: masked,
+                    },
+                );
             }
         }
     }
@@ -1084,7 +1296,10 @@ fn insert_slot(
         Some(existing) => {
             if existing.priority == priority {
                 match (&mut existing.kind, slot.kind) {
-                    (AddressSlotKind::Scatter(existing_scatter), AddressSlotKind::Scatter(mut new_scatter)) => {
+                    (
+                        AddressSlotKind::Scatter(existing_scatter),
+                        AddressSlotKind::Scatter(mut new_scatter),
+                    ) => {
                         existing_scatter.entries.append(&mut new_scatter.entries);
                     }
                     _ => {
@@ -1188,17 +1403,28 @@ impl PersonalityRuntime {
 
     fn read_direct(&mut self, slot: DirectSlot) -> Option<u8> {
         self.apply_register_sets(&slot.pre_read_sets);
-        let module_entry = self.modules.get_mut(slot.module_index)?;
-        let module = module_entry.module.as_mut();
 
-        let mut value = if let Some(builder) = slot.value_builder.as_ref() {
+        let module_index = slot.module_index;
+        let aggregated = if slot.suppress_primary && !slot.write_fanout.is_empty() {
+            Some(self.read_fanout_value(slot.instance, &slot.write_fanout))
+        } else {
+            None
+        };
+
+        let mut value = if let Some(agg) = aggregated {
+            agg
+        } else if let Some(builder) = slot.value_builder.as_ref() {
             builder
                 .build(&mut self.signals)
                 .get(0)
                 .copied()
                 .unwrap_or(0)
         } else {
-            module.read_reg(slot.reg)
+            let read_value = {
+                let entry = self.modules.get_mut(module_index)?;
+                entry.module.read_reg(slot.reg)
+            };
+            read_value
         };
 
         value = apply_shift(value, slot.transform.shift);
@@ -1208,7 +1434,10 @@ impl PersonalityRuntime {
         }
 
         if !slot.field_hooks.is_empty() {
-            fire_field_read_hooks(module, value, &slot.field_hooks);
+            if let Some(entry) = self.modules.get_mut(module_index) {
+                let module = entry.module.as_mut();
+                fire_field_read_hooks(module, value, &slot.field_hooks);
+            }
         }
 
         self.apply_register_sets(&slot.post_read_sets);
@@ -1227,8 +1456,7 @@ impl PersonalityRuntime {
             if entry.transform.wo_mask != 0 {
                 value &= !entry.transform.wo_mask;
             }
-            let bit =
-                (value.wrapping_shr(entry.source_bit as u32) & 1) as u8;
+            let bit = (value.wrapping_shr(entry.source_bit as u32) & 1) as u8;
             if bit != 0 {
                 result |= 1u8 << entry.target_bit;
             }
@@ -1240,23 +1468,31 @@ impl PersonalityRuntime {
     fn write_direct(&mut self, mut value: u8, slot: DirectSlot) -> bool {
         self.apply_register_sets(&slot.pre_write_sets);
 
-        let module = match self.modules.get_mut(slot.module_index) {
-            Some(m) => m.module.as_mut(),
-            None => return false,
-        };
-
         let cpu_value = value;
-        value = reverse_shift(value, slot.transform.shift);
-        value ^= slot.transform.invert_mask;
+        let option = self.modules.get_mut(slot.module_index);
+        {
+            let module = match option {
+                Some(m) => m.module.as_mut(),
+                None => return false,
+            };
 
-        if slot.transform.ro_mask != 0 {
-            let current = module.read_reg(slot.reg);
-            value = (value & !slot.transform.ro_mask) | (current & slot.transform.ro_mask);
+            value = reverse_shift(value, slot.transform.shift);
+            value ^= slot.transform.invert_mask;
+
+            if slot.transform.ro_mask != 0 {
+                let current = module.read_reg(slot.reg);
+                value = (value & !slot.transform.ro_mask) | (current & slot.transform.ro_mask);
+            }
+
+            if !slot.suppress_primary {
+                module.write_reg(slot.reg, value);
+                if !slot.field_hooks.is_empty() {
+                    fire_field_write_hooks(module, cpu_value, &slot.field_hooks);
+                }
+            }
         }
-
-        module.write_reg(slot.reg, value);
-        if !slot.field_hooks.is_empty() {
-            fire_field_write_hooks(module, cpu_value, &slot.field_hooks);
+        if !slot.write_fanout.is_empty() {
+            self.apply_write_fanouts(cpu_value, slot.instance, &slot.write_fanout);
         }
         self.apply_register_sets(&slot.post_write_sets);
         self.recompute_conditions_if_needed();
@@ -1307,6 +1543,75 @@ impl PersonalityRuntime {
                 instance.module.write_reg(set.reg, set.value);
             }
         }
+    }
+
+    fn apply_write_fanouts(
+        &mut self,
+        cpu_value: u8,
+        self_instance: Option<u8>,
+        fanouts: &[WriteFanoutAction],
+    ) {
+        for action in fanouts {
+            if let Some(module_entry) = self.modules.get_mut(action.target_module_index) {
+                let module = module_entry.module.as_mut();
+                let value = extract_fanout_value(cpu_value, action);
+                if let Some(index) = action.instance.index(self_instance) {
+                    if let Some(selector) = action.selector {
+                        module.write_reg(selector, index);
+                    }
+                    module.write_reg(action.reg, value);
+                } else {
+                    module.write_reg(action.reg, value);
+                }
+            }
+        }
+    }
+
+    fn read_fanout_value(
+        &mut self,
+        self_instance: Option<u8>,
+        fanouts: &[WriteFanoutAction],
+    ) -> u8 {
+        let mut result = 0u8;
+        let mut selector_restore: Vec<(usize, RegId, u8)> = Vec::new();
+
+        for action in fanouts {
+            if let Some(module_entry) = self.modules.get_mut(action.target_module_index) {
+                let module = module_entry.module.as_mut();
+
+                if let Some(selector_reg) = action.selector {
+                    if let Some(index) = action.instance.index(self_instance) {
+                        if !selector_restore.iter().any(|(module_idx, reg, _)| {
+                            *module_idx == action.target_module_index && *reg == selector_reg
+                        }) {
+                            let previous = module.read_reg(selector_reg);
+                            selector_restore.push((
+                                action.target_module_index,
+                                selector_reg,
+                                previous,
+                            ));
+                        }
+                        module.write_reg(selector_reg, index);
+                    }
+                }
+
+                let value = module.read_reg(action.reg);
+                let mask = if action.width >= 8 {
+                    u8::MAX
+                } else {
+                    ((1u16 << action.width) - 1) as u8
+                };
+                result |= ((value >> action.target_lsb) & mask) << action.source_lsb;
+            }
+        }
+
+        for (module_index, selector, previous) in selector_restore.into_iter().rev() {
+            if let Some(module_entry) = self.modules.get_mut(module_index) {
+                module_entry.module.write_reg(selector, previous);
+            }
+        }
+
+        result
     }
 
     fn module_index(&self, kind: ModuleKind) -> Option<usize> {
@@ -1451,6 +1756,7 @@ impl PersonalityRuntime {
                                 on_write: hook.on_write.clone(),
                             })
                             .collect(),
+                        suppress_primary: direct.suppress_primary,
                     });
                 }
                 AddressSlotKind::Scatter(scatter) => {
@@ -1471,6 +1777,7 @@ impl PersonalityRuntime {
                                 instance: entry.instance,
                             },
                             field_hooks: Vec::new(),
+                            suppress_primary: false,
                         });
                     }
                 }
@@ -1765,6 +2072,15 @@ fn register_name(instance: &ModuleInstance, reg: RegId) -> &'static str {
         .find(|desc| desc.id == reg)
         .map(|desc| desc.name)
         .unwrap_or("<unknown>")
+}
+
+fn extract_fanout_value(cpu_value: u8, action: &WriteFanoutAction) -> u8 {
+    let mask = if action.width >= 8 {
+        u8::MAX
+    } else {
+        ((1u16 << action.width) - 1) as u8
+    };
+    ((cpu_value >> action.source_lsb) & mask) << action.target_lsb
 }
 
 impl From<&Transform> for TransformInfo {
