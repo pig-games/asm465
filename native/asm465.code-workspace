@@ -5,6 +5,7 @@
 		}
 	],
 	"settings": {
-		"chatgpt.openOnStartup": true
+		"chatgpt.openOnStartup": true,
+		"makefile.configureOnOpen": false
 	}
 }

@@ -178,8 +178,7 @@ impl MmioDevice for SpriteMmio {
             0x05 => (self.sprites[slot].y >> 8) as u8,
             0x06 => (self.sprites[slot].y & 0x00FF) as u8,
             0x07 => (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F),
-            0x08 => 0,
-            0x09 => self.sprites[slot].enabled as u8,
+            0x08 => self.sprites[slot].enabled as u8,
             _ => 0,
         }
     }
@@ -240,8 +239,7 @@ impl MmioDevice for SpriteMmio {
                     scale_y
                 );
             }
-            0x08 => {}
-            0x09 => {
+            0x08 => {
                 let enabled = value & 1 != 0;
                 self.with_selected_sprite(|index, sprite| {
                     sprite.enabled = enabled;
