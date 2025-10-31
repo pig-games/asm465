@@ -1,5 +1,5 @@
 # Prototype and Conformance
-[← Adapter Layer and Shims](08_Adapter_Layer_and_Shims.md)
+[← Adapter Layer and Shims](08_Adapter_Layer_and_Shims.md) • [→ Pointer Decoders & Address Semantics](10_Pointer_Decoders_and_Address_Semantics.md)
 
 This chapter outlines the plan for implementing and validating the expanded personality model.
 

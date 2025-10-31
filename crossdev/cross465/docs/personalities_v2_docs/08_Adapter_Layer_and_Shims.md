@@ -1,65 +1,75 @@
 # Adapter Layer and Shims
 [← Mapping DSL and Examples](07_Mapping_DSL_and_Examples.md) • [→ Prototype and Conformance](09_Prototype_and_Conformance.md)
 
-Adapters form the runtime layer that connects the **declarative mapping** to the **backend logic**.  
-They interpret register operations and convert them into modern engine calls.
+Adapters form the runtime bridge between **personality definitions** and the **engine backend**.  
+They ensure MMIO operations in 6502 code update modern system state correctly and efficiently.
 
 ---
 
-## 1. Purpose
+## 1. Role of the Adapter Layer
 
-Adapters decouple legacy MMIO behaviour from modern backend logic.
+Adapters interpret reads, writes, and events from the MMIO personality.  
+They then translate these into backend function calls — such as updating sprite positions, setting colors, or scheduling IRQs.
 
-They ensure that:
-- Writes to registers modify the correct engine state.
-- Reads from registers return values derived from that state.
-- Flags, IRQs, and latches behave consistently with vintage expectations.
+They guarantee that:
+- Writes to registers modify the correct engine state.  
+- Reads reconstruct values that 6502 software expects.  
+- Timing and latch behaviour remains semantically correct.  
+- Pointer decoders and scatter/fanout rules are applied properly.
 
 ---
 
-## 2. Responsibilities
+## 2. Core Responsibilities
 
-| Task | Example |
+| Function | Description |
 |:--|:--|
-| **Instance virtualization** | 8 sprite registers controlling 8 or more virtual sprites. |
-| **Field projection** | Split X into XLo/XHi or merge into 16-bit coordinate. |
-| **Latch handling** | Read-to-clear collision flags. |
-| **Hook routing** | Trigger VIC-II-style IRQ acknowledge on read. |
-| **Timing hooks** | Execute per-frame or raster callbacks. |
-| **Compute evaluation** | Evaluate `beam.y` or `coll.spr_spr` expressions. |
-| **Open-bus/mirror fallback** | Handle unmapped reads. |
+| **Instance virtualization** | Map N hardware sprite registers to M backend entities. |
+| **Field projection** | Join or split fields, handle scatter/gather operations. |
+| **Latch handling** | Emulate read‑to‑clear or shared flag registers. |
+| **Hook execution** | Trigger `on_read` or `on_write` logic for dynamic side effects. |
+| **Timing coordination** | Schedule frame or raster callbacks. |
+| **Pointer decode routing** | Deliver `(index, subindex)` to backend (e.g., set_sprite_variant). |
+| **Scatter/fanout interpretation** | Apply per‑bit scatter updates or broadcast fanouts. |
+| **Scaling integration** | Apply transform fallback if no scaled asset variant exists. |
 
 ---
 
-## 3. Adapter Traits
+## 3. Scatter vs Fanout Behaviour
+
+- **Scatter** mappings are *bi‑directional*; writes decompose bits into fields, reads rebuild them.  
+- **Fanout** mappings are *one‑way*; a write broadcasts updates to multiple destinations or modules.  
+- Fanout registers are typically **synthetic** (e.g., `D500 ResetAll`) and not readable.  
+- The adapter should never expect a readback value from fanout registers.
+
+---
+
+## 4. Pointer Decoder Interaction
+
+Pointer decoders emit `(index, subindex)` pairs for sprites, screens, or other resources.  
+The adapter translates these into backend calls.
 
 ```rust
-pub trait SpriteAdapter: Module {
-    fn set_xy(&mut self, i: usize, x: u16, y: u16);
-    fn get_xy(&self, i: usize) -> (u16,u16);
-    fn set_enable(&mut self, i: usize, on: bool);
-    fn get_enable(&self, i: usize) -> bool;
-    fn set_color(&mut self, i: usize, c: u8);
-}
-
-pub trait VideoAdapter: Module {
-    fn beam(&self) -> (u16,u16);
-    fn irq_status(&self) -> u16;
-    fn irq_ack_bits(&mut self, mask: u16);
-}
+fn set_sprite_variant(idx: u8, subindex: u8);
+fn set_screen_base(addr: u16);
+fn set_charset_base(addr: u16);
 ```
 
-### Explanation
-- The **SpriteAdapter** connects C64-style sprite registers to any rendering backend.  
-- The **VideoAdapter** handles raster positions, IRQ flags, and related state.
+For sprite personalities using scaling extensions (see [Scaling‑aware Pointer Decode in 07](07_Mapping_DSL_and_Examples.md#12-scalingaware-pointer-decode-option-a-with-fallback)), the adapter may also check expansion bits and apply transform scaling:
 
----
+```rust
+fn set_sprite_variant(idx: u8, subindex: u8) {
+    let anim =  subindex        & 0b11;
+    let x2   = (subindex >> 2)  & 1 != 0;
+    let y2   = (subindex >> 3)  & 1 != 0;
 
-## 4. Design Philosophy
-
-- **Frame-level accuracy** is enough. Cycle-accuracy not required.  
-- **Selector front-ends** can simulate sprite multiplexing.  
-- **Multiple vintage modules** can share a single backend module.
+    if backend.has_variant(idx, anim, x2, y2) {
+        backend.bind_variant(idx, anim, x2, y2);
+    } else {
+        backend.bind_variant(idx, anim, false, false);
+        backend.set_scale(idx, if x2 {2.0} else {1.0}, if y2 {2.0} else {1.0});
+    }
+}
+```
 
 ---
 
@@ -67,14 +77,16 @@ pub trait VideoAdapter: Module {
 
 | Test | Expectation |
 |:--|:--|
-| Write-read consistency | Writing register updates backend state. |
-| Bit ack behaviour | Bits flagged `on_read` clear correctly. |
-| Raster hook | Events trigger at correct raster or frame. |
-| Open-bus | Reads from unmapped range return expected constant. |
+| **Write‑read consistency** | Scatter fields correctly recombine to register values. |
+| **Latch handling** | Read‑to‑clear and toggle bits behave as expected. |
+| **Raster/timing events** | Hooks fire at proper frame or raster timing. |
+| **Pointer decoding** | `(index, subindex)` matches MMIO writes. |
+| **Scaling fallback** | Fallback transform triggers when variant art missing. |
+| **Fanout safety** | No readback dependency on write‑only fanout registers. |
 
 ---
 
 ## 6. Summary
 
-Adapters turn the abstract MMIO map into a living bridge between old and new.  
-They enable *asm465* to preserve logic while modernizing presentation and control.
+Adapters give *asm465* personalities real behaviour.  
+They unify legacy register logic with modern rendering, ensuring that **scatter**, **fanout**, and **scaling‑aware pointer decoders** all function consistently across C64, MEGA65, and modern backends.

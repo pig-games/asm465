@@ -1,7 +1,7 @@
 # Mapping DSL and Examples
 [← Flexibility Goals](06_Flexibility_Goals_and_Requirements.md) • [→ Adapter Layer and Shims](08_Adapter_Layer_and_Shims.md)
 
-This section defines the extended TOML syntax used to describe address decoding and behaviour for personality files. The goal is to be descriptive enough for classic systems (C64, MEGA65) yet flexible for modern engines.
+This chapter defines the **extended TOML mapping DSL** for asm465 personalities: how to describe MMIO ranges, shared bitfields, computed registers, and higher-level behaviours that bridge classic 6502 platforms (e.g., C64 / MEGA65) with modern backends.
 
 ---
 
@@ -20,18 +20,15 @@ Instead of hardcoding these, we declare them parametrically — improving reusab
 [[map]]
 decode = {
   instances = {
-    kind = "sprite",
-    selector = "Select",        # optional; pre-sets the slot before each access
     count = 8,                  # 8 hardware sprites (C64/MEGA65)
     index_var = "i",            # template variable
+    kind = "sprite",
+    base = "D000",
     layout = [
-      { addr = "D100 + (i*8)", id = "Number" },
-      { addr = "D101 + (i*8)", id = "Anim" },
-      { addr = "D102 + (i*8)", id = "XLo" },
-      { addr = "D103 + (i*8)", id = "XHi" },
-      { addr = "D104 + (i*8)", id = "YLo" },
-      { addr = "D105 + (i*8)", id = "Scale" },
-      { addr = "D010",         id = "XHi", field = { bit = "i" } }
+      { addr = "D000 + (i*2)", id = "XLo" },
+      { addr = "D001 + (i*2)", id = "YLo" },
+      { addr = "D027 + i",     id = "Color" },
+      { addr = "D015 bit i",   id = "Enable", field = { bit = "i" } }
     ]
   }
 }
@@ -95,26 +92,83 @@ This ensures correct behaviour for flags and latches.
 
 ---
 
-## 4. Multi-Target Writes (Fanout)
+## 4. ⚙️ Scatter vs Fanout Semantics
 
-### Concept
-A write to one register updates several underlying fields.
+Both `scatter` and `write_fanout` allow one register to affect multiple logical fields, but they serve different purposes.
 
-### Example
+| Concept | **Scatter** | **Fanout** |
+|----------|--------------|------------|
+| Direction | Bi-directional (read & write) | Write-only |
+| Purpose | Models hardware bitfields | Models broadcast or command behaviour |
+| Readback | Yes, reconstructs from fields | No, unless explicitly defined |
+| Cross-module | No | Yes |
+| Use case | `$D015`, `$D010` (C64) | Helper registers like `EnableAllSprites`, `ResetSystem` |
+| Scope | Hardware fidelity | Modern convenience |
+
+### Example — Hardware (`$D015`, C64 Sprite Enable) — **scatter only**
 ```toml
-{ addr = "D015", kind = "sprite", id = "Enable", suppress_write = true,
-  write_fanout = [
-    { id = "Enable", instance = "*", from_bits = "0..7" }
+{ addr="D015", kind="sprite", id="Enable",
+  scatter = [
+    { instance=0, bit=0 },
+    { instance=1, bit=1 },
+    { instance=2, bit=2 },
+    { instance=3, bit=3 },
+    { instance=4, bit=4 },
+    { instance=5, bit=5 },
+    { instance=6, bit=6 },
+    { instance=7, bit=7 }
   ]
 }
 ```
-### Use Case
-C64 sprite enable mask `$D015`.  
-The personality suppresses the primary write (since the MMIO has no mask register) and fans the bits out into each sprite's `Enable` flag.
+**Behaviour:** writing `%01010101` enables sprites 0,2,4,6; reading `$D015` returns the same value.  
+This is authentic VIC-II behaviour and should **not** be modeled with `fanout`.
+
+### Example — Synthetic (`$D500`, Global Reset) — **fanout**
+*(Non-C64 example — for modern personalities or testing tools)*
+```toml
+{ addr="D500", id="ResetAll",
+  write_fanout = [
+    { to={ module="video", id="Reset" }, const_value=1 },
+    { to={ module="audio", id="Reset" }, const_value=1 },
+    { to={ module="input", id="Reset" }, const_value=1 }
+  ]
+}
+```
+Writing any value resets all modules; `$D500` is write-only.
+
+### Example — Synthetic (`$D501`, Enable All Sprites) — **fanout**
+```toml
+{ addr="D501", id="EnableAllSprites",
+  write_fanout = [
+    { to={ instance="*", id="Enable" }, const_value=1 }
+  ]
+}
+```
+Writing any value enables all sprites; this is a **modern helper**, not a C64 register.
+
+> **Guideline:** Use `scatter` for authentic hardware registers.  
+> Use `write_fanout` only for synthetic helper or control registers.
 
 ---
 
-## 5. Timing Hooks (Simplified)
+## 5. Multi-Target Writes (Fanout)
+
+### Concept
+A write to one register updates several underlying fields.  
+See *Scatter vs Fanout Semantics* for a full explanation of when to use this feature.
+
+### Example (Synthetic Modern Helper)
+```toml
+{ addr="D501", id="EnableAllSprites",
+  write_fanout = [
+    { to={ instance="*", id="Enable" }, const_value=1 }
+  ]
+}
+```
+
+---
+
+## 6. Timing Hooks (Simplified)
 
 ### Concept
 Associate a register write or read with a scheduled event — frame or raster level.
@@ -131,7 +185,7 @@ Timing hooks allow mapping raster interrupts or similar triggers without cycle-l
 
 ---
 
-## 6. Conditional Instance Sets
+## 7. Conditional Instance Sets
 
 ### Concept
 Activate alternate layouts based on mode or bank.
@@ -154,7 +208,7 @@ Allows conditional mapping for MEGA65 or similar platforms with banked registers
 
 ---
 
-## 7. Compute Expressions
+## 8. Compute Expressions
 
 ### Concept
 Derive register values dynamically.
@@ -168,12 +222,10 @@ Derive register values dynamically.
   field_policies=[{ on_read="coll_ack_sprspr" }]
 }
 ```
-### Benefit
-Useful for dynamic status or derived metrics (beam position, collision state).
 
 ---
 
-## 8. Mirrors and Open-Bus
+## 9. Mirrors and Open-Bus
 
 ### Concept
 Define how unmapped or repeated address ranges behave.
@@ -195,46 +247,112 @@ Some platforms mirror register blocks, others return undefined values — this k
 
 ---
 
-## 9. Example — C64 Sprite Block
+## 10. Example — C64 Sprite Block (authentic + scaling flags)
 
-### Complete Definition
+The complete C64 sprite block with **X/Y expand** flags (scatter), so modern backends can use transform scaling or variant selection.
+
 ```toml
 [[map]]
-priority = 10
 decode = { instances = {
-  kind = "sprite",
-  selector = "Select",
-  count = 8,
-  index_var = "i",
+  count=8, index_var="i", kind="sprite", base="D000",
   layout = [
-    { addr = "D100 + (i*8)", id = "Number" },
-    { addr = "D101 + (i*8)", id = "Anim" },
-    { addr = "D102 + (i*8)", id = "XLo" },
-    { addr = "D103 + (i*8)", id = "XHi" },
-    { addr = "D104 + (i*8)", id = "YLo" },
-    { addr = "D105 + (i*8)", id = "Scale" },
-    { addr = "D010",         id = "XHi", field = { bit = "i" } }
+    # Position (lo bytes per sprite)
+    { addr="D000 + (i*2)", id="XLo" },
+    { addr="D001 + (i*2)", id="YLo" },
+
+    # Shared per-sprite high bit for X (scatter)
+    { addr="D010 bit i",   id="XHi" },
+
+    # Enable on/off (scatter)
+    { addr="D015 bit i",   id="Enable" },
+
+    # Per-sprite color
+    { addr="D027 + i",     id="Color" },
+
+    # Sprite scaling (double size flags, scatter)
+    { addr="D01D bit i",   id="XExpand" },  # 1 = double width
+    { addr="D017 bit i",   id="YExpand" }   # 1 = double height
   ]
-} }
-
-[[map]]
-priority = 10
-decode = { sparse = [
-  { addr = "D015", kind = "sprite", id = "Enable", suppress_write = true,
-    write_fanout = [{ id = "Enable", instance = "*", from_bits = "0..7" }] }
-] }
+}}
 ```
-
-### How It Works
-- Each sprite gets its own registers.
-- Shared registers (e.g., `$D010`) are scattered automatically.
-- `$D015` writes behave like the real C64 mask: the personality fans out the bits, and reads reconstruct the mask from the per-sprite enable flags.
-- Modern backends can map this directly to sprite objects.
-- **Note:** The reference `c64-compat` personality deliberately maps the sprite block to `$D100+`. We expose more per-sprite registers than the VIC-II originally provided, so the classic `$D000..=D03F` range would be too small to host the extended data.
 
 ---
 
-## 10. Summary
+## 11. Pointer Decoders (Overview) — Using Subindex
+
+Pointer decoders split a pointer into:
+- **index**: the main resource selection (e.g., sprite number, screen page)
+- **subindex**: the variant within that resource (e.g., animation frame, tilebank variant)
+
+See: [Pointer Decoders & Address Semantics](10_Pointer_Decoders_and_Address_Semantics.md).
+
+---
+
+## 12. Scaling‑aware Pointer Decode (Option A with Fallback)
+
+You can include **sprite scaling flags** (C64 `$D01D` X‑expand, `$D017` Y‑expand) into the pointer decoder by **extending the subindex**. This lets the backend pick different art variants automatically. If a variant is missing, fall back to a transform scale at runtime.
+
+### MMIO (C64 sprite block with scaling flags — scatter)
+```toml
+[[map]]
+decode = { instances = {
+  count=8, index_var="i", kind="sprite", base="D000",
+  layout = [
+    { addr="D000 + (i*2)", id="XLo" },
+    { addr="D001 + (i*2)", id="YLo" },
+    { addr="D010 bit i",   id="XHi" },
+    { addr="D015 bit i",   id="Enable" },
+    { addr="D027 + i",     id="Color" },
+    { addr="D01D bit i",   id="XExpand" },  # double width
+    { addr="D017 bit i",   id="YExpand" }   # double height
+  ]
+}}
+```
+
+### Pointer decoder (append expand bits above animation bits)
+```toml
+[pointer_decoder.vic2_sprites]
+source   = { table="07F8..07FF", kind="sprite", entries=8 }
+block    = 64
+subindex = {
+  bits = 2,                 # animation 0..3 (S=2)
+  extend = [
+    { from = "D01D bit i" },  # XExpand → subindex bit S
+    { from = "D017 bit i" }   # YExpand → subindex bit S+1
+  ]
+}
+index    = { from="pointer", shift=2 }      # idx = P >> S
+```
+
+### Adapter hook with variant + transform fallback
+```rust
+fn set_sprite_variant(idx: u8, subindex: u8) {
+    let anim =  subindex        & 0b11; // S=2
+    let x2   = (subindex >> 2)  & 1 != 0;
+    let y2   = (subindex >> 3)  & 1 != 0;
+
+    if backend.has_variant(idx, anim, x2, y2) {
+        backend.bind_variant(idx, anim, x2, y2);
+        backend.set_scale(idx, 1.0, 1.0);
+    } else {
+        backend.bind_variant(idx, anim, false, false);
+        backend.set_scale(idx, if x2 { 2.0 } else { 1.0 },
+                               if y2 { 2.0 } else { 1.0 });
+    }
+}
+```
+
+### 64tass helper (content)
+```asm
+; S=2 anim bits (0..3); scaling comes from flags, not the pointer
+.macro SPR_PTR sprite, anim, Sbits=2
+    .byte ((sprite) << Sbits) | ((anim) & ((1 << Sbits) - 1))
+.endmacro
+```
+
+---
+
+## 13. Summary
 
 The Mapping DSL bridges classic register organization with modern engine architectures.  
 It supports both *faithful semantics* and *creative reinterpretation* while remaining human-readable and portable.
