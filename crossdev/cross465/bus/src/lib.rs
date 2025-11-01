@@ -32,6 +32,7 @@
 //!
 //! The [`Bus`] forwards reads/writes in MMIO ranges to their device instead of RAM.
 
+pub mod adapters; // higher-level adapters bridging modules to modern backends
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod display_mmio; // expose display device as bus::display_mmio::*
 pub mod interrupts; // expose shared interrupt controller helpers
@@ -41,6 +42,8 @@ pub mod personality_v2; // data-driven personality definitions and loader
 pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
+
+pub use adapters::sprite::{SpriteAdapter, SpriteBackend, SpriteOutputBackend, SpriteRenderState};
 
 /// Resolved mapping entry produced by the personality compiler.
 #[derive(Clone, Debug)]
