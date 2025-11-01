@@ -495,6 +495,76 @@ decode = { sparse = [
     }
 
     #[test]
+    fn mirror_replicates_base_range() {
+        let toml = r#"
+[personality]
+id = "mirror-test"
+title = "Mirror Test"
+
+[[mirror]]
+range = "D000..=D00F"
+period = 0x001
+
+[modules.display]
+impl = "display.basic2d"
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D000", kind = "display", id = "BorderColor" }
+] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load mirror personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        bus.write(0xD000, 0x0F);
+        assert_eq!(bus.read(0xD000), 0x0F);
+        assert_eq!(bus.read(0xD005), 0x0F);
+    }
+
+    #[test]
+    fn open_bus_last_read_returns_previous_value() {
+        let toml = r#"
+[personality]
+id = "open-bus"
+title = "Open Bus Mirror"
+
+[[open_bus]]
+range = "D0F0..=D0FF"
+policy = "last_read"
+
+[modules.display]
+impl = "display.basic2d"
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D020", kind = "display", id = "BorderColor" }
+] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load open bus personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        bus.write(0xD020, 0x12);
+        assert_eq!(bus.read(0xD020), 0x12);
+
+        assert_eq!(bus.read(0xD0F0), 0x12);
+
+        bus.write(0xD0F0, 0x34); // ignored
+
+        {
+            let mem = bus.mem_mut();
+            assert_eq!(mem.read(0xD0F0), 0);
+        }
+    }
+
+    #[test]
     fn field_policy_read_hook_clears_bits() {
         let toml = r#"
 [personality]
@@ -616,7 +686,8 @@ use interrupts::InterruptController;
 use personality::{InterruptLine, Personality, PersonalityMmioKind};
 use personality_v2::{
     CompileError as PersonalityCompileError, Condition, InputSignals, InterruptConfig, Map,
-    MapDecode, PersonalityDef, PersonalityMetadata, Transform, ValueBuilder,
+    MapDecode, Mirror, OpenBusPolicy, OpenBusRegion, PersonalityDef, PersonalityMetadata,
+    Transform, ValueBuilder,
 };
 use sprite_mmio::SpriteMmio;
 
@@ -728,12 +799,15 @@ struct PersonalityRuntime {
     modules: Vec<ModuleInstance>,
     module_lookup: BTreeMap<ModuleKind, usize>,
     maps: Vec<Map>,
+    mirrors: Vec<Mirror>,
+    open_bus: Vec<OpenBusRegion>,
     address_table: Vec<Option<AddressSlot>>,
     conditions: BTreeMap<String, Condition>,
     condition_states: BTreeMap<String, bool>,
     signals: SignalStore,
     #[allow(dead_code)]
     interrupts: InterruptConfig,
+    last_read_value: u8,
 }
 
 struct ModuleInstance {
@@ -883,6 +957,7 @@ impl InputSignals for SignalStore {
 
 fn compile_address_table(
     maps: &[Map],
+    mirrors: &[Mirror],
     lookup: &BTreeMap<ModuleKind, usize>,
     condition_states: &BTreeMap<String, bool>,
 ) -> Result<Vec<Option<AddressSlot>>, PersonalityCompileError> {
@@ -907,7 +982,29 @@ fn compile_address_table(
             }
         }
     }
+    apply_mirrors(&mut table, mirrors);
     Ok(table)
+}
+
+fn apply_mirrors(table: &mut [Option<AddressSlot>], mirrors: &[Mirror]) {
+    for mirror in mirrors {
+        let period = mirror.period as u32;
+        if period == 0 {
+            continue;
+        }
+        let span = (mirror.range.end - mirror.range.start) as u32;
+        for offset in 0..=span {
+            let addr = mirror.range.start + offset as u16;
+            if table[addr as usize].is_some() {
+                continue;
+            }
+            let base_offset = (offset % period) as u16;
+            let base_addr = mirror.range.start + base_offset;
+            if let Some(base_slot) = table.get(base_addr as usize).and_then(|slot| slot.clone()) {
+                table[addr as usize] = Some(base_slot);
+            }
+        }
+    }
 }
 
 fn compile_range_map(
@@ -1332,6 +1429,8 @@ impl PersonalityRuntime {
             modules,
             conditions,
             maps,
+            mirrors,
+            open_bus,
             interrupts,
         } = def;
 
@@ -1356,11 +1455,14 @@ impl PersonalityRuntime {
             modules: instances,
             module_lookup: lookup,
             maps,
+            mirrors,
+            open_bus,
             address_table: Vec::new(),
             conditions,
             condition_states: BTreeMap::new(),
             signals: SignalStore::default(),
             interrupts,
+            last_read_value: 0,
         };
 
         runtime.update_condition_states()?;
@@ -1376,13 +1478,23 @@ impl PersonalityRuntime {
             .and_then(|cell| cell.as_ref())
         {
             Some(slot) => slot.clone(),
-            None => return None,
+            None => {
+                if let Some(value) = self.open_bus_value(addr) {
+                    self.record_last_read(value);
+                    return Some(value);
+                }
+                return None;
+            }
         };
 
-        match slot.kind {
+        let value = match slot.kind {
             AddressSlotKind::Direct(direct) => self.read_direct(direct),
             AddressSlotKind::Scatter(scatter) => self.read_scatter(scatter),
+        };
+        if let Some(value) = value {
+            self.record_last_read(value);
         }
+        value
     }
 
     fn write(&mut self, addr: u16, value: u8) -> bool {
@@ -1392,7 +1504,13 @@ impl PersonalityRuntime {
             .and_then(|cell| cell.as_ref())
         {
             Some(slot) => slot.clone(),
-            None => return false,
+            None => {
+                return if self.is_open_bus_addr(addr) {
+                    true
+                } else {
+                    false
+                };
+            }
         };
 
         match slot.kind {
@@ -1614,6 +1732,26 @@ impl PersonalityRuntime {
         result
     }
 
+    fn open_bus_value(&self, addr: u16) -> Option<u8> {
+        self.open_bus
+            .iter()
+            .find(|region| region.range.contains(addr))
+            .map(|region| match &region.policy {
+                OpenBusPolicy::Const(value) => *value,
+                OpenBusPolicy::LastRead => self.last_read_value,
+            })
+    }
+
+    fn is_open_bus_addr(&self, addr: u16) -> bool {
+        self.open_bus
+            .iter()
+            .any(|region| region.range.contains(addr))
+    }
+
+    fn record_last_read(&mut self, value: u8) {
+        self.last_read_value = value;
+    }
+
     fn module_index(&self, kind: ModuleKind) -> Option<usize> {
         self.module_lookup.get(&kind).copied()
     }
@@ -1637,8 +1775,12 @@ impl PersonalityRuntime {
     }
 
     fn rebuild_address_table(&mut self) -> Result<(), PersonalityCompileError> {
-        self.address_table =
-            compile_address_table(&self.maps, &self.module_lookup, &self.condition_states)?;
+        self.address_table = compile_address_table(
+            &self.maps,
+            &self.mirrors,
+            &self.module_lookup,
+            &self.condition_states,
+        )?;
         Ok(())
     }
 
@@ -1881,11 +2023,26 @@ impl Bus {
                 return value;
             }
         }
-        if let Some(dev) = self.find_mmio(addr) {
-            return dev.read(addr);
+        if let Some(value) = {
+            if let Some(dev) = self.find_mmio(addr) {
+                Some(dev.read(addr))
+            } else {
+                None
+            }
+        } {
+            if let Some(runtime) = self.runtime_v2.as_mut() {
+                runtime.record_last_read(value);
+            }
+            return value;
         }
-        let mem = self.ram.lock().unwrap();
-        mem.read(addr)
+        let value = {
+            let mem = self.ram.lock().unwrap();
+            mem.read(addr)
+        };
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.record_last_read(value);
+        }
+        value
     }
 
     /// Write a byte to the bus (MMIO devices intercept their ranges).

@@ -14,6 +14,10 @@ pub struct PersonalityDef {
     pub conditions: BTreeMap<String, Condition>,
     /// Address maps in declaration order.
     pub maps: Vec<Map>,
+    /// Mirror directives applied after map compilation.
+    pub mirrors: Vec<Mirror>,
+    /// Open-bus policies for unmapped addresses.
+    pub open_bus: Vec<OpenBusRegion>,
     /// Optional interrupt wiring metadata.
     pub interrupts: InterruptConfig,
 }
@@ -63,9 +67,34 @@ pub struct RangeMap {
     pub default_transform: Option<Transform>,
 }
 
+#[derive(Clone)]
 pub struct AddressRange {
     pub start: u16,
     pub end: u16,
+}
+
+impl AddressRange {
+    pub fn contains(&self, addr: u16) -> bool {
+        addr >= self.start && addr <= self.end
+    }
+}
+
+#[derive(Clone)]
+pub struct Mirror {
+    pub range: AddressRange,
+    pub period: u16,
+}
+
+#[derive(Clone)]
+pub struct OpenBusRegion {
+    pub range: AddressRange,
+    pub policy: OpenBusPolicy,
+}
+
+#[derive(Clone)]
+pub enum OpenBusPolicy {
+    Const(u8),
+    LastRead,
 }
 
 pub struct SparseEntry {
@@ -297,6 +326,8 @@ impl PersonalityDef {
             modules: raw_modules,
             maps: raw_maps,
             conditions: raw_conditions,
+            mirrors: raw_mirrors,
+            open_bus: raw_open_bus,
             interrupts: raw_interrupts,
         } = raw;
 
@@ -313,6 +344,8 @@ impl PersonalityDef {
         let conditions = resolve_conditions(raw_conditions, &modules)?;
 
         let maps = resolve_maps(raw_maps, &modules, default_priority)?;
+        let mirrors = resolve_mirrors(raw_mirrors)?;
+        let open_bus = resolve_open_bus(raw_open_bus)?;
 
         let interrupts = resolve_interrupts(raw_interrupts, &modules)?;
 
@@ -321,6 +354,8 @@ impl PersonalityDef {
             modules,
             conditions,
             maps,
+            mirrors,
+            open_bus,
             interrupts,
         })
     }
@@ -501,6 +536,70 @@ fn resolve_maps(
         });
     }
     Ok(maps)
+}
+
+fn resolve_mirrors(raws: Vec<RawMirror>) -> Result<Vec<Mirror>, LoaderError> {
+    let mut mirrors = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let range = parse_range(&raw.range)?;
+        if raw.period == 0 {
+            return Err(LoaderError {
+                message: format!(
+                    "mirror period must be > 0 for range {:#06X}..={:#06X}",
+                    range.start, range.end
+                ),
+                line: None,
+                column: None,
+            });
+        }
+        mirrors.push(Mirror {
+            range,
+            period: raw.period,
+        });
+    }
+    Ok(mirrors)
+}
+
+fn resolve_open_bus(raws: Vec<RawOpenBus>) -> Result<Vec<OpenBusRegion>, LoaderError> {
+    let mut regions = Vec::with_capacity(raws.len());
+    for raw in raws {
+        let range = parse_range(&raw.range)?;
+        let policy_name = raw.policy.unwrap_or_else(|| "const".to_string());
+        let policy = match policy_name.as_str() {
+            "const" => {
+                let value_str = raw.const_value.ok_or_else(|| LoaderError {
+                    message: format!(
+                        "open_bus range {:#06X}..={:#06X} with policy `const` requires a `const` value",
+                        range.start, range.end
+                    ),
+                    line: None,
+                    column: None,
+                })?;
+                let value = parse_hex_byte(&value_str)?;
+                OpenBusPolicy::Const(value)
+            }
+            "last_read" => {
+                if raw.const_value.is_some() {
+                    return Err(LoaderError {
+                        message: "open_bus policy `last_read` does not accept a `const` value"
+                            .to_string(),
+                        line: None,
+                        column: None,
+                    });
+                }
+                OpenBusPolicy::LastRead
+            }
+            other => {
+                return Err(LoaderError {
+                    message: format!("unknown open_bus policy `{}`", other),
+                    line: None,
+                    column: None,
+                });
+            }
+        };
+        regions.push(OpenBusRegion { range, policy });
+    }
+    Ok(regions)
 }
 
 fn resolve_instance_map(
@@ -1147,6 +1246,25 @@ fn parse_addr(addr: &str) -> Result<u16, LoaderError> {
     })
 }
 
+fn parse_hex_byte(value: &str) -> Result<u8, LoaderError> {
+    let trimmed = value
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches('$');
+    if trimmed.is_empty() || trimmed.len() > 2 {
+        return Err(LoaderError {
+            message: format!("invalid byte literal `{value}`"),
+            line: None,
+            column: None,
+        });
+    }
+    u8::from_str_radix(trimmed, 16).map_err(|_| LoaderError {
+        message: format!("invalid byte literal `{value}`"),
+        line: None,
+        column: None,
+    })
+}
+
 fn parse_range(range: &str) -> Result<AddressRange, LoaderError> {
     let mut parts = range.split("..");
     let start = parts
@@ -1485,6 +1603,10 @@ struct RawPersonalityFile {
     maps: Vec<RawMap>,
     #[serde(default)]
     conditions: BTreeMap<String, RawCondition>,
+    #[serde(default, rename = "mirror")]
+    mirrors: Vec<RawMirror>,
+    #[serde(default, rename = "open_bus")]
+    open_bus: Vec<RawOpenBus>,
     #[serde(default)]
     interrupts: Option<RawInterrupts>,
 }
@@ -1655,6 +1777,21 @@ struct RawCondition {
     kind: String,
     reg: String,
     equals: i32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawMirror {
+    range: String,
+    period: u16,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawOpenBus {
+    range: String,
+    #[serde(default)]
+    policy: Option<String>,
+    #[serde(default, rename = "const")]
+    const_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

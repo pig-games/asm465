@@ -3,6 +3,14 @@ id = "c64-compat-sparse"
 title = "C64-Compatible Sparse Layout"
 default_map_priority = 10
 
+[[mirror]]
+range = "D000..=D3FF"
+period = 0x040
+
+[[open_bus]]
+range = "D000..=DFFF"
+policy = "last_read"
+
 [modules.console]
 impl = "console.text"
 
