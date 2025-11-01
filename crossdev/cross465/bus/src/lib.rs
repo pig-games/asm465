@@ -42,8 +42,6 @@ pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
-use crate::mmio::BackendHandles;
-
 /// Resolved mapping entry produced by the personality compiler.
 #[derive(Clone, Debug)]
 pub struct AddressMapping {
@@ -93,6 +91,40 @@ pub struct FieldHookInfo {
     pub on_read: Option<String>,
     pub on_write: Option<String>,
 }
+
+/// Errors raised when registering module adapters.
+#[derive(Debug)]
+pub enum AdapterError {
+    LegacyPersonality,
+    ModuleNotMapped(ModuleKind),
+    AdapterAlreadyAttached(ModuleKind),
+}
+
+impl fmt::Display for AdapterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AdapterError::LegacyPersonality => {
+                write!(f, "adapter registration requires a v2 personality")
+            }
+            AdapterError::ModuleNotMapped(kind) => {
+                write!(
+                    f,
+                    "module kind `{}` is not mapped in this personality",
+                    kind.as_str()
+                )
+            }
+            AdapterError::AdapterAlreadyAttached(kind) => {
+                write!(
+                    f,
+                    "an adapter is already attached to module kind `{}`",
+                    kind.as_str()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for AdapterError {}
 
 /// Build a registry populated with the built-in module implementations.
 pub fn builtin_module_registry() -> mmio::ModuleRegistry {
@@ -710,10 +742,14 @@ pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicod
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
-use crate::mmio::{HookAction, Module, ModuleDeps, ModuleKind, RegId};
+use crate::mmio::{
+    BackendHandles, FanoutWriteEvent, HookAction, Module, ModuleAdapter, ModuleAdapterEvent,
+    ModuleDeps, ModuleKind, PrimaryWriteEvent, RegId, ScatterWriteEvent,
+};
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
 use interrupts::InterruptController;
@@ -854,6 +890,7 @@ struct ModuleInstance {
     module: Box<dyn Module>,
     #[allow(dead_code)]
     options: crate::mmio::ModuleOptions,
+    adapter: Option<Box<dyn ModuleAdapter>>,
 }
 
 #[derive(Clone)]
@@ -1388,40 +1425,6 @@ fn compile_field_hooks(
     hooks
 }
 
-fn fire_field_read_hooks(module: &mut dyn Module, value: u8, hooks: &[FieldHook]) {
-    for hook in hooks {
-        if let Some(name) = &hook.on_read {
-            let masked = value & hook.mask;
-            if masked != 0 {
-                module.handle_hook(
-                    name,
-                    HookAction::Read {
-                        mask: hook.mask,
-                        value: masked,
-                    },
-                );
-            }
-        }
-    }
-}
-
-fn fire_field_write_hooks(module: &mut dyn Module, cpu_value: u8, hooks: &[FieldHook]) {
-    for hook in hooks {
-        if let Some(name) = &hook.on_write {
-            let masked = cpu_value & hook.mask;
-            if masked != 0 {
-                module.handle_hook(
-                    name,
-                    HookAction::Write {
-                        mask: hook.mask,
-                        value: masked,
-                    },
-                );
-            }
-        }
-    }
-}
-
 fn insert_slot(
     table: &mut [Option<AddressSlot>],
     addr: u16,
@@ -1459,6 +1462,34 @@ fn insert_slot(
 }
 
 impl PersonalityRuntime {
+    fn dispatch_adapter_event<'a>(&mut self, module_index: usize, event: ModuleAdapterEvent<'a>) {
+        if let Some(entry) = self.modules.get_mut(module_index) {
+            if let Some(adapter) = entry.adapter.as_deref_mut() {
+                adapter.handle_event(event);
+            }
+        }
+    }
+
+    fn attach_adapter(
+        &mut self,
+        kind: ModuleKind,
+        adapter: Box<dyn ModuleAdapter>,
+    ) -> Result<(), AdapterError> {
+        let index = match self.module_lookup.get(&kind) {
+            Some(index) => *index,
+            None => return Err(AdapterError::ModuleNotMapped(kind)),
+        };
+        let entry = self
+            .modules
+            .get_mut(index)
+            .ok_or(AdapterError::ModuleNotMapped(kind))?;
+        if entry.adapter.is_some() {
+            return Err(AdapterError::AdapterAlreadyAttached(kind));
+        }
+        entry.adapter = Some(adapter);
+        Ok(())
+    }
+
     fn from_def(
         def: PersonalityDef,
         ram: Arc<Mutex<Memory>>,
@@ -1488,6 +1519,7 @@ impl PersonalityRuntime {
                 impl_id: config.impl_id,
                 module,
                 options: config.options,
+                adapter: None,
             });
         }
 
@@ -1595,14 +1627,37 @@ impl PersonalityRuntime {
             value &= !slot.transform.wo_mask;
         }
 
+        let mut hook_events: Vec<(String, HookAction)> = Vec::new();
         if !slot.field_hooks.is_empty() {
             if let Some(entry) = self.modules.get_mut(module_index) {
                 let module = entry.module.as_mut();
-                fire_field_read_hooks(module, value, &slot.field_hooks);
+                for hook in &slot.field_hooks {
+                    if let Some(name) = &hook.on_read {
+                        let masked = value & hook.mask;
+                        if masked != 0 {
+                            let action = HookAction::Read {
+                                mask: hook.mask,
+                                value: masked,
+                            };
+                            module.handle_hook(name, action);
+                            hook_events.push((name.clone(), action));
+                        }
+                    }
+                }
             }
         }
 
         self.apply_register_sets(&slot.post_read_sets);
+
+        for (name, action) in hook_events {
+            self.dispatch_adapter_event(
+                module_index,
+                ModuleAdapterEvent::Hook {
+                    hook: name.as_str(),
+                    action,
+                },
+            );
+        }
 
         Some(value)
     }
@@ -1627,32 +1682,72 @@ impl PersonalityRuntime {
         Some(result)
     }
 
-    fn write_direct(&mut self, mut value: u8, slot: DirectSlot) -> bool {
+    fn write_direct(&mut self, value: u8, slot: DirectSlot) -> bool {
         self.apply_register_sets(&slot.pre_write_sets);
 
         let cpu_value = value;
-        let option = self.modules.get_mut(slot.module_index);
-        {
-            let module = match option {
-                Some(m) => m.module.as_mut(),
+        let module_index = slot.module_index;
+        let (module_value, hook_events) = {
+            let entry = match self.modules.get_mut(module_index) {
+                Some(entry) => entry,
                 None => return false,
             };
+            let module = entry.module.as_mut();
 
-            value = reverse_shift(value, slot.transform.shift);
-            value ^= slot.transform.invert_mask;
+            let mut module_value = reverse_shift(value, slot.transform.shift);
+            module_value ^= slot.transform.invert_mask;
 
             if slot.transform.ro_mask != 0 {
                 let current = module.read_reg(slot.reg);
-                value = (value & !slot.transform.ro_mask) | (current & slot.transform.ro_mask);
+                module_value =
+                    (module_value & !slot.transform.ro_mask) | (current & slot.transform.ro_mask);
             }
 
+            let mut hook_events = Vec::new();
+
             if !slot.suppress_primary {
-                module.write_reg(slot.reg, value);
+                module.write_reg(slot.reg, module_value);
+
                 if !slot.field_hooks.is_empty() {
-                    fire_field_write_hooks(module, cpu_value, &slot.field_hooks);
+                    for hook in &slot.field_hooks {
+                        if let Some(name) = &hook.on_write {
+                            let masked = cpu_value & hook.mask;
+                            if masked != 0 {
+                                let action = HookAction::Write {
+                                    mask: hook.mask,
+                                    value: masked,
+                                };
+                                module.handle_hook(name, action);
+                                hook_events.push((name.clone(), action));
+                            }
+                        }
+                    }
                 }
             }
+
+            (module_value, hook_events)
+        };
+
+        self.dispatch_adapter_event(
+            module_index,
+            ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+                reg: slot.reg,
+                cpu_value,
+                module_value,
+                instance: slot.instance,
+            }),
+        );
+
+        for (name, action) in hook_events {
+            self.dispatch_adapter_event(
+                module_index,
+                ModuleAdapterEvent::Hook {
+                    hook: name.as_str(),
+                    action,
+                },
+            );
         }
+
         if !slot.write_fanout.is_empty() {
             self.apply_write_fanouts(cpu_value, slot.instance, &slot.write_fanout);
         }
@@ -1665,32 +1760,57 @@ impl PersonalityRuntime {
         let mut any = false;
         for entry in slot.entries {
             self.apply_register_sets(&entry.pre_write_sets);
-            let module = match self.modules.get_mut(entry.module_index) {
-                Some(m) => m.module.as_mut(),
-                None => continue,
+            let module_index = entry.module_index;
+            let mut adapter_event = None;
+            let module_present = {
+                if let Some(module_entry) = self.modules.get_mut(module_index) {
+                    let module = module_entry.module.as_mut();
+                    let current = module.read_reg(entry.reg);
+                    let mut cpu_value = apply_shift(current, entry.transform.shift);
+                    cpu_value ^= entry.transform.invert_mask;
+                    if entry.transform.wo_mask != 0 {
+                        cpu_value &= !entry.transform.wo_mask;
+                    }
+                    let bit_value = (value.wrapping_shr(entry.target_bit as u32) & 1) != 0;
+                    let mask = 1u8 << entry.source_bit;
+                    if bit_value {
+                        cpu_value |= mask;
+                    } else {
+                        cpu_value &= !mask;
+                    }
+                    let mut new_value = reverse_shift(cpu_value, entry.transform.shift);
+                    new_value ^= entry.transform.invert_mask;
+                    let mut final_value = new_value;
+                    if entry.transform.ro_mask != 0 {
+                        final_value = (new_value & !entry.transform.ro_mask)
+                            | (current & entry.transform.ro_mask);
+                    }
+                    module.write_reg(entry.reg, final_value);
+                    adapter_event = Some(ModuleAdapterEvent::ScatterWrite(ScatterWriteEvent {
+                        reg: entry.reg,
+                        cpu_value,
+                        module_value: final_value,
+                        bit_value,
+                        source_bit: entry.source_bit,
+                        target_bit: entry.target_bit,
+                        instance: entry.instance,
+                    }));
+                    true
+                } else {
+                    false
+                }
             };
-            let current = module.read_reg(entry.reg);
-            let mut cpu_value = apply_shift(current, entry.transform.shift);
-            cpu_value ^= entry.transform.invert_mask;
-            if entry.transform.wo_mask != 0 {
-                cpu_value &= !entry.transform.wo_mask;
+
+            if !module_present {
+                continue;
             }
-            let bit = (value.wrapping_shr(entry.target_bit as u32) & 1) as u8;
-            let mask = 1u8 << entry.source_bit;
-            if bit != 0 {
-                cpu_value |= mask;
-            } else {
-                cpu_value &= !mask;
-            }
-            let mut new_value = reverse_shift(cpu_value, entry.transform.shift);
-            new_value ^= entry.transform.invert_mask;
-            let mut final_value = new_value;
-            if entry.transform.ro_mask != 0 {
-                final_value =
-                    (new_value & !entry.transform.ro_mask) | (current & entry.transform.ro_mask);
-            }
-            module.write_reg(entry.reg, final_value);
+
             self.apply_register_sets(&entry.post_write_sets);
+
+            if let Some(event) = adapter_event {
+                self.dispatch_adapter_event(module_index, event);
+            }
+
             any = true;
         }
         if any {
@@ -1713,19 +1833,33 @@ impl PersonalityRuntime {
         self_instance: Option<u8>,
         fanouts: &[WriteFanoutAction],
     ) {
+        let mut events: Vec<(usize, FanoutWriteEvent)> = Vec::new();
         for action in fanouts {
             if let Some(module_entry) = self.modules.get_mut(action.target_module_index) {
                 let module = module_entry.module.as_mut();
                 let value = extract_fanout_value(cpu_value, action);
-                if let Some(index) = action.instance.index(self_instance) {
+                let target_instance = action.instance.index(self_instance);
+                if let Some(index) = target_instance {
                     if let Some(selector) = action.selector {
                         module.write_reg(selector, index);
                     }
-                    module.write_reg(action.reg, value);
-                } else {
-                    module.write_reg(action.reg, value);
                 }
+                module.write_reg(action.reg, value);
+                events.push((
+                    action.target_module_index,
+                    FanoutWriteEvent {
+                        reg: action.reg,
+                        value,
+                        source_value: cpu_value,
+                        source_instance: self_instance,
+                        target_instance,
+                    },
+                ));
             }
+        }
+
+        for (module_index, event) in events {
+            self.dispatch_adapter_event(module_index, ModuleAdapterEvent::FanoutWrite(event));
         }
     }
 
@@ -2046,8 +2180,7 @@ impl Bus {
     ) -> Result<Self, PersonalityCompileError> {
         let ram = Arc::new(Mutex::new(Memory::new()));
         let controller = Arc::new(InterruptController::new());
-        let runtime =
-            PersonalityRuntime::from_def(def, ram.clone(), controller.clone(), backends)?;
+        let runtime = PersonalityRuntime::from_def(def, ram.clone(), controller.clone(), backends)?;
         Ok(Self {
             ram,
             personality_legacy: None,
@@ -2055,6 +2188,18 @@ impl Bus {
             controller,
             runtime_v2: Some(runtime),
         })
+    }
+
+    /// Attach a module adapter that mirrors MMIO activity to a backend system.
+    pub fn attach_adapter(
+        &mut self,
+        kind: ModuleKind,
+        adapter: Box<dyn ModuleAdapter>,
+    ) -> Result<(), AdapterError> {
+        match self.runtime_v2.as_mut() {
+            Some(runtime) => runtime.attach_adapter(kind, adapter),
+            None => Err(AdapterError::LegacyPersonality),
+        }
     }
 
     /// Map an MMIO device to a specific address range (inclusive).

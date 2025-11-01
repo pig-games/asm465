@@ -35,7 +35,10 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Added a typed `BackendHandles` registry so factories/adapters can request pre-wired host objects (`crossdev/cross465/bus/src/mmio.rs:206`).
   - Plumbed those handles through `ModuleDeps::new`/`ModuleDeps::backend` and into the personality runtime so every module instantiation receives the same host context (`crossdev/cross465/bus/src/mmio.rs:259`, `crossdev/cross465/bus/src/mmio.rs:267`).
   - Exposed `Bus::from_personality_def_with_backends` so the viewer can supply concrete rendering/timing backends when building a v2 personality (`crossdev/cross465/bus/src/lib.rs:2037`).
-- [ ] Teach the bus runtime to register adapter callbacks alongside module instances, feeding scatter/fanout resolutions and hook names into the dispatcher.
+- [x] Teach the bus runtime to register adapter callbacks alongside module instances, feeding scatter/fanout resolutions and hook names into the dispatcher.
+  - Introduced adapter event types and trait so modules can emit primary/scatter/fanout updates plus hook notifications (`crossdev/cross465/bus/src/mmio.rs:324`).
+  - Personality runtime now owns optional adapter slots per module and dispatches events from direct writes, scatter paths, fanouts, and field hooks (`crossdev/cross465/bus/src/lib.rs:866`, `crossdev/cross465/bus/src/lib.rs:1685`, `crossdev/cross465/bus/src/lib.rs:1759`, `crossdev/cross465/bus/src/lib.rs:1830`).
+  - Added `Bus::attach_adapter` to let hosts register shims against specific module kinds in v2 personalities (`crossdev/cross465/bus/src/lib.rs:2194`).
 - [ ] Implement sprite adapter logic for instance arrays, `$D010` scatter bits, enable masks, scaling flags, and pointer decoder outputs.
 - [ ] Implement video adapter logic covering raster compare, IRQ status, collision latches, and read-to-clear semantics.
 - [ ] Update C64 personalities to bind the new adapters, then drive them through integration tests or demo harness runs to confirm behaviour.

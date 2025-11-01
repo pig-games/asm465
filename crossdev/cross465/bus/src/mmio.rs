@@ -321,6 +321,51 @@ pub enum HookAction {
     Write { mask: u8, value: u8 },
 }
 
+/// CPU-visible register write dispatched to an adapter.
+#[derive(Clone, Copy, Debug)]
+pub struct PrimaryWriteEvent {
+    pub reg: RegId,
+    pub cpu_value: u8,
+    pub module_value: u8,
+    pub instance: Option<u8>,
+}
+
+/// Scatter write notification describing a single bit projection.
+#[derive(Clone, Copy, Debug)]
+pub struct ScatterWriteEvent {
+    pub reg: RegId,
+    pub cpu_value: u8,
+    pub module_value: u8,
+    pub bit_value: bool,
+    pub source_bit: u8,
+    pub target_bit: u8,
+    pub instance: Option<u8>,
+}
+
+/// Fanout write notification delivered to the receiving module adapter.
+#[derive(Clone, Copy, Debug)]
+pub struct FanoutWriteEvent {
+    pub reg: RegId,
+    pub value: u8,
+    pub source_value: u8,
+    pub source_instance: Option<u8>,
+    pub target_instance: Option<u8>,
+}
+
+/// Event forwarded to a module adapter.
+#[derive(Clone, Copy, Debug)]
+pub enum ModuleAdapterEvent<'a> {
+    PrimaryWrite(PrimaryWriteEvent),
+    ScatterWrite(ScatterWriteEvent),
+    FanoutWrite(FanoutWriteEvent),
+    Hook { hook: &'a str, action: HookAction },
+}
+
+/// Adapter bridge that mirrors MMIO activity into external backends.
+pub trait ModuleAdapter: Send {
+    fn handle_event(&mut self, event: ModuleAdapterEvent<'_>);
+}
+
 impl ModuleRegistry {
     pub fn new() -> Self {
         Self {
