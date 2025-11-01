@@ -74,6 +74,33 @@ const SYSTEM_REGS: &[RegisterDesc] = &[
         false,
         &[],
     ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::RasterLo),
+        "RasterLo",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::SpriteCollisions),
+        "SpriteCollisions",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::BackgroundCollisions),
+        "BackgroundCollisions",
+        1,
+        0,
+        true,
+        false,
+        &[],
+    ),
 ];
 
 impl SystemMmio {
@@ -187,6 +214,9 @@ impl Module for SystemMmio {
                 }
                 status
             }
+            RegId::System(SystemReg::RasterLo)
+            | RegId::System(SystemReg::SpriteCollisions)
+            | RegId::System(SystemReg::BackgroundCollisions) => 0,
             _ => 0xFF,
         }
     }

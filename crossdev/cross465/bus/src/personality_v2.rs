@@ -103,6 +103,7 @@ pub struct SparseEntry {
     pub register: ResolvedRegister,
     pub transform: Option<Transform>,
     pub value_builder: Option<ValueBuilder>,
+    pub compute: Option<ComputeExpr>,
     pub field_policies: Vec<FieldPolicy>,
     pub write_fanout: Vec<WriteFanout>,
     pub suppress_primary: bool,
@@ -123,6 +124,7 @@ pub struct InstanceLayoutEntry {
     pub field: Option<InstanceField>,
     pub write_fanout: Vec<WriteFanout>,
     pub field_policies: Vec<FieldPolicy>,
+    pub compute: Option<ComputeExpr>,
     pub suppress_primary: bool,
 }
 
@@ -171,6 +173,36 @@ pub enum FanoutInstance {
 pub struct InstanceExpr {
     source: String,
     tokens: Vec<ExprToken>,
+}
+
+#[derive(Clone)]
+pub struct ComputeExpr {
+    source: String,
+    ast: ComputeNode,
+}
+
+#[derive(Clone)]
+enum ComputeNode {
+    Constant(i64),
+    Signal(String),
+    UnaryNeg(Box<ComputeNode>),
+    UnaryNot(Box<ComputeNode>),
+    Binary {
+        op: ComputeOp,
+        left: Box<ComputeNode>,
+        right: Box<ComputeNode>,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum ComputeOp {
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
 }
 
 #[derive(Clone)]
@@ -492,6 +524,30 @@ fn resolve_maps(
                             .value_builder
                             .map(|value| parse_value_builder(value, register.desc))
                             .transpose()?;
+                        let compute = entry
+                            .compute
+                            .as_deref()
+                            .map(|expr| {
+                                parse_compute_expr(expr).map_err(|msg| LoaderError {
+                                    message: format!(
+                                        "invalid compute expression `{}`: {}",
+                                        expr, msg
+                                    ),
+                                    line: None,
+                                    column: None,
+                                })
+                            })
+                            .transpose()?;
+                        if value_builder.is_some() && compute.is_some() {
+                            return Err(LoaderError {
+                                message: format!(
+                                    "map entry at {:#06X} specifies both value_builder and compute",
+                                    addr
+                                ),
+                                line: None,
+                                column: None,
+                            });
+                        }
                         let field_policies =
                             resolve_field_policies(&entry.field_policies, &register)?;
                         let write_fanout = resolve_write_fanouts(
@@ -507,6 +563,7 @@ fn resolve_maps(
                             register,
                             transform,
                             value_builder,
+                            compute,
                             field_policies,
                             write_fanout,
                             suppress_primary: entry.suppress_write.unwrap_or(false),
@@ -648,6 +705,27 @@ fn resolve_instance_map(
             .map(|field| parse_instance_field(field, &raw.index_var))
             .transpose()?;
         let field_policies = resolve_field_policies(&entry.field_policies, &register)?;
+        let compute = entry
+            .compute
+            .as_deref()
+            .map(|expr| {
+                parse_compute_expr(expr).map_err(|msg| LoaderError {
+                    message: format!("invalid compute expression `{}`: {}", expr, msg),
+                    line: None,
+                    column: None,
+                })
+            })
+            .transpose()?;
+        if compute.is_some() && field.is_some() {
+            return Err(LoaderError {
+                message: format!(
+                    "instance layout entry `{}` cannot specify both field scatter and compute",
+                    entry.id
+                ),
+                line: None,
+                column: None,
+            });
+        }
         let write_fanout =
             resolve_write_fanouts(entry.write_fanout, &register, modules, kind, true)?;
 
@@ -657,6 +735,7 @@ fn resolve_instance_map(
             transform,
             field,
             write_fanout,
+            compute,
             field_policies,
             suppress_primary: entry.suppress_write.unwrap_or(false),
         });
@@ -1299,6 +1378,297 @@ fn parse_range(range: &str) -> Result<AddressRange, LoaderError> {
     Ok(AddressRange { start, end })
 }
 
+fn parse_compute_expr(expr: &str) -> Result<ComputeExpr, String> {
+    let mut parser = ComputeParser::new(expr)?;
+    let ast = parser.parse_expression(0)?;
+    parser.ensure_end()?;
+    Ok(ComputeExpr {
+        source: expr.to_string(),
+        ast,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ComputeToken {
+    Number(i64),
+    Ident(String),
+    Plus,
+    Minus,
+    Amp,
+    Pipe,
+    Caret,
+    Tilde,
+    ShiftLeft,
+    ShiftRight,
+    LParen,
+    RParen,
+    End,
+}
+
+struct ComputeParser {
+    tokens: Vec<ComputeToken>,
+    pos: usize,
+}
+
+impl ComputeParser {
+    fn new(expr: &str) -> Result<Self, String> {
+        let tokens = lex_compute_tokens(expr)?;
+        Ok(Self { tokens, pos: 0 })
+    }
+
+    fn parse_expression(&mut self, min_prec: u8) -> Result<ComputeNode, String> {
+        let mut left = self.parse_prefix()?;
+        loop {
+            let op_token = match self.peek() {
+                ComputeToken::Plus => Some((ComputeOp::Add, 5)),
+                ComputeToken::Minus => Some((ComputeOp::Sub, 5)),
+                ComputeToken::ShiftLeft => Some((ComputeOp::Shl, 4)),
+                ComputeToken::ShiftRight => Some((ComputeOp::Shr, 4)),
+                ComputeToken::Amp => Some((ComputeOp::And, 3)),
+                ComputeToken::Caret => Some((ComputeOp::Xor, 2)),
+                ComputeToken::Pipe => Some((ComputeOp::Or, 1)),
+                _ => None,
+            };
+
+            let Some((op, prec)) = op_token else { break };
+            if prec < min_prec {
+                break;
+            }
+
+            // consume operator
+            self.next();
+            let next_min_prec = prec + 1;
+            let right = self.parse_expression(next_min_prec)?;
+            left = ComputeNode::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_prefix(&mut self) -> Result<ComputeNode, String> {
+        match self.next() {
+            ComputeToken::Number(value) => Ok(ComputeNode::Constant(value)),
+            ComputeToken::Ident(name) => Ok(ComputeNode::Signal(name)),
+            ComputeToken::Minus => {
+                let node = self.parse_expression(6)?;
+                Ok(ComputeNode::UnaryNeg(Box::new(node)))
+            }
+            ComputeToken::Tilde => {
+                let node = self.parse_expression(6)?;
+                Ok(ComputeNode::UnaryNot(Box::new(node)))
+            }
+            ComputeToken::LParen => {
+                let node = self.parse_expression(0)?;
+                match self.next() {
+                    ComputeToken::RParen => Ok(node),
+                    other => Err(format!("expected ')', found {:?}", other)),
+                }
+            }
+            token => Err(format!("unexpected token {:?}", token)),
+        }
+    }
+
+    fn ensure_end(&mut self) -> Result<(), String> {
+        match self.next() {
+            ComputeToken::End => Ok(()),
+            other => Err(format!("unexpected token {:?} after expression", other)),
+        }
+    }
+
+    fn peek(&self) -> &ComputeToken {
+        self.tokens.get(self.pos).unwrap_or(&ComputeToken::End)
+    }
+
+    fn next(&mut self) -> ComputeToken {
+        if self.pos >= self.tokens.len() {
+            ComputeToken::End
+        } else {
+            let token = self.tokens[self.pos].clone();
+            self.pos += 1;
+            token
+        }
+    }
+}
+
+fn lex_compute_tokens(expr: &str) -> Result<Vec<ComputeToken>, String> {
+    let mut tokens = Vec::new();
+    let mut chars = expr.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+
+        if ch.is_ascii_digit() {
+            let mut literal = String::new();
+            if ch == '0' {
+                literal.push(chars.next().unwrap());
+                if let Some(&next) = chars.peek() {
+                    if next == 'x' || next == 'X' {
+                        literal.push(chars.next().unwrap());
+                        while let Some(&hex) = chars.peek() {
+                            if hex.is_ascii_hexdigit() {
+                                literal.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        let value = i64::from_str_radix(&literal[2..], 16)
+                            .map_err(|_| format!("invalid hex literal `{}`", literal))?;
+                        tokens.push(ComputeToken::Number(value));
+                        continue;
+                    }
+                }
+            }
+
+            while let Some(&digit) = chars.peek() {
+                if digit.is_ascii_digit() {
+                    literal.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if literal.is_empty() {
+                literal.push('0');
+            }
+            let value = literal
+                .parse::<i64>()
+                .map_err(|_| format!("invalid number literal `{}`", literal))?;
+            tokens.push(ComputeToken::Number(value));
+            continue;
+        }
+
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let mut ident = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                    ident.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            tokens.push(ComputeToken::Ident(ident));
+            continue;
+        }
+
+        match ch {
+            '+' => {
+                chars.next();
+                tokens.push(ComputeToken::Plus);
+            }
+            '-' => {
+                chars.next();
+                tokens.push(ComputeToken::Minus);
+            }
+            '&' => {
+                chars.next();
+                tokens.push(ComputeToken::Amp);
+            }
+            '|' => {
+                chars.next();
+                tokens.push(ComputeToken::Pipe);
+            }
+            '^' => {
+                chars.next();
+                tokens.push(ComputeToken::Caret);
+            }
+            '~' => {
+                chars.next();
+                tokens.push(ComputeToken::Tilde);
+            }
+            '<' => {
+                chars.next();
+                if matches!(chars.peek(), Some('<')) {
+                    chars.next();
+                    tokens.push(ComputeToken::ShiftLeft);
+                } else {
+                    return Err("expected '<<'".to_string());
+                }
+            }
+            '>' => {
+                chars.next();
+                if matches!(chars.peek(), Some('>')) {
+                    chars.next();
+                    tokens.push(ComputeToken::ShiftRight);
+                } else {
+                    return Err("expected '>>'".to_string());
+                }
+            }
+            '(' => {
+                chars.next();
+                tokens.push(ComputeToken::LParen);
+            }
+            ')' => {
+                chars.next();
+                tokens.push(ComputeToken::RParen);
+            }
+            _ => {
+                return Err(format!("unexpected character '{}'", ch));
+            }
+        }
+    }
+
+    tokens.push(ComputeToken::End);
+    Ok(tokens)
+}
+
+impl ComputeExpr {
+    pub fn evaluate(&self, signals: &mut dyn InputSignals) -> u8 {
+        let value = self.ast.eval(signals);
+        (value & 0xFF) as u8
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+}
+
+impl ComputeNode {
+    fn eval(&self, signals: &mut dyn InputSignals) -> i64 {
+        match self {
+            ComputeNode::Constant(value) => *value,
+            ComputeNode::Signal(name) => signal_value(name, signals),
+            ComputeNode::UnaryNeg(node) => -node.eval(signals),
+            ComputeNode::UnaryNot(node) => !node.eval(signals),
+            ComputeNode::Binary { op, left, right } => {
+                let lhs = left.eval(signals);
+                let rhs = right.eval(signals);
+                match op {
+                    ComputeOp::Add => lhs.wrapping_add(rhs),
+                    ComputeOp::Sub => lhs.wrapping_sub(rhs),
+                    ComputeOp::And => lhs & rhs,
+                    ComputeOp::Or => lhs | rhs,
+                    ComputeOp::Xor => lhs ^ rhs,
+                    ComputeOp::Shl => {
+                        let shift = (rhs & 0x3F) as u32;
+                        lhs.wrapping_shl(shift)
+                    }
+                    ComputeOp::Shr => {
+                        let shift = (rhs & 0x3F) as u32;
+                        ((lhs as u64) >> shift) as i64
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn signal_value(name: &str, signals: &mut dyn InputSignals) -> i64 {
+    if let Some(value) = signals.get_int(name) {
+        return value as i64;
+    }
+    if let Some(flag) = signals.get_bool(name) {
+        return if flag { 1 } else { 0 };
+    }
+    if let Some(value) = signals.get_f32(name) {
+        return value as i64;
+    }
+    0
+}
+
 impl InstanceExpr {
     pub fn constant(value: u32) -> Self {
         Self {
@@ -1665,6 +2035,8 @@ struct RawSparseEntry {
     #[serde(default)]
     value_builder: Option<Value>,
     #[serde(default)]
+    compute: Option<String>,
+    #[serde(default)]
     field_policies: Vec<RawFieldPolicy>,
     #[serde(default)]
     write_fanout: Vec<RawWriteFanout>,
@@ -1703,6 +2075,8 @@ struct RawInstanceLayoutEntry {
     field_policies: Vec<RawFieldPolicy>,
     #[serde(default)]
     write_fanout: Vec<RawWriteFanout>,
+    #[serde(default)]
+    compute: Option<String>,
     #[serde(default)]
     suppress_write: Option<bool>,
 }

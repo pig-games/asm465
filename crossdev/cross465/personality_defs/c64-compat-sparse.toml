@@ -32,6 +32,12 @@ decode = { sparse = [
 
 [[map]]
 priority = 10
+decode = { sparse = [
+  { addr = "D012", kind = "system", id = "RasterLo", compute = "beam.y & 0xFF", suppress_write = true }
+] }
+
+[[map]]
+priority = 10
 decode = { instances = { kind = "sprite", selector = "Select", count = 8, index_var = "i", layout = [
   { addr = "D100 + (i*8)", id = "Number" },
   { addr = "D101 + (i*8)", id = "Anim" },
@@ -53,13 +59,18 @@ decode = { sparse = [
   { addr = "D01A", kind = "system", id = "IrqEnable" },
   { addr = "D01B", kind = "system", id = "IrqAck" },
   { addr = "D01C", kind = "system", id = "IrqSource" },
-  { addr = "D01D", kind = "system", id = "NmiPending" },
-  { addr = "D01E", kind = "system", id = "NmiAck" },
-  { addr = "D01F", kind = "system", id = "Status" }
+  { addr = "D01D", kind = "system", id = "NmiPending" }
 ] }
 
 [[map]]
 priority = 10
 decode = { sparse = [
   { addr = "DC00", kind = "system", id = "IrqPending", value_builder = { width = 1, const_set = "11111111", bits = [ { bit = 0, src = "p0.dpad_up", active_low = true }, { bit = 1, src = "p0.dpad_down", active_low = true }, { bit = 2, src = "p0.dpad_left", active_low = true }, { bit = 3, src = "p0.dpad_right", active_low = true }, { bit = 4, src = "p0.button_fire", active_low = true } ] } }
+] }
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D01E", kind = "system", id = "SpriteCollisions", compute = "coll.spr_spr & 0xFF", suppress_write = true },
+  { addr = "D01F", kind = "system", id = "BackgroundCollisions", compute = "coll.spr_bg & 0xFF", suppress_write = true }
 ] }

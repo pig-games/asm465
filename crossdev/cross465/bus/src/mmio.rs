@@ -129,6 +129,9 @@ pub enum SystemReg {
     NmiPending,
     NmiAck,
     Status,
+    RasterLo,
+    SpriteCollisions,
+    BackgroundCollisions,
 }
 
 /// Metadata describing a register’s default value and access semantics.

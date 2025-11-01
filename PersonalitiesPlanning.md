@@ -37,7 +37,7 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Add bitfield-level policies and `on_read` hooks for VIC-II IRQ/collision registers.
 - [x] Support write fan-out for sprite enable and mask registers.
 - [x] Define mirrors and open-bus behaviour for unmapped C64 ranges.
-- [ ] Activate compute expressions for raster/collision status reads.
+- [x] Activate compute expressions for raster/collision status reads.
 - [ ] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
 - [ ] Ship `c64-compat-extended.toml` and an interactive demo proving behavioural parity.
 

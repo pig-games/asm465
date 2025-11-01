@@ -338,6 +338,9 @@ fn dump_personality_registers(name: &str) -> Result<(), String> {
         if mapping.value_builder {
             details.push("value_builder".to_string());
         }
+        if let Some(expr) = &mapping.compute {
+            details.push(format!("compute={}", expr));
+        }
         if mapping.transform.shift != 0 {
             details.push(format!("shift {}", mapping.transform.shift));
         }

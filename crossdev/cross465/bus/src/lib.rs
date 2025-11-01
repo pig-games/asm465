@@ -52,6 +52,7 @@ pub struct AddressMapping {
     pub register: RegId,
     pub register_name: &'static str,
     pub value_builder: bool,
+    pub compute: Option<String>,
     pub transform: TransformInfo,
     pub mapping: MappingDetail,
     pub field_hooks: Vec<FieldHookInfo>,
@@ -565,6 +566,37 @@ decode = { sparse = [
     }
 
     #[test]
+    fn compute_expression_reads_signals() {
+        let toml = r#"
+[personality]
+id = "compute-demo"
+title = "Compute Expression Demo"
+
+[modules.system]
+impl = "system.interrupts"
+
+[[map]]
+priority = 10
+decode = { sparse = [
+  { addr = "D012", kind = "system", id = "RasterLo", compute = "beam.y & 0xFF", suppress_write = true }
+] }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load compute personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        assert_eq!(bus.read(0xD012), 0x00);
+
+        bus.set_signal_int("beam.y", 0x123);
+        assert_eq!(bus.read(0xD012), 0x23);
+
+        bus.set_signal_int("beam.y", 0x00);
+        assert_eq!(bus.read(0xD012), 0x00);
+    }
+
+    #[test]
     fn field_policy_read_hook_clears_bits() {
         let toml = r#"
 [personality]
@@ -685,8 +717,8 @@ use display_mmio::DisplayMmio;
 use interrupts::InterruptController;
 use personality::{InterruptLine, Personality, PersonalityMmioKind};
 use personality_v2::{
-    CompileError as PersonalityCompileError, Condition, InputSignals, InterruptConfig, Map,
-    MapDecode, Mirror, OpenBusPolicy, OpenBusRegion, PersonalityDef, PersonalityMetadata,
+    CompileError as PersonalityCompileError, ComputeExpr, Condition, InputSignals, InterruptConfig,
+    Map, MapDecode, Mirror, OpenBusPolicy, OpenBusRegion, PersonalityDef, PersonalityMetadata,
     Transform, ValueBuilder,
 };
 use sprite_mmio::SpriteMmio;
@@ -838,6 +870,7 @@ struct DirectSlot {
     reg: RegId,
     transform: Transform,
     value_builder: Option<ValueBuilder>,
+    compute: Option<ComputeExpr>,
     pre_read_sets: Vec<AddressRegisterSet>,
     post_read_sets: Vec<AddressRegisterSet>,
     pre_write_sets: Vec<AddressRegisterSet>,
@@ -1049,6 +1082,7 @@ fn compile_range_map(
                 reg: register.id,
                 transform,
                 value_builder: None,
+                compute: None,
                 pre_read_sets,
                 post_read_sets,
                 pre_write_sets,
@@ -1100,6 +1134,7 @@ fn compile_sparse_map(
                 reg: entry.register.id,
                 transform,
                 value_builder: entry.value_builder.clone(),
+                compute: entry.compute.clone(),
                 pre_read_sets,
                 post_read_sets,
                 pre_write_sets,
@@ -1210,6 +1245,7 @@ fn compile_instance_map(
                         reg: entry.register.id,
                         transform,
                         value_builder: None,
+                        compute: entry.compute.clone(),
                         pre_read_sets,
                         post_read_sets,
                         pre_write_sets,
@@ -1529,7 +1565,9 @@ impl PersonalityRuntime {
             None
         };
 
-        let mut value = if let Some(agg) = aggregated {
+        let mut value = if let Some(expr) = slot.compute.as_ref() {
+            expr.evaluate(&mut self.signals)
+        } else if let Some(agg) = aggregated {
             agg
         } else if let Some(builder) = slot.value_builder.as_ref() {
             builder
@@ -1887,6 +1925,10 @@ impl PersonalityRuntime {
                         register: direct.reg,
                         register_name: register_name(module, direct.reg),
                         value_builder: direct.value_builder.is_some(),
+                        compute: direct
+                            .compute
+                            .as_ref()
+                            .map(|expr| expr.source().to_string()),
                         transform: TransformInfo::from(&direct.transform),
                         mapping: mapping_detail,
                         field_hooks: direct
@@ -1912,6 +1954,7 @@ impl PersonalityRuntime {
                             register: entry.reg,
                             register_name: register_name(module, entry.reg),
                             value_builder: false,
+                            compute: None,
                             transform: TransformInfo::from(&entry.transform),
                             mapping: MappingDetail::Scatter {
                                 target_bit: entry.target_bit,
