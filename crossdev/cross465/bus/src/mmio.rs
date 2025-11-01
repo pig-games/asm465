@@ -1,3 +1,5 @@
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::{interrupts::InterruptController, Memory, MmioDevice};
@@ -201,18 +203,84 @@ pub struct ModuleState {
     pub bytes: Vec<u8>,
 }
 
+/// Shared handles that allow modules and adapters to reach host backends.
+#[derive(Clone, Default)]
+pub struct BackendHandles {
+    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+}
+
+impl BackendHandles {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub fn insert<T>(&mut self, handle: Arc<T>)
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        let handle: Arc<dyn Any + Send + Sync> = handle;
+        self.map.insert(TypeId::of::<T>(), handle);
+    }
+
+    pub fn with_handle<T>(mut self, handle: Arc<T>) -> Self
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.insert(handle);
+        self
+    }
+
+    pub fn get<T>(&self) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.map
+            .get(&TypeId::of::<T>())
+            .and_then(|handle| handle.clone().downcast::<T>().ok())
+    }
+
+    pub fn contains<T>(&self) -> bool
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.map.contains_key(&TypeId::of::<T>())
+    }
+}
+
 /// Shared dependencies handed to module factories upon construction.
 #[derive(Clone)]
 pub struct ModuleDeps {
     pub ram: Arc<Mutex<Memory>>,
     pub controller: Arc<InterruptController>,
+    pub backends: BackendHandles,
 }
 
 pub type ModuleOptions = Table;
 
 impl ModuleDeps {
-    pub fn new(ram: Arc<Mutex<Memory>>, controller: Arc<InterruptController>) -> Self {
-        Self { ram, controller }
+    pub fn new(
+        ram: Arc<Mutex<Memory>>,
+        controller: Arc<InterruptController>,
+        backends: BackendHandles,
+    ) -> Self {
+        Self {
+            ram,
+            controller,
+            backends,
+        }
+    }
+
+    pub fn backend<T>(&self) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.backends.get::<T>()
     }
 }
 

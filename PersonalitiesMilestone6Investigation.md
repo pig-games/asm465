@@ -25,6 +25,21 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
 - Produce `c64-compat-extended.toml` covering VIC-II sprites, raster IRQ, CIA joystick/keyboard matrix (reuse existing builders), and open-bus policy.
 - Build a functional showcase (CLI or integration test) that exercises sprite movement, IRQ ACK, and collision reads using the modern backend.
 
+## Adapter Shim Plan — Progress Log
+- [x] Inventory rendering/backend sprite and video entry points so adapter hooks know which callback to trigger.
+  - Sprite flow: adapters ultimately need to drive `SpriteOutput::set_sprite` so `SpriteState` snapshots reach Bevy (`crossdev/cross465/bus/src/sprite_mmio.rs:68`) and remain compatible with the polling path in `EmulatorState::sprite_snapshot` and `ui_system` (`crossdev/asm465/src/lib.rs:1177`, `crossdev/asm465/src/lib.rs:1654`).
+  - Positioning & variant semantics: the viewer maps `SpriteState` into world transforms/texture slots via `sprite_world_transform` and the texture selection block inside `ui_system` (`crossdev/asm465/src/lib.rs:1788`, `crossdev/asm465/src/lib.rs:1966`), so adapters must populate `number`, `x/y`, and `scale_*` consistently with scatter/fanout rules.
+  - Video palette bridge: border/background colours propagate through `DisplayOutput::set_border_color` / `set_background_color` (`crossdev/cross465/bus/src/display_mmio.rs:47`, `crossdev/cross465/bus/src/display_mmio.rs:51`) into `DisplayPalette::apply_snapshot` inside the viewer (`crossdev/asm465/src/lib.rs:818`), defining the colour hooks for a future video adapter.
+  - Timing/IRQ signalling: modern frame/timer hooks surface through the shared `InterruptController` API (`crossdev/cross465/bus/src/interrupts.rs:38`) and are raised from the Bevy side via `InterruptBindings::raise_*` helpers (`crossdev/asm465/src/lib.rs:1322`), anchoring where video adapters should acknowledge raster-style events.
+- [x] Extend `ModuleDeps` (or companion builder) to carry backend handles down to module factories and adapters.
+  - Added a typed `BackendHandles` registry so factories/adapters can request pre-wired host objects (`crossdev/cross465/bus/src/mmio.rs:206`).
+  - Plumbed those handles through `ModuleDeps::new`/`ModuleDeps::backend` and into the personality runtime so every module instantiation receives the same host context (`crossdev/cross465/bus/src/mmio.rs:259`, `crossdev/cross465/bus/src/mmio.rs:267`).
+  - Exposed `Bus::from_personality_def_with_backends` so the viewer can supply concrete rendering/timing backends when building a v2 personality (`crossdev/cross465/bus/src/lib.rs:2037`).
+- [ ] Teach the bus runtime to register adapter callbacks alongside module instances, feeding scatter/fanout resolutions and hook names into the dispatcher.
+- [ ] Implement sprite adapter logic for instance arrays, `$D010` scatter bits, enable masks, scaling flags, and pointer decoder outputs.
+- [ ] Implement video adapter logic covering raster compare, IRQ status, collision latches, and read-to-clear semantics.
+- [ ] Update C64 personalities to bind the new adapters, then drive them through integration tests or demo harness runs to confirm behaviour.
+
 ## Deliverables
 - `crossdev/cross465/personality_defs/c64-compat-extended.toml`.
 - Adapter implementations bridging the new mapping features to the rendering/input subsystems.

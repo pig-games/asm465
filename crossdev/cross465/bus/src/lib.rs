@@ -42,6 +42,8 @@ pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
+use crate::mmio::BackendHandles;
+
 /// Resolved mapping entry produced by the personality compiler.
 #[derive(Clone, Debug)]
 pub struct AddressMapping {
@@ -839,6 +841,8 @@ struct PersonalityRuntime {
     signals: SignalStore,
     #[allow(dead_code)]
     interrupts: InterruptConfig,
+    #[allow(dead_code)]
+    backends: BackendHandles,
     last_read_value: u8,
 }
 
@@ -1459,6 +1463,7 @@ impl PersonalityRuntime {
         def: PersonalityDef,
         ram: Arc<Mutex<Memory>>,
         controller: Arc<InterruptController>,
+        backends: BackendHandles,
     ) -> Result<Self, PersonalityCompileError> {
         let PersonalityDef {
             metadata,
@@ -1474,7 +1479,7 @@ impl PersonalityRuntime {
         let mut lookup = BTreeMap::new();
 
         for (kind, config) in modules {
-            let deps = ModuleDeps::new(ram.clone(), controller.clone());
+            let deps = ModuleDeps::new(ram.clone(), controller.clone(), backends.clone());
             let module = config.factory.create(&deps, &config.options);
             let index = instances.len();
             lookup.insert(kind, index);
@@ -1498,6 +1503,7 @@ impl PersonalityRuntime {
             condition_states: BTreeMap::new(),
             signals: SignalStore::default(),
             interrupts,
+            backends,
             last_read_value: 0,
         };
 
@@ -2030,9 +2036,18 @@ impl Bus {
 
     /// Construct the bus from a data-driven [`PersonalityDef`].
     pub fn from_personality_def(def: PersonalityDef) -> Result<Self, PersonalityCompileError> {
+        Self::from_personality_def_with_backends(def, BackendHandles::default())
+    }
+
+    /// Construct the bus from a [`PersonalityDef`] and supply backend handles for adapters.
+    pub fn from_personality_def_with_backends(
+        def: PersonalityDef,
+        backends: BackendHandles,
+    ) -> Result<Self, PersonalityCompileError> {
         let ram = Arc::new(Mutex::new(Memory::new()));
         let controller = Arc::new(InterruptController::new());
-        let runtime = PersonalityRuntime::from_def(def, ram.clone(), controller.clone())?;
+        let runtime =
+            PersonalityRuntime::from_def(def, ram.clone(), controller.clone(), backends)?;
         Ok(Self {
             ram,
             personality_legacy: None,
