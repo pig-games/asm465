@@ -19,8 +19,8 @@ use bus::personality::{self, Personality};
 use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
 use bus::{
-    AdapterError, Bus, SpriteAdapter, SpriteBackend, SpriteOutputBackend, VideoAdapter,
-    VideoBackend, VideoState,
+    AdapterError, Bus, DisplayAdapter, DisplayBackend, DisplayOutputBackend, SpriteAdapter,
+    SpriteBackend, SpriteOutputBackend, VideoAdapter, VideoBackend, VideoState,
 };
 use core6502::RunOutcome;
 use log::warn;
@@ -31,6 +31,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn attach_default_adapters(bus: &mut Bus) -> (Arc<Mutex<VideoState>>, Arc<VideoOverlaySignals>) {
+    if let Some(display_handle) = bus.display_output_handle() {
+        let backend: Arc<dyn DisplayBackend> =
+            Arc::new(DisplayOutputBackend::new(display_handle.clone()));
+        if let Err(err) =
+            bus.attach_adapter(ModuleKind::Display, Box::new(DisplayAdapter::new(backend)))
+        {
+            match err {
+                AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                _ => warn!("failed to attach display adapter: {err}"),
+            }
+        }
+    }
+
     if let Some(sprite_handle) = bus.sprite_output_handle() {
         let backend: Arc<dyn SpriteBackend> =
             Arc::new(SpriteOutputBackend::new(sprite_handle.clone()));
