@@ -315,7 +315,7 @@ pub struct ModuleRegistry {
     builders: Vec<&'static dyn ModuleFactory>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HookAction {
     Read { mask: u8, value: u8 },
     Write { mask: u8, value: u8 },

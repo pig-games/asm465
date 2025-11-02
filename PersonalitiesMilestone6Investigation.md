@@ -43,7 +43,10 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Created `SpriteAdapter` that tracks per-instance state, consuming primary/scatter/fanout events and forwarding consolidated updates to a pluggable backend (`crossdev/cross465/bus/src/adapters/sprite.rs:52`).
   - Provided `SpriteBackend` trait plus a `SpriteOutputBackend` helper that mirrors adapter updates into the existing `SpriteOutput` snapshots for viewer parity (`crossdev/cross465/bus/src/adapters/sprite.rs:21`).
   - Added regression tests covering direct coordinate writes, `$D010` scatter bits, and fanout enable updates to ensure backend notifications stay in sync (`crossdev/cross465/bus/src/adapters/sprite.rs:166`).
-- [ ] Implement video adapter logic covering raster compare, IRQ status, collision latches, and read-to-clear semantics.
+- [x] Implement video adapter logic covering raster compare, IRQ status, collision latches, and read-to-clear semantics.
+  - Added a generic `VideoAdapter` that forwards primary/scatter/fanout writes and hook notifications for system/video registers to pluggable backends (`crossdev/cross465/bus/src/adapters/video.rs:24`).
+  - Defined the `VideoBackend` contract plus a `VideoStateBackend` recorder so runtimes can observe IRQ masks, collision flags, and read-to-clear hooks (`crossdev/cross465/bus/src/adapters/video.rs:14`, `crossdev/cross465/bus/src/adapters/video.rs:76`).
+  - Backed the adapter with unit tests exercising direct writes, hook forwarding, and optional scatter/fanout callbacks to prove coverage of latch semantics (`crossdev/cross465/bus/src/adapters/video.rs:110`).
 - [ ] Update C64 personalities to bind the new adapters, then drive them through integration tests or demo harness runs to confirm behaviour.
 
 ## Deliverables

@@ -44,6 +44,7 @@ pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
 pub use adapters::sprite::{SpriteAdapter, SpriteBackend, SpriteOutputBackend, SpriteRenderState};
+pub use adapters::video::{VideoAdapter, VideoBackend, VideoState, VideoStateBackend};
 
 /// Resolved mapping entry produced by the personality compiler.
 #[derive(Clone, Debug)]
