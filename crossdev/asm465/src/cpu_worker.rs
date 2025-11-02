@@ -13,16 +13,51 @@ use crate::{
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
 use bus::interrupts::InterruptController;
+use bus::mmio::ModuleKind;
 use bus::personality::{self, Personality};
 use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
-use bus::Bus;
+use bus::{
+    AdapterError, Bus, SpriteAdapter, SpriteBackend, SpriteOutputBackend, VideoAdapter,
+    VideoBackend,
+};
 use core6502::RunOutcome;
+use log::warn;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+struct NoopVideoBackend;
+
+impl VideoBackend for NoopVideoBackend {}
+
+fn attach_default_adapters(bus: &mut Bus) {
+    if let Some(sprite_handle) = bus.sprite_output_handle() {
+        let backend: Arc<dyn SpriteBackend> =
+            Arc::new(SpriteOutputBackend::new(sprite_handle.clone()));
+        if let Err(err) =
+            bus.attach_adapter(ModuleKind::Sprite, Box::new(SpriteAdapter::new(backend)))
+        {
+            match err {
+                AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                _ => warn!("failed to attach sprite adapter: {err}"),
+            }
+        }
+    }
+
+    let video_backend: Arc<dyn VideoBackend> = Arc::new(NoopVideoBackend);
+    if let Err(err) = bus.attach_adapter(
+        ModuleKind::System,
+        Box::new(VideoAdapter::new(video_backend)),
+    ) {
+        match err {
+            AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+            _ => warn!("failed to attach video adapter: {err}"),
+        }
+    }
+}
 
 /// Handles to the shared MMIO output buffers that the viewer reads from.
 #[derive(Clone)]
@@ -572,7 +607,9 @@ impl PersonalitySelection {
                     let registry = bus::builtin_module_registry();
                     let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
                         .map_err(|err| err.to_string())?;
-                    Bus::from_personality_def(def).map_err(|err| err.to_string())
+                    let mut bus = Bus::from_personality_def(def).map_err(|err| err.to_string())?;
+                    attach_default_adapters(&mut bus);
+                    Ok(bus)
                 }
             }
         }
