@@ -75,7 +75,7 @@ impl ModuleAdapter for DisplayAdapter {
 mod tests {
     use super::*;
     use crate::mmio::{ModuleAdapterEvent, PrimaryWriteEvent};
-
+    use crate::RegId;
     #[derive(Default)]
     struct RecordingBackend {
         border: Mutex<Vec<u8>>,
