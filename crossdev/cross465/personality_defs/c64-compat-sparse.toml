@@ -23,6 +23,9 @@ impl = "sprite.basic"
 [modules.system]
 impl = "system.interrupts"
 
+[modules.input]
+impl = "input.joystick"
+
 [[map]]
 priority = 10
 decode = { sparse = [
@@ -65,7 +68,10 @@ decode = { sparse = [
 [[map]]
 priority = 10
 decode = { sparse = [
-  { addr = "DC00", kind = "system", id = "IrqPending", value_builder = { width = 1, const_set = "11111111", bits = [ { bit = 0, src = "p0.dpad_up", active_low = true }, { bit = 1, src = "p0.dpad_down", active_low = true }, { bit = 2, src = "p0.dpad_left", active_low = true }, { bit = 3, src = "p0.dpad_right", active_low = true }, { bit = 4, src = "p0.button_fire", active_low = true } ] } }
+  { addr = "DC00", kind = "input", id = "PortA" },
+  { addr = "DC01", kind = "input", id = "PortB" },
+  { addr = "D419", kind = "input", id = "PotX" },
+  { addr = "D41A", kind = "input", id = "PotY" }
 ] }
 
 [[map]]

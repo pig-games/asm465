@@ -13,14 +13,16 @@ use crate::{
 };
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
+use bus::input_mmio::InputOutput;
 use bus::interrupts::InterruptController;
 use bus::mmio::ModuleKind;
 use bus::personality::{self, Personality};
 use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
 use bus::{
-    AdapterError, Bus, DisplayAdapter, DisplayBackend, DisplayOutputBackend, SpriteAdapter,
-    SpriteBackend, SpriteOutputBackend, VideoAdapter, VideoBackend, VideoState,
+    AdapterError, Bus, DisplayAdapter, DisplayBackend, DisplayOutputBackend, InputAdapter,
+    InputBackend, InputBackendHandle, SpriteAdapter, SpriteBackend, SpriteOutputBackend,
+    VideoAdapter, VideoBackend, VideoState,
 };
 use core6502::RunOutcome;
 use log::warn;
@@ -30,7 +32,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn attach_default_adapters(bus: &mut Bus) -> (Arc<Mutex<VideoState>>, Arc<VideoOverlaySignals>) {
+#[derive(Clone)]
+struct AdapterHandles {
+    video_state: Arc<Mutex<VideoState>>,
+    video_overlay: Arc<VideoOverlaySignals>,
+    input_backend: Option<Arc<dyn InputBackend>>,
+}
+
+fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
     if let Some(display_handle) = bus.display_output_handle() {
         let backend: Arc<dyn DisplayBackend> =
             Arc::new(DisplayOutputBackend::new(display_handle.clone()));
@@ -57,6 +66,23 @@ fn attach_default_adapters(bus: &mut Bus) -> (Arc<Mutex<VideoState>>, Arc<VideoO
         }
     }
 
+    let input_backend: Option<Arc<dyn InputBackend>> = match bus.input_output_handle() {
+        Some(handle) => {
+            let backend: Arc<dyn InputBackend> = Arc::new(InputBackendHandle::new(handle.clone()));
+            if let Err(err) = bus.attach_adapter(
+                ModuleKind::Input,
+                Box::new(InputAdapter::new(backend.clone())),
+            ) {
+                match err {
+                    AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                    _ => warn!("failed to attach input adapter: {err}"),
+                }
+            }
+            Some(backend)
+        }
+        None => None,
+    };
+
     let video_state = Arc::new(Mutex::new(VideoState::default()));
     let video_overlay = Arc::new(VideoOverlaySignals::new());
     let video_backend: Arc<dyn VideoBackend> = Arc::new(ModernVideoBackend::new(
@@ -73,7 +99,11 @@ fn attach_default_adapters(bus: &mut Bus) -> (Arc<Mutex<VideoState>>, Arc<VideoO
         }
     }
 
-    (video_state, video_overlay)
+    AdapterHandles {
+        video_state,
+        video_overlay,
+        input_backend,
+    }
 }
 
 /// Handles to the shared MMIO output buffers that the viewer reads from.
@@ -82,6 +112,8 @@ pub struct CpuWorkerOutputs {
     pub console: Arc<Mutex<ConsoleOutput>>,
     pub display: Arc<Mutex<DisplayOutput>>,
     pub sprite: Arc<Mutex<SpriteOutput>>,
+    pub input: Option<Arc<Mutex<InputOutput>>>,
+    pub input_backend: Option<Arc<dyn InputBackend>>,
     pub interrupts: Arc<InterruptController>,
     pub video: Arc<Mutex<VideoState>>,
     pub video_overlay: Arc<VideoOverlaySignals>,
@@ -89,11 +121,7 @@ pub struct CpuWorkerOutputs {
 
 impl CpuWorkerOutputs {
     /// Snapshot the console/display/sprite handles from the supplied bus.
-    fn new(
-        bus: &Bus,
-        video: Arc<Mutex<VideoState>>,
-        video_overlay: Arc<VideoOverlaySignals>,
-    ) -> Self {
+    fn new(bus: &Bus, adapters: &AdapterHandles) -> Self {
         let console = bus
             .console_output_handle()
             .expect("console MMIO output handle");
@@ -103,14 +131,17 @@ impl CpuWorkerOutputs {
         let sprite = bus
             .sprite_output_handle()
             .expect("sprite MMIO output handle");
+        let input = bus.input_output_handle();
         let interrupts = bus.interrupt_controller();
         Self {
             console,
             display,
             sprite,
+            input,
+            input_backend: adapters.input_backend.clone(),
             interrupts,
-            video,
-            video_overlay,
+            video: adapters.video_state.clone(),
+            video_overlay: adapters.video_overlay.clone(),
         }
     }
 }
@@ -319,22 +350,14 @@ mod native {
 
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            let (bus, video_state, video_overlay) = self.personality.build_bus()?;
+            let (bus, adapters) = self.personality.build_bus()?;
             match run_program_with_config(bus, &config) {
-                Ok((bus, report)) => Ok(self.finish_program(
-                    bus,
-                    report,
-                    CpuRunStatus::Success,
-                    video_state,
-                    video_overlay,
-                )),
-                Err((bus, report)) => Ok(self.finish_program(
-                    bus,
-                    report,
-                    CpuRunStatus::Failure,
-                    video_state,
-                    video_overlay,
-                )),
+                Ok((bus, report)) => {
+                    Ok(self.finish_program(bus, report, CpuRunStatus::Success, adapters.clone()))
+                }
+                Err((bus, report)) => {
+                    Ok(self.finish_program(bus, report, CpuRunStatus::Failure, adapters))
+                }
             }
         }
 
@@ -344,19 +367,18 @@ mod native {
             bus: Bus,
             report: ProgramRunReport,
             status: CpuRunStatus,
-            video_state: Arc<Mutex<VideoState>>,
-            video_overlay: Arc<VideoOverlaySignals>,
+            adapters: AdapterHandles,
         ) -> CpuRunReply {
             let ProgramRunReport { outcome, message } = report;
             let mut bus = bus;
             if status == CpuRunStatus::Failure {
                 write_console_line(&mut bus, &message);
             }
-            let outputs = CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+            let outputs = CpuWorkerOutputs::new(&bus, &adapters);
             self.cpu = Cpu::new(bus);
             self.cpu.reset();
-            self.video_state = video_state;
-            self.video_overlay = video_overlay;
+            self.video_state = adapters.video_state.clone();
+            self.video_overlay = adapters.video_overlay.clone();
             CpuRunReply {
                 summary: message,
                 status,
@@ -373,12 +395,11 @@ mod native {
     ) -> Result<(Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                let (bus, video_state, video_overlay) = personality.build_bus()?;
+                let (bus, adapters) = personality.build_bus()?;
                 match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs =
-                            CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
                         Ok((cpu, outputs, Some(message), outcome))
@@ -386,8 +407,7 @@ mod native {
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs =
-                            CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
                         Ok((cpu, outputs, Some(message), outcome))
@@ -395,10 +415,9 @@ mod native {
                 }
             }
             None => {
-                let (mut bus, video_state, video_overlay) = personality.build_bus()?;
+                let (mut bus, adapters) = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs =
-                    CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                 let mut cpu = Cpu::new(bus);
                 cpu.reset();
                 Ok((cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None))
@@ -527,15 +546,14 @@ mod wasm {
 
         /// Run the supplied program immediately on the single-threaded executor.
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            let (bus, video_state, video_overlay) = self.personality.build_bus()?;
+            let (bus, adapters) = self.personality.build_bus()?;
             match run_program_with_config(bus, &config) {
                 Ok((bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
-                    let outputs =
-                        CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                     self.bus = bus;
-                    self.video_state = video_state;
-                    self.video_overlay = video_overlay;
+                    self.video_state = adapters.video_state.clone();
+                    self.video_overlay = adapters.video_overlay.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Success,
@@ -546,11 +564,10 @@ mod wasm {
                 Err((mut bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
                     write_console_line(&mut bus, &message);
-                    let outputs =
-                        CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                     self.bus = bus;
-                    self.video_state = video_state;
-                    self.video_overlay = video_overlay;
+                    self.video_state = adapters.video_state.clone();
+                    self.video_overlay = adapters.video_overlay.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Failure,
@@ -597,28 +614,25 @@ mod wasm {
     ) -> Result<(Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                let (bus, video_state, video_overlay) = personality.build_bus()?;
+                let (bus, adapters) = personality.build_bus()?;
                 match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs =
-                            CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         Ok((bus, outputs, Some(message), outcome))
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs =
-                            CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         Ok((bus, outputs, Some(message), outcome))
                     }
                 }
             }
             None => {
-                let (mut bus, video_state, video_overlay) = personality.build_bus()?;
+                let (mut bus, adapters) = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs =
-                    CpuWorkerOutputs::new(&bus, video_state.clone(), video_overlay.clone());
+                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                 Ok((bus, outputs, Some(WELCOME_MESSAGE.to_string()), None))
             }
         }
@@ -661,14 +675,12 @@ impl PersonalitySelection {
         }
     }
 
-    pub fn build_bus(
-        &self,
-    ) -> Result<(Bus, Arc<Mutex<VideoState>>, Arc<VideoOverlaySignals>), String> {
+    fn build_bus(&self) -> Result<(Bus, AdapterHandles), String> {
         match self {
             PersonalitySelection::Legacy(p) => {
                 let mut bus = Bus::with_personality(p);
-                let (state, overlay) = attach_default_adapters(&mut bus);
-                Ok((bus, state, overlay))
+                let adapters = attach_default_adapters(&mut bus);
+                Ok((bus, adapters))
             }
             PersonalitySelection::Toml { path, .. } => {
                 #[cfg(target_arch = "wasm32")]
@@ -683,8 +695,8 @@ impl PersonalitySelection {
                     let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
                         .map_err(|err| err.to_string())?;
                     let mut bus = Bus::from_personality_def(def).map_err(|err| err.to_string())?;
-                    let (state, overlay) = attach_default_adapters(&mut bus);
-                    Ok((bus, state, overlay))
+                    let adapters = attach_default_adapters(&mut bus);
+                    Ok((bus, adapters))
                 }
             }
         }

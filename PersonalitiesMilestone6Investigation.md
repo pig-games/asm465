@@ -55,8 +55,11 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Added a display adapter/back-end pairing so border/background colour writes flow through the shared adapter pipeline (`crossdev/cross465/bus/src/adapters/display.rs`, `crossdev/asm465/src/cpu_worker.rs:32`).
 - [ ] Extend the video adapter to trigger raster IRQs via the interrupt controller when VIC compare conditions are met.
 - [x] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
-- [ ] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
-  - [ ] Ensure the C64-compatible TOML personality maps CIA joystick/paddle registers through the new input adapter pipeline.
+- [x] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
+  - `CpuWorker` now auto-attaches the input adapter and exposes the backend handle so the Bevy UI can stream controller state (`crossdev/asm465/src/cpu_worker.rs:32`, `crossdev/asm465/src/cpu_worker.rs:66`).
+  - The viewer feeds Bevy gamepad events into the `InputBackend`, mirroring port/paddle values for both legacy and TOML personalities (`crossdev/asm465/src/lib.rs:155`, `crossdev/asm465/src/lib.rs:1991`).
+  - [x] Ensure the C64-compatible TOML personality maps CIA joystick/paddle registers through the new input adapter pipeline.
+    - `modern-retro-range.toml` and `c64-compat-sparse.toml` declare the `input.joystick` module and expose PortA/PortB/POT registers so guests observe adapter-backed state (`crossdev/cross465/personality_defs/modern-retro-range.toml:33`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:25`).
 - [x] Verify `modern-retro-range.toml` meets the latest v2 schema (instance arrays, fanout, transforms) and flows through the adapter-backed rendering path.
   - Extended the sprite/system ranges to expose `Enable`, `RasterLo`, and collision registers so adapter events propagate through the modern backend (`crossdev/cross465/personality_defs/modern-retro-range.toml:19`).
 

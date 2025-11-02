@@ -11,7 +11,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::input::gamepad::GamepadEvent;
+use bevy::ecs::system::NonSend;
+use bevy::input::gamepad::{
+    Gamepad, GamepadAxisChangedEvent, GamepadAxisType, GamepadButtonChangedEvent,
+    GamepadButtonType, GamepadConnection, GamepadConnectionEvent, GamepadEvent, Gamepads,
+};
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
@@ -26,12 +30,13 @@ use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
+use bus::input_mmio::InputSnapshot;
 use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::mmio::SystemReg;
 use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
 use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
-use bus::{unicode_to_screen, Bus, VideoState};
+use bus::{adapters::input::InputBackend, unicode_to_screen, Bus, VideoState};
 use core6502::{Cpu, RunLimit, RunOutcome};
 use video_backend::VideoOverlaySignals;
 
@@ -419,6 +424,7 @@ fn describe_mmio_kind(kind: PersonalityMmioKind) -> &'static str {
         PersonalityMmioKind::Display => "display",
         PersonalityMmioKind::Sprite => "sprite",
         PersonalityMmioKind::System => "system",
+        PersonalityMmioKind::Input => "input",
     }
 }
 
@@ -971,7 +977,11 @@ pub fn run_app(config: AppConfig) {
         }
     }
 
+    let controller_state =
+        ControllerState::new(emulator.input_backend(), emulator.input_snapshot());
+
     let mut app = App::new();
+    app.insert_resource(controller_state);
     app.insert_non_send_resource(emulator);
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
@@ -1052,6 +1062,8 @@ pub fn run_app(config: AppConfig) {
     .add_systems(
         Update,
         (
+            sync_controller_backend,
+            controller_input_system,
             emit_frame_start_interrupt,
             timer_interrupt_system,
             keyboard_interrupt_system,
@@ -1160,6 +1172,17 @@ impl EmulatorState {
                 Err(err)
             }
         }
+    }
+
+    fn input_backend(&self) -> Option<Arc<dyn InputBackend>> {
+        self.outputs.input_backend.clone()
+    }
+
+    fn input_snapshot(&self) -> Option<InputSnapshot> {
+        self.outputs
+            .input
+            .as_ref()
+            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
     }
 
     fn snapshot(&self) -> Option<ConsoleSnapshot> {
@@ -1318,6 +1341,211 @@ impl InterruptBindings {
     }
 }
 
+const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
+
+#[derive(Resource)]
+struct ControllerState {
+    backend: Option<Arc<dyn InputBackend>>,
+    port_a: u8,
+    port_b: u8,
+    pot_x: u8,
+    pot_y: u8,
+    active_gamepad: Option<Gamepad>,
+}
+
+impl ControllerState {
+    fn new(backend: Option<Arc<dyn InputBackend>>, snapshot: Option<InputSnapshot>) -> Self {
+        let mut state = Self {
+            backend: None,
+            port_a: 0xFF,
+            port_b: 0xFF,
+            pot_x: 0x00,
+            pot_y: 0x00,
+            active_gamepad: None,
+        };
+        state.sync_backend(backend, snapshot);
+        state
+    }
+
+    fn has_backend(&self) -> bool {
+        self.backend.is_some()
+    }
+
+    fn active_gamepad(&self) -> Option<Gamepad> {
+        self.active_gamepad
+    }
+
+    fn sync_backend(
+        &mut self,
+        backend: Option<Arc<dyn InputBackend>>,
+        snapshot: Option<InputSnapshot>,
+    ) {
+        let backend_changed = match (&self.backend, &backend) {
+            (Some(current), Some(next)) => !Arc::ptr_eq(current, next),
+            (None, None) => false,
+            _ => true,
+        };
+
+        if backend_changed {
+            self.backend = backend;
+            if let Some(snapshot) = snapshot {
+                self.port_a = snapshot.port_a;
+                self.port_b = snapshot.port_b;
+                self.pot_x = snapshot.pot_x;
+                self.pot_y = snapshot.pot_y;
+            } else {
+                self.reset_inputs_internal();
+            }
+
+            if self.backend.is_none() {
+                self.active_gamepad = None;
+            }
+
+            self.flush_all();
+        } else if let Some(snapshot) = snapshot {
+            self.port_a = snapshot.port_a;
+            self.port_b = snapshot.port_b;
+            self.pot_x = snapshot.pot_x;
+            self.pot_y = snapshot.pot_y;
+        }
+    }
+
+    fn ensure_active(&mut self, gamepad: Gamepad) -> bool {
+        if self.backend.is_none() {
+            return false;
+        }
+        match self.active_gamepad {
+            Some(active) if active == gamepad => true,
+            Some(_) => false,
+            None => {
+                self.active_gamepad = Some(gamepad);
+                self.reset_inputs();
+                true
+            }
+        }
+    }
+
+    fn set_active_gamepad(&mut self, gamepad: Option<Gamepad>) {
+        if self.active_gamepad == gamepad {
+            return;
+        }
+        self.active_gamepad = gamepad;
+        self.reset_inputs();
+    }
+
+    fn reset_inputs_internal(&mut self) {
+        self.port_a = 0xFF;
+        self.port_b = 0xFF;
+        self.pot_x = 0x00;
+        self.pot_y = 0x00;
+    }
+
+    fn reset_inputs(&mut self) {
+        self.reset_inputs_internal();
+        self.flush_all();
+    }
+
+    fn handle_button(&mut self, button: GamepadButtonType, value: f32) {
+        if self.backend.is_none() {
+            return;
+        }
+        let pressed = value > BUTTON_PRESS_THRESHOLD;
+        match button {
+            GamepadButtonType::DPadUp => self.update_port_a_bit(0, pressed),
+            GamepadButtonType::DPadDown => self.update_port_a_bit(1, pressed),
+            GamepadButtonType::DPadLeft => self.update_port_a_bit(2, pressed),
+            GamepadButtonType::DPadRight => self.update_port_a_bit(3, pressed),
+            GamepadButtonType::South => self.update_port_a_bit(4, pressed),
+            GamepadButtonType::East => self.update_port_b_bit(4, pressed),
+            GamepadButtonType::Start => self.update_port_b_bit(0, pressed),
+            GamepadButtonType::Select => self.update_port_b_bit(1, pressed),
+            GamepadButtonType::Mode => self.update_port_b_bit(2, pressed),
+            GamepadButtonType::LeftThumb => self.update_port_b_bit(3, pressed),
+            _ => {}
+        }
+    }
+
+    fn handle_axis(&mut self, axis: GamepadAxisType, value: f32) {
+        if self.backend.is_none() {
+            return;
+        }
+
+        let clamped = value.clamp(-1.0, 1.0);
+        let scaled = ((clamped + 1.0) * 0.5 * 255.0).round() as u8;
+
+        match axis {
+            GamepadAxisType::LeftStickX => self.update_pot_x(scaled),
+            GamepadAxisType::LeftStickY => self.update_pot_y(scaled),
+            _ => {}
+        }
+    }
+
+    fn update_port_a_bit(&mut self, bit: u8, pressed: bool) {
+        let mask = 1 << bit;
+        let new_value = if pressed {
+            self.port_a & !mask
+        } else {
+            self.port_a | mask
+        };
+        if new_value != self.port_a {
+            self.port_a = new_value;
+            self.flush_port_a();
+        }
+    }
+
+    fn update_port_b_bit(&mut self, bit: u8, pressed: bool) {
+        let mask = 1 << bit;
+        let new_value = if pressed {
+            self.port_b & !mask
+        } else {
+            self.port_b | mask
+        };
+        if new_value != self.port_b {
+            self.port_b = new_value;
+            self.flush_port_b();
+        }
+    }
+
+    fn update_pot_x(&mut self, value: u8) {
+        if self.pot_x != value {
+            self.pot_x = value;
+            if let Some(backend) = &self.backend {
+                backend.set_pot_x(value);
+            }
+        }
+    }
+
+    fn update_pot_y(&mut self, value: u8) {
+        if self.pot_y != value {
+            self.pot_y = value;
+            if let Some(backend) = &self.backend {
+                backend.set_pot_y(value);
+            }
+        }
+    }
+
+    fn flush_port_a(&self) {
+        if let Some(backend) = &self.backend {
+            backend.set_port_a(self.port_a);
+        }
+    }
+
+    fn flush_port_b(&self) {
+        if let Some(backend) = &self.backend {
+            backend.set_port_b(self.port_b);
+        }
+    }
+
+    fn flush_all(&self) {
+        if let Some(backend) = &self.backend {
+            backend.set_port_a(self.port_a);
+            backend.set_port_b(self.port_b);
+            backend.set_pot_x(self.pot_x);
+            backend.set_pot_y(self.pot_y);
+        }
+    }
+}
+
 #[derive(Resource)]
 struct TimerInterruptState {
     timer: Timer,
@@ -1355,6 +1583,56 @@ fn timer_interrupt_system(
     let Some(mut state) = state else { return };
     if state.timer.tick(time.delta()).just_finished() {
         bindings.raise_timer0();
+    }
+}
+
+fn sync_controller_backend(
+    emulator: Option<NonSend<EmulatorState>>,
+    mut controller: ResMut<ControllerState>,
+) {
+    let Some(emulator) = emulator else { return };
+    controller.sync_backend(emulator.input_backend(), emulator.input_snapshot());
+}
+
+fn controller_input_system(
+    mut controller: ResMut<ControllerState>,
+    gamepads: Res<Gamepads>,
+    mut connection_events: EventReader<GamepadConnectionEvent>,
+    mut button_events: EventReader<GamepadButtonChangedEvent>,
+    mut axis_events: EventReader<GamepadAxisChangedEvent>,
+) {
+    if !controller.has_backend() {
+        return;
+    }
+
+    for event in connection_events.iter() {
+        match &event.connection {
+            GamepadConnection::Connected(_) => {
+                if controller.active_gamepad().is_none() {
+                    controller.set_active_gamepad(Some(event.gamepad));
+                }
+            }
+            GamepadConnection::Disconnected => {
+                if controller.active_gamepad() == Some(event.gamepad) {
+                    let fallback = gamepads
+                        .iter()
+                        .find(|candidate| *candidate != event.gamepad);
+                    controller.set_active_gamepad(fallback);
+                }
+            }
+        }
+    }
+
+    for event in button_events.iter() {
+        if controller.ensure_active(event.gamepad) {
+            controller.handle_button(event.button_type, event.value);
+        }
+    }
+
+    for event in axis_events.iter() {
+        if controller.ensure_active(event.gamepad) {
+            controller.handle_axis(event.axis_type, event.value);
+        }
     }
 }
 
@@ -1682,6 +1960,7 @@ fn ui_system(
     mut contexts: EguiContexts,
     #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
     mut ui_state: ResMut<UiState>,
+    mut controller_state: ResMut<ControllerState>,
     sprite_catalog: Res<SpriteCatalog>,
     sprite_viewport: Res<SpriteViewport>,
     sprite_virtual: Res<SpriteVirtualResolution>,
@@ -1704,6 +1983,7 @@ fn ui_system(
             let response = emulator.handle_service_command(envelope.command);
             ui_state.status = Some(response.message.clone());
             let _ = envelope.respond_to.send(response);
+            controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
     }
 
@@ -1717,6 +1997,7 @@ fn ui_system(
             let response = emulator.handle_service_command(command);
             ui_state.status = Some(response.message.clone());
             service.send_response(response);
+            controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
     }
 
@@ -1728,6 +2009,7 @@ fn ui_system(
             Ok(msg) => msg,
             Err(err) => err,
         });
+        controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1766,6 +2048,8 @@ fn ui_system(
                                 Ok(msg) => msg,
                                 Err(err) => err,
                             });
+                            controller_state
+                                .sync_backend(emulator.input_backend(), emulator.input_snapshot());
                         }
                     }
                 }

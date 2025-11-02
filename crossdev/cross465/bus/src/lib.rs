@@ -35,6 +35,7 @@
 pub mod adapters; // higher-level adapters bridging modules to modern backends
 pub mod console_mmio; // expose console device as bus::console_mmio::*
 pub mod display_mmio; // expose display device as bus::display_mmio::*
+pub mod input_mmio; // expose input device as bus::input_mmio::*
 pub mod interrupts; // expose shared interrupt controller helpers
 pub mod mmio; // shared module trait/registry scaffold
 pub mod personality; // personas describing MMIO layouts
@@ -44,6 +45,7 @@ pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
 pub use adapters::display::{DisplayAdapter, DisplayBackend, DisplayOutputBackend};
+pub use adapters::input::{InputAdapter, InputBackend, InputBackendHandle};
 pub use adapters::sprite::{SpriteAdapter, SpriteBackend, SpriteOutputBackend, SpriteRenderState};
 pub use adapters::video::{VideoAdapter, VideoBackend, VideoState, VideoStateBackend};
 
@@ -136,6 +138,7 @@ pub fn builtin_module_registry() -> mmio::ModuleRegistry {
     let mut registry = mmio::ModuleRegistry::new();
     registry.register(&console_mmio::CONSOLE_FACTORY);
     registry.register(&display_mmio::DISPLAY_FACTORY);
+    registry.register(&input_mmio::INPUT_FACTORY);
     registry.register(&sprite_mmio::SPRITE_FACTORY);
     registry.register(&system_mmio::SYSTEM_FACTORY);
     registry
@@ -384,14 +387,28 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
         assert_eq!(bus.read(0xD100), 0x11);
         assert_eq!(bus.read(0xD102), 0x34);
 
-        // Active-low joystick inputs via value builder at $DC00.
+        // Input ports default to inactive (all 1s).
         assert_eq!(bus.read(0xDC00), 0xFF);
-        bus.set_signal_bool("p0.button_fire", true);
+        assert_eq!(bus.read(0xDC01), 0xFF);
+
+        let input_handle = bus
+            .input_output_handle()
+            .expect("input output handle available");
+        {
+            let mut input = input_handle.lock().unwrap();
+            input.set_port_a(0xEF);
+            input.set_port_b(0xF7);
+        }
         assert_eq!(bus.read(0xDC00), 0xEF);
-        bus.set_signal_bool("p0.dpad_left", true);
-        assert_eq!(bus.read(0xDC00), 0xEB);
-        bus.clear_signals();
-        assert_eq!(bus.read(0xDC00), 0xFF);
+        assert_eq!(bus.read(0xDC01), 0xF7);
+
+        {
+            let mut input = input_handle.lock().unwrap();
+            input.set_pot_x(0x7F);
+            input.set_pot_y(0x90);
+        }
+        assert_eq!(bus.read(0xD419), 0x7F);
+        assert_eq!(bus.read(0xD41A), 0x90);
     }
 
     #[test]
@@ -757,6 +774,7 @@ use crate::mmio::{
 };
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
+use input_mmio::InputMmio;
 use interrupts::InterruptController;
 use personality::{InterruptLine, Personality, PersonalityMmioKind};
 use personality_v2::{
@@ -2016,6 +2034,11 @@ impl PersonalityRuntime {
             .map(|display| display.output())
     }
 
+    fn input_output_handle(&self) -> Option<Arc<Mutex<input_mmio::InputOutput>>> {
+        self.module_downcast::<InputMmio>(ModuleKind::Input)
+            .map(|input| input.output())
+    }
+
     fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
         self.module_downcast::<SpriteMmio>(ModuleKind::Sprite)
             .map(|sprite| sprite.output())
@@ -2337,6 +2360,23 @@ impl Bus {
             if mapped.kind == Some(PersonalityMmioKind::Display) {
                 if let Some(d) = mapped.device.as_any().downcast_ref::<DisplayMmio>() {
                     return Some(d.output());
+                }
+            }
+        }
+        None
+    }
+
+    /// Expose the input device's shared snapshot buffer.
+    pub fn input_output_handle(&self) -> Option<Arc<Mutex<input_mmio::InputOutput>>> {
+        if let Some(runtime) = &self.runtime_v2 {
+            if let Some(handle) = runtime.input_output_handle() {
+                return Some(handle);
+            }
+        }
+        for mapped in self.mmio.iter() {
+            if mapped.kind == Some(PersonalityMmioKind::Input) {
+                if let Some(i) = mapped.device.as_any().downcast_ref::<InputMmio>() {
+                    return Some(i.output());
                 }
             }
         }

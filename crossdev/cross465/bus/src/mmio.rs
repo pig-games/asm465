@@ -50,6 +50,7 @@ pub enum RegId {
     Console(ConsoleReg),
     Display(DisplayReg),
     Sprite(SpriteReg),
+    Input(InputReg),
     System(SystemReg),
 }
 
@@ -71,6 +72,13 @@ impl RegId {
     pub fn sprite(self) -> Option<SpriteReg> {
         match self {
             RegId::Sprite(reg) => Some(reg),
+            _ => None,
+        }
+    }
+
+    pub fn input(self) -> Option<InputReg> {
+        match self {
+            RegId::Input(reg) => Some(reg),
             _ => None,
         }
     }
@@ -105,6 +113,15 @@ pub enum ConsoleReg {
 pub enum DisplayReg {
     BorderColor,
     BackgroundColor,
+}
+
+/// Input register identifiers (e.g. joystick ports).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum InputReg {
+    PortA,
+    PortB,
+    PotX,
+    PotY,
 }
 
 /// Sprite register identifiers (selected sprite slot context).

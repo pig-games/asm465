@@ -5,8 +5,8 @@
 
 use crate::interrupts::InterruptController;
 use crate::{
-    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, sprite_mmio::SpriteMmio,
-    system_mmio::SystemMmio, Memory, MmioDevice,
+    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, input_mmio::InputMmio,
+    sprite_mmio::SpriteMmio, system_mmio::SystemMmio, Memory, MmioDevice,
 };
 use core::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,7 @@ pub enum PersonalityMmioKind {
     Display,
     Sprite,
     System,
+    Input,
 }
 
 /// Built-in personality mirroring the current “modern retro 2D” setup.
@@ -101,6 +102,11 @@ pub static MODERN_RETRO: Personality = Personality {
             range: RangeInclusive::new(0xDF40, 0xDF46),
             create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
             kind: PersonalityMmioKind::System,
+        },
+        PersonalityMmio {
+            range: RangeInclusive::new(0xDF50, 0xDF53),
+            create: |_, _| Box::new(InputMmio::new()),
+            kind: PersonalityMmioKind::Input,
         },
     ],
     display: DisplayDefaults {
@@ -138,6 +144,11 @@ pub static C64_COMPAT: Personality = Personality {
             range: RangeInclusive::new(0xD048, 0xD04E),
             create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
             kind: PersonalityMmioKind::System,
+        },
+        PersonalityMmio {
+            range: RangeInclusive::new(0xDC00, 0xDC03),
+            create: |_, _| Box::new(InputMmio::new()),
+            kind: PersonalityMmioKind::Input,
         },
     ],
     display: DisplayDefaults {
