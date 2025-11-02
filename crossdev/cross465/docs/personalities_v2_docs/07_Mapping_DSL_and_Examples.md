@@ -175,7 +175,7 @@ Associate a register write or read with a scheduled event — frame or raster le
 
 ### Example
 ```toml
-{ addr="D012", kind="video", id="RasterCompare",
+{ addr="D012", kind="video", id="RasterCompareLo",
   transform = { on_write="vic_set_raster_cmp" },
   timing = { align="raster_start" }
 }

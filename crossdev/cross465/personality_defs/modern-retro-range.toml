@@ -42,7 +42,7 @@ decode = { range = { addr = "DF30..=DF38", kind = "sprite", order = [
 priority = 10
 decode = { range = { addr = "DF40..=DF4B", kind = "system", order = [
   "IrqPending","IrqEnable","IrqAck","IrqSource",
-  "NmiPending","NmiAck","Status","RasterLo","RasterCompare",
+  "NmiPending","NmiAck","Status","RasterLo","RasterCompareLo",
   "RasterCompareHi","SpriteCollisions","BackgroundCollisions"
 ] } }
 

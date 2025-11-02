@@ -132,7 +132,7 @@ impl ModuleAdapter for VideoAdapter {
                                 self.evaluate_raster_irq();
                             }
                         }
-                        SystemReg::RasterCompare => {
+                        SystemReg::RasterCompareLo => {
                             if let Some(state) = &self.raster_irq {
                                 state.set_compare_low(write.module_value);
                                 self.evaluate_raster_irq();
@@ -161,7 +161,7 @@ impl ModuleAdapter for VideoAdapter {
                         write.target_bit,
                     );
                     match reg {
-                        SystemReg::RasterCompare => {
+                        SystemReg::RasterCompareLo => {
                             if let Some(state) = &self.raster_irq {
                                 state.set_compare_low(write.module_value);
                                 self.evaluate_raster_irq();
@@ -444,7 +444,7 @@ mod tests {
 
         // Configure compare line and confirm no pending IRQ without a match.
         adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
-            reg: RegId::System(SystemReg::RasterCompare),
+            reg: RegId::System(SystemReg::RasterCompareLo),
             cpu_value: 0x50,
             module_value: 0x50,
             instance: None,

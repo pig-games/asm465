@@ -88,8 +88,8 @@ const SYSTEM_REGS: &[RegisterDesc] = &[
         &[],
     ),
     RegisterDesc::new(
-        RegId::System(SystemReg::RasterCompare),
-        "RasterCompare",
+        RegId::System(SystemReg::RasterCompareLo),
+        "RasterCompareLo",
         1,
         0,
         true,
@@ -271,7 +271,7 @@ impl Module for SystemMmio {
                 status
             }
             RegId::System(SystemReg::RasterLo) => (self.raster_current & 0x00FF) as u8,
-            RegId::System(SystemReg::RasterCompare) => (self.raster_compare & 0x00FF) as u8,
+            RegId::System(SystemReg::RasterCompareLo) => (self.raster_compare & 0x00FF) as u8,
             RegId::System(SystemReg::RasterCompareHi) => (self.raster_compare >> 8) as u8,
             RegId::System(SystemReg::SpriteCollisions)
             | RegId::System(SystemReg::BackgroundCollisions) => 0,
@@ -301,7 +301,7 @@ impl Module for SystemMmio {
                     state.set_current_low(value);
                 }
             }
-            RegId::System(SystemReg::RasterCompare) => {
+            RegId::System(SystemReg::RasterCompareLo) => {
                 self.raster_compare = (self.raster_compare & 0xFF00) | value as u16;
                 if let Some(state) = &self.raster_irq {
                     state.set_compare_low(value);

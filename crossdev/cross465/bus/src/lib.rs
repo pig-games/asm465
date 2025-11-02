@@ -670,7 +670,7 @@ impl = "system.interrupts"
 priority = 10
 decode = { range = { addr = "DF40..=DF4B", kind = "system", order = [
   "IrqPending","IrqEnable","IrqAck","IrqSource",
-  "NmiPending","NmiAck","Status","RasterLo","RasterCompare",
+  "NmiPending","NmiAck","Status","RasterLo","RasterCompareLo",
   "RasterCompareHi","SpriteCollisions","BackgroundCollisions"
 ] } }
 "#;
