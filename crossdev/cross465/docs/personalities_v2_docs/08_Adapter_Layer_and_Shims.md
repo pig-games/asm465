@@ -90,3 +90,7 @@ fn set_sprite_variant(idx: u8, subindex: u8) {
 
 Adapters give *asm465* personalities real behaviour.  
 They unify legacy register logic with modern rendering, ensuring that **scatter**, **fanout**, and **scaling‑aware pointer decoders** all function consistently across C64, MEGA65, and modern backends.
+
+### Adapter State vs Direct Dispatch
+
+Some adapters (notably `SpriteAdapter`) maintain internal state before calling their backend because they must combine multiple MMIO writes (e.g., hi/lo coordinate bytes, scatter bits, instance selectors) into a coherent logical update. Other adapters such as `DisplayAdapter` and `VideoAdapter` forward values directly whenever the register already carries the final backend payload (a colour byte, raster latch, IRQ mask, etc.). When designing new adapters, only introduce local state if aggregation or transformation is required; otherwise prefer direct dispatch to keep the pipeline simple.
