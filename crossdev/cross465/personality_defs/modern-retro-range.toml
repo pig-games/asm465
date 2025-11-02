@@ -31,15 +31,16 @@ decode = { range = { addr = "DF20..=DF21", kind = "display", order = [
 
 [[map]]
 priority = 10
-decode = { range = { addr = "DF30..=DF37", kind = "sprite", order = [
-  "Select","Number","Anim","XHi","XLo","YHi","YLo","Scale"
+decode = { range = { addr = "DF30..=DF38", kind = "sprite", order = [
+  "Select","Number","Anim","XHi","XLo","YHi","YLo","Scale","Enable"
 ] } }
 
 [[map]]
 priority = 10
-decode = { range = { addr = "DF40..=DF46", kind = "system", order = [
+decode = { range = { addr = "DF40..=DF49", kind = "system", order = [
   "IrqPending","IrqEnable","IrqAck","IrqSource",
-  "NmiPending","NmiAck","Status"
+  "NmiPending","NmiAck","Status","RasterLo",
+  "SpriteCollisions","BackgroundCollisions"
 ] } }
 
 [interrupts]

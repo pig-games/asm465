@@ -8,7 +8,7 @@
 
 use std::cmp::Ordering;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::input::gamepad::GamepadEvent;
@@ -27,10 +27,11 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::interrupts::{InterruptController, InterruptSnapshot};
+use bus::mmio::SystemReg;
 use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
 use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
-use bus::{unicode_to_screen, Bus};
+use bus::{unicode_to_screen, Bus, VideoState};
 use core6502::{Cpu, RunLimit, RunOutcome};
 
 mod cpu_worker;
@@ -1182,6 +1183,10 @@ impl EmulatorState {
             .ok()
     }
 
+    fn video_state(&self) -> Arc<Mutex<VideoState>> {
+        self.outputs.video.clone()
+    }
+
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
         match command {
             ServiceCommand::RunProgram {
@@ -1874,6 +1879,23 @@ fn ui_system(
                         interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
                         interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
                         interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
+                        if let Some(video_state) = emulator
+                            .video_state()
+                            .lock()
+                            .ok()
+                            .map(|guard| guard.clone())
+                        {
+                            if let Some(raster) = video_state.register_value(SystemReg::RasterLo) {
+                                ui.label(format!("Raster (lo): 0x{raster:02X}"));
+                            }
+                            if let Some(pending) = video_state.register_value(SystemReg::IrqPending)
+                            {
+                                ui.label(format!("IRQ Pending (VIC): 0x{pending:02X}"));
+                            }
+                            if let Some(enable) = video_state.register_value(SystemReg::IrqEnable) {
+                                ui.label(format!("IRQ Enable (VIC): 0x{enable:02X}"));
+                            }
+                        }
                     } else {
                         ui.label("Interrupt bindings unavailable.");
                     }
