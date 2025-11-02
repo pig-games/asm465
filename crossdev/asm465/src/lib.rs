@@ -14,9 +14,9 @@ use std::time::Duration;
 use bevy::ecs::system::NonSend;
 use bevy::input::gamepad::{
     Gamepad, GamepadAxisChangedEvent, GamepadAxisType, GamepadButtonChangedEvent,
-    GamepadButtonType, GamepadConnection, GamepadConnectionEvent, GamepadEvent, Gamepads,
+    GamepadButtonType, GamepadConnection, GamepadConnectionEvent, GamepadEvent,
 };
-use bevy::input::keyboard::KeyboardInput;
+use bevy::input::keyboard::{KeyCode, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
@@ -30,7 +30,10 @@ use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
-use bus::input_mmio::InputSnapshot;
+use bus::input_mmio::{
+    AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
+    ModernControllerPadSnapshot,
+};
 use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::mmio::SystemReg;
 use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
@@ -987,10 +990,12 @@ pub fn run_app(config: AppConfig) {
         emulator.video_overlay(),
         emulator.interrupts(),
     );
+    let keyboard_tracker = KeyboardTracker::default();
 
     let mut app = App::new();
     app.insert_resource(controller_state);
     app.insert_resource(raster_driver);
+    app.insert_resource(keyboard_tracker);
     app.insert_non_send_resource(emulator);
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
@@ -1071,6 +1076,7 @@ pub fn run_app(config: AppConfig) {
     .add_systems(
         Update,
         (
+            update_keyboard_tracker,
             sync_controller_backend,
             controller_input_system,
             emit_frame_start_interrupt,
@@ -1359,27 +1365,26 @@ impl InterruptBindings {
     }
 }
 
-const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
+const CONTROLLER_PADS: usize = 2;
+
+#[derive(Clone, Copy, Default)]
+struct PadAssignment {
+    gamepad: Option<Gamepad>,
+}
 
 #[derive(Resource)]
 struct ControllerState {
     backend: Option<Arc<dyn InputBackend>>,
-    port_a: u8,
-    port_b: u8,
-    pot_x: u8,
-    pot_y: u8,
-    active_gamepad: Option<Gamepad>,
+    pads: [PadAssignment; CONTROLLER_PADS],
+    previous_snapshot: Option<InputSnapshot>,
 }
 
 impl ControllerState {
     fn new(backend: Option<Arc<dyn InputBackend>>, snapshot: Option<InputSnapshot>) -> Self {
         let mut state = Self {
             backend: None,
-            port_a: 0xFF,
-            port_b: 0xFF,
-            pot_x: 0x00,
-            pot_y: 0x00,
-            active_gamepad: None,
+            pads: [PadAssignment::default(); CONTROLLER_PADS],
+            previous_snapshot: snapshot.clone(),
         };
         state.sync_backend(backend, snapshot);
         state
@@ -1389,178 +1394,126 @@ impl ControllerState {
         self.backend.is_some()
     }
 
-    fn active_gamepad(&self) -> Option<Gamepad> {
-        self.active_gamepad
-    }
-
     fn sync_backend(
         &mut self,
         backend: Option<Arc<dyn InputBackend>>,
         snapshot: Option<InputSnapshot>,
     ) {
-        let backend_changed = match (&self.backend, &backend) {
+        let changed = match (&self.backend, &backend) {
             (Some(current), Some(next)) => !Arc::ptr_eq(current, next),
             (None, None) => false,
             _ => true,
         };
 
-        if backend_changed {
+        if changed {
+            if let Some(new_backend) = backend.as_ref() {
+                for (index, pad) in self.pads.iter().enumerate() {
+                    let id = pad.gamepad.map(|gamepad| gamepad.id as u32);
+                    new_backend.update_gamepad(index, id);
+                }
+            }
             self.backend = backend;
-            if let Some(snapshot) = snapshot {
-                self.port_a = snapshot.port_a;
-                self.port_b = snapshot.port_b;
-                self.pot_x = snapshot.pot_x;
-                self.pot_y = snapshot.pot_y;
-            } else {
-                self.reset_inputs_internal();
-            }
+        }
 
-            if self.backend.is_none() {
-                self.active_gamepad = None;
-            }
-
-            self.flush_all();
-        } else if let Some(snapshot) = snapshot {
-            self.port_a = snapshot.port_a;
-            self.port_b = snapshot.port_b;
-            self.pot_x = snapshot.pot_x;
-            self.pot_y = snapshot.pot_y;
+        if let Some(snapshot) = snapshot {
+            self.previous_snapshot = Some(snapshot);
+        } else if self.backend.is_none() {
+            self.previous_snapshot = None;
         }
     }
 
-    fn ensure_active(&mut self, gamepad: Gamepad) -> bool {
-        if self.backend.is_none() {
-            return false;
-        }
-        match self.active_gamepad {
-            Some(active) if active == gamepad => true,
-            Some(_) => false,
-            None => {
-                self.active_gamepad = Some(gamepad);
-                self.reset_inputs();
-                true
-            }
-        }
+    fn handle_connect(&mut self, gamepad: Gamepad) {
+        let _ = self.ensure_pad(gamepad);
     }
 
-    fn set_active_gamepad(&mut self, gamepad: Option<Gamepad>) {
-        if self.active_gamepad == gamepad {
-            return;
-        }
-        self.active_gamepad = gamepad;
-        self.reset_inputs();
-    }
-
-    fn reset_inputs_internal(&mut self) {
-        self.port_a = 0xFF;
-        self.port_b = 0xFF;
-        self.pot_x = 0x00;
-        self.pot_y = 0x00;
-    }
-
-    fn reset_inputs(&mut self) {
-        self.reset_inputs_internal();
-        self.flush_all();
-    }
-
-    fn handle_button(&mut self, button: GamepadButtonType, value: f32) {
-        if self.backend.is_none() {
-            return;
-        }
-        let pressed = value > BUTTON_PRESS_THRESHOLD;
-        match button {
-            GamepadButtonType::DPadUp => self.update_port_a_bit(0, pressed),
-            GamepadButtonType::DPadDown => self.update_port_a_bit(1, pressed),
-            GamepadButtonType::DPadLeft => self.update_port_a_bit(2, pressed),
-            GamepadButtonType::DPadRight => self.update_port_a_bit(3, pressed),
-            GamepadButtonType::South => self.update_port_a_bit(4, pressed),
-            GamepadButtonType::East => self.update_port_b_bit(4, pressed),
-            GamepadButtonType::Start => self.update_port_b_bit(0, pressed),
-            GamepadButtonType::Select => self.update_port_b_bit(1, pressed),
-            GamepadButtonType::Mode => self.update_port_b_bit(2, pressed),
-            GamepadButtonType::LeftThumb => self.update_port_b_bit(3, pressed),
-            _ => {}
-        }
-    }
-
-    fn handle_axis(&mut self, axis: GamepadAxisType, value: f32) {
-        if self.backend.is_none() {
-            return;
-        }
-
-        let clamped = value.clamp(-1.0, 1.0);
-        let scaled = ((clamped + 1.0) * 0.5 * 255.0).round() as u8;
-
-        match axis {
-            GamepadAxisType::LeftStickX => self.update_pot_x(scaled),
-            GamepadAxisType::LeftStickY => self.update_pot_y(scaled),
-            _ => {}
-        }
-    }
-
-    fn update_port_a_bit(&mut self, bit: u8, pressed: bool) {
-        let mask = 1 << bit;
-        let new_value = if pressed {
-            self.port_a & !mask
-        } else {
-            self.port_a | mask
-        };
-        if new_value != self.port_a {
-            self.port_a = new_value;
-            self.flush_port_a();
-        }
-    }
-
-    fn update_port_b_bit(&mut self, bit: u8, pressed: bool) {
-        let mask = 1 << bit;
-        let new_value = if pressed {
-            self.port_b & !mask
-        } else {
-            self.port_b | mask
-        };
-        if new_value != self.port_b {
-            self.port_b = new_value;
-            self.flush_port_b();
-        }
-    }
-
-    fn update_pot_x(&mut self, value: u8) {
-        if self.pot_x != value {
-            self.pot_x = value;
+    fn handle_disconnect(&mut self, gamepad: Gamepad) {
+        if let Some(index) = self.pad_index(gamepad) {
+            self.pads[index].gamepad = None;
             if let Some(backend) = &self.backend {
-                backend.set_pot_x(value);
+                backend.update_gamepad(index, None);
             }
         }
     }
 
-    fn update_pot_y(&mut self, value: u8) {
-        if self.pot_y != value {
-            self.pot_y = value;
-            if let Some(backend) = &self.backend {
-                backend.set_pot_y(value);
-            }
+    fn handle_button(&mut self, gamepad: Gamepad, button: GamepadButtonType, value: f32) {
+        let Some(mapped) = map_button(button) else {
+            return;
+        };
+        let Some(index) = self.ensure_pad(gamepad) else {
+            return;
+        };
+        if let Some(backend) = &self.backend {
+            backend.update_button(index, mapped, value);
         }
     }
 
-    fn flush_port_a(&self) {
+    fn handle_axis(&mut self, gamepad: Gamepad, axis: GamepadAxisType, value: f32) {
+        let Some(mapped) = map_axis(axis) else {
+            return;
+        };
+        let Some(index) = self.ensure_pad(gamepad) else {
+            return;
+        };
         if let Some(backend) = &self.backend {
-            backend.set_port_a(self.port_a);
+            backend.update_axis(index, mapped, value);
         }
     }
 
-    fn flush_port_b(&self) {
-        if let Some(backend) = &self.backend {
-            backend.set_port_b(self.port_b);
-        }
+    fn snapshot_pair(&mut self) -> Option<(InputSnapshot, Option<InputSnapshot>)> {
+        let backend = self.backend.clone()?;
+        let snapshot = backend.snapshot();
+        let previous = self.previous_snapshot.replace(snapshot.clone());
+        Some((snapshot, previous))
     }
 
-    fn flush_all(&self) {
-        if let Some(backend) = &self.backend {
-            backend.set_port_a(self.port_a);
-            backend.set_port_b(self.port_b);
-            backend.set_pot_x(self.pot_x);
-            backend.set_pot_y(self.pot_y);
+    fn pad_index(&self, gamepad: Gamepad) -> Option<usize> {
+        self.pads.iter().position(|pad| {
+            pad.gamepad
+                .map(|candidate| candidate == gamepad)
+                .unwrap_or(false)
+        })
+    }
+
+    fn first_free_pad(&self) -> Option<usize> {
+        self.pads.iter().position(|pad| pad.gamepad.is_none())
+    }
+
+    fn ensure_pad(&mut self, gamepad: Gamepad) -> Option<usize> {
+        if let Some(index) = self.pad_index(gamepad) {
+            return Some(index);
         }
+        let index = self.first_free_pad()?;
+        self.pads[index].gamepad = Some(gamepad);
+        if let Some(backend) = &self.backend {
+            backend.update_gamepad(index, Some(gamepad.id as u32));
+        }
+        Some(index)
+    }
+}
+
+fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
+    match button {
+        GamepadButtonType::DPadUp => Some(ControllerButton::DPadUp),
+        GamepadButtonType::DPadDown => Some(ControllerButton::DPadDown),
+        GamepadButtonType::DPadLeft => Some(ControllerButton::DPadLeft),
+        GamepadButtonType::DPadRight => Some(ControllerButton::DPadRight),
+        GamepadButtonType::South => Some(ControllerButton::South),
+        GamepadButtonType::East => Some(ControllerButton::East),
+        GamepadButtonType::West => Some(ControllerButton::West),
+        GamepadButtonType::North => Some(ControllerButton::North),
+        GamepadButtonType::Start => Some(ControllerButton::Start),
+        GamepadButtonType::Select => Some(ControllerButton::Select),
+        GamepadButtonType::Mode => Some(ControllerButton::Mode),
+        GamepadButtonType::LeftThumb => Some(ControllerButton::LeftThumb),
+        _ => None,
+    }
+}
+
+fn map_axis(axis: GamepadAxisType) -> Option<ControllerAxis> {
+    match axis {
+        GamepadAxisType::LeftStickX => Some(ControllerAxis::LeftStickX),
+        GamepadAxisType::LeftStickY => Some(ControllerAxis::LeftStickY),
+        _ => None,
     }
 }
 
@@ -1586,6 +1539,29 @@ fn emit_frame_start_interrupt(bindings: Option<Res<InterruptBindings>>) {
 fn emit_frame_end_interrupt(bindings: Option<Res<InterruptBindings>>) {
     if let Some(bindings) = bindings {
         bindings.raise_frame_end();
+    }
+}
+
+#[derive(Resource, Default)]
+struct KeyboardTracker {
+    current: Vec<String>,
+    previous: Vec<String>,
+}
+
+impl KeyboardTracker {
+    fn update_from_input(&mut self, input: &Input<KeyCode>) {
+        let mut pressed: Vec<String> = input.get_pressed().map(|key| format!("{key:?}")).collect();
+        pressed.sort();
+        self.previous = std::mem::take(&mut self.current);
+        self.current = pressed;
+    }
+
+    fn current(&self) -> &[String] {
+        &self.current
+    }
+
+    fn previous(&self) -> &[String] {
+        &self.previous
     }
 }
 
@@ -1650,6 +1626,10 @@ fn drive_raster_counter(
     driver.advance(time.delta_seconds(), lines);
 }
 
+fn update_keyboard_tracker(input: Res<Input<KeyCode>>, mut tracker: ResMut<KeyboardTracker>) {
+    tracker.update_from_input(&input);
+}
+
 fn sync_controller_backend(
     emulator: Option<NonSend<EmulatorState>>,
     mut controller: ResMut<ControllerState>,
@@ -1660,7 +1640,6 @@ fn sync_controller_backend(
 
 fn controller_input_system(
     mut controller: ResMut<ControllerState>,
-    gamepads: Res<Gamepads>,
     mut connection_events: EventReader<GamepadConnectionEvent>,
     mut button_events: EventReader<GamepadButtonChangedEvent>,
     mut axis_events: EventReader<GamepadAxisChangedEvent>,
@@ -1671,32 +1650,17 @@ fn controller_input_system(
 
     for event in connection_events.iter() {
         match &event.connection {
-            GamepadConnection::Connected(_) => {
-                if controller.active_gamepad().is_none() {
-                    controller.set_active_gamepad(Some(event.gamepad));
-                }
-            }
-            GamepadConnection::Disconnected => {
-                if controller.active_gamepad() == Some(event.gamepad) {
-                    let fallback = gamepads
-                        .iter()
-                        .find(|candidate| *candidate != event.gamepad);
-                    controller.set_active_gamepad(fallback);
-                }
-            }
+            GamepadConnection::Connected(_) => controller.handle_connect(event.gamepad),
+            GamepadConnection::Disconnected => controller.handle_disconnect(event.gamepad),
         }
     }
 
     for event in button_events.iter() {
-        if controller.ensure_active(event.gamepad) {
-            controller.handle_button(event.button_type, event.value);
-        }
+        controller.handle_button(event.gamepad, event.button_type, event.value);
     }
 
     for event in axis_events.iter() {
-        if controller.ensure_active(event.gamepad) {
-            controller.handle_axis(event.axis_type, event.value);
-        }
+        controller.handle_axis(event.gamepad, event.axis_type, event.value);
     }
 }
 
@@ -1729,6 +1693,134 @@ fn gamepad_interrupt_system(
     if events.iter().next().is_some() {
         bindings.raise_gamepad();
     }
+}
+
+fn render_controller_pad(ui: &mut egui::Ui, index: usize, pad: &ModernControllerPadSnapshot) {
+    ui.heading(format!("Controller {index}"));
+    let gamepad_label = pad
+        .gamepad_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "None".to_string());
+    ui.label(format!("Gamepad ID: {gamepad_label}"));
+    ui.add_space(4.0);
+
+    ui.label("Buttons");
+    egui::Grid::new(format!("controller_{index}_buttons"))
+        .striped(true)
+        .show(ui, |grid| {
+            grid.label("Button");
+            grid.label("Current");
+            grid.label("Last");
+            grid.end_row();
+            for (button, sample) in &pad.buttons {
+                grid.label(controller_button_label(*button));
+                grid.label(button_current_text(sample));
+                grid.label(button_last_text(sample));
+                grid.end_row();
+            }
+        });
+
+    ui.add_space(6.0);
+    ui.label("Axes");
+    egui::Grid::new(format!("controller_{index}_axes"))
+        .striped(true)
+        .show(ui, |grid| {
+            grid.label("Axis");
+            grid.label("Current");
+            grid.label("Last");
+            grid.end_row();
+            for (axis, sample) in &pad.axes {
+                grid.label(controller_axis_label(*axis));
+                grid.label(axis_current_text(sample));
+                grid.label(axis_last_text(sample));
+                grid.end_row();
+            }
+        });
+
+    ui.add_space(6.0);
+    ui.label(format!("Pot X: 0x{:02X}", pad.pot_x));
+    ui.label(format!("Pot Y: 0x{:02X}", pad.pot_y));
+}
+
+fn controller_button_label(button: ControllerButton) -> &'static str {
+    match button {
+        ControllerButton::DPadUp => "D-Pad Up",
+        ControllerButton::DPadDown => "D-Pad Down",
+        ControllerButton::DPadLeft => "D-Pad Left",
+        ControllerButton::DPadRight => "D-Pad Right",
+        ControllerButton::South => "South",
+        ControllerButton::East => "East",
+        ControllerButton::West => "West",
+        ControllerButton::North => "North",
+        ControllerButton::Start => "Start",
+        ControllerButton::Select => "Select",
+        ControllerButton::Mode => "Mode",
+        ControllerButton::LeftThumb => "Left Thumb",
+    }
+}
+
+fn controller_axis_label(axis: ControllerAxis) -> &'static str {
+    match axis {
+        ControllerAxis::LeftStickX => "Left Stick X",
+        ControllerAxis::LeftStickY => "Left Stick Y",
+    }
+}
+
+fn button_current_text(sample: &ButtonSample) -> String {
+    let label = if sample.pressed {
+        "Pressed"
+    } else {
+        "Released"
+    };
+    if sample.value.abs() > f32::EPSILON {
+        format!("{label} ({:.2})", sample.value)
+    } else {
+        label.to_string()
+    }
+}
+
+fn button_last_text(sample: &ButtonSample) -> String {
+    sample
+        .last_active_value
+        .map(|value| format!("{value:.2}"))
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn axis_current_text(sample: &AxisSample) -> String {
+    format!("{:.2}", sample.value)
+}
+
+fn axis_last_text(sample: &AxisSample) -> String {
+    sample
+        .last_active_value
+        .map(|value| format!("{value:.2}"))
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn render_keyboard_section(ui: &mut egui::Ui, tracker: &KeyboardTracker) {
+    let current = tracker.current();
+    let last = tracker.previous();
+
+    let current_text = if current.is_empty() {
+        "None".to_string()
+    } else {
+        current.join(", ")
+    };
+
+    let last_text = if last.is_empty() {
+        "None".to_string()
+    } else {
+        last.join(", ")
+    };
+
+    ui.horizontal(|ui| {
+        ui.label("Current:");
+        ui.monospace(current_text.as_str());
+    });
+    ui.horizontal(|ui| {
+        ui.label("Last:");
+        ui.monospace(last_text.as_str());
+    });
 }
 
 fn interrupt_row(
@@ -1789,6 +1881,7 @@ impl UiState {
 enum ConsoleTab {
     Console,
     Interrupts,
+    Input,
 }
 
 #[derive(Component)]
@@ -2037,6 +2130,7 @@ fn ui_system(
         &mut Sprite,
         &mut Handle<Image>,
     )>,
+    keyboard_tracker: Res<KeyboardTracker>,
     bindings: Option<Res<InterruptBindings>>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
     #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
@@ -2208,6 +2302,7 @@ fn ui_system(
                     ConsoleTab::Interrupts,
                     "Interrupts",
                 );
+                ui.selectable_value(&mut ui_state.active_tab, ConsoleTab::Input, "Input");
             });
 
             ui.separator();
@@ -2280,6 +2375,68 @@ fn ui_system(
                     } else {
                         ui.label("Interrupt bindings unavailable.");
                     }
+                }
+                ConsoleTab::Input => {
+                    ui.heading("Input");
+                    if controller_state.has_backend() {
+                        if let Some((snapshot, previous_snapshot)) =
+                            controller_state.snapshot_pair()
+                        {
+                            let previous_port_a = previous_snapshot
+                                .as_ref()
+                                .map(|snapshot| snapshot.port_a)
+                                .unwrap_or(snapshot.port_a);
+                            let previous_port_b = previous_snapshot
+                                .as_ref()
+                                .map(|snapshot| snapshot.port_b)
+                                .unwrap_or(snapshot.port_b);
+                            let previous_pot_x = previous_snapshot
+                                .as_ref()
+                                .map(|snapshot| snapshot.pot_x)
+                                .unwrap_or(snapshot.pot_x);
+                            let previous_pot_y = previous_snapshot
+                                .as_ref()
+                                .map(|snapshot| snapshot.pot_y)
+                                .unwrap_or(snapshot.pot_y);
+
+                            ui.label(format!(
+                                "Port A (active-low): now=0x{:02X} last=0x{:02X}",
+                                snapshot.port_a, previous_port_a
+                            ));
+                            ui.label(format!(
+                                "Port B (active-low): now=0x{:02X} last=0x{:02X}",
+                                snapshot.port_b, previous_port_b
+                            ));
+                            ui.label(format!(
+                                "Pot X: now={:03} last={:03}",
+                                snapshot.pot_x, previous_pot_x
+                            ));
+                            ui.label(format!(
+                                "Pot Y: now={:03} last={:03}",
+                                snapshot.pot_y, previous_pot_y
+                            ));
+
+                            ui.add_space(6.0);
+                            ui.columns(2, |columns| {
+                                for (index, column) in columns.iter_mut().enumerate() {
+                                    if let Some(pad) = snapshot.modern.pads.get(index) {
+                                        render_controller_pad(column, index, pad);
+                                    } else {
+                                        column.heading(format!("Controller {index}"));
+                                        column.label("No controller data");
+                                    }
+                                }
+                            });
+                        } else {
+                            ui.label("Controller snapshot unavailable.");
+                        }
+                    } else {
+                        ui.label("Controller adapter not attached for this personality.");
+                    }
+
+                    ui.separator();
+                    ui.heading("Keyboard");
+                    render_keyboard_section(ui, &keyboard_tracker);
                 }
             }
         });

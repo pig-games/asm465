@@ -37,7 +37,7 @@ impl VideoOverlaySignals {
             raster: self.raster.load(Ordering::Relaxed),
             sprite_collisions: self.sprite_collisions.load(Ordering::Relaxed),
             background_collisions: self.background_collisions.load(Ordering::Relaxed),
-            dirty: self.dirty.swap(false, Ordering::Relaxed),
+            //dirty: self.dirty.swap(false, Ordering::Relaxed),
         }
     }
 }
@@ -47,7 +47,6 @@ pub struct VideoOverlaySnapshot {
     pub raster: u16,
     pub sprite_collisions: u8,
     pub background_collisions: u8,
-    pub dirty: bool,
 }
 
 pub struct ModernVideoBackend {

@@ -7,12 +7,69 @@ use crate::mmio::{
 };
 use crate::MmioDevice;
 
+/// Logical buttons we surface to modern hosts. These mirror Bevy's [`GamepadButtonType`]
+/// naming so downstream tooling can present familiar labels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ControllerButton {
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
+    South,
+    East,
+    West,
+    North,
+    Start,
+    Select,
+    Mode,
+    LeftThumb,
+}
+
+/// Axes tracked for analog sticks/paddles. Mirrors Bevy's [`GamepadAxisType`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ControllerAxis {
+    LeftStickX,
+    LeftStickY,
+}
+
+/// Snapshot of the instantaneous and last-active state for a controller button.
 #[derive(Clone, Copy, Debug, Default)]
+pub struct ButtonSample {
+    pub pressed: bool,
+    pub value: f32,
+    pub last_active_value: Option<f32>,
+}
+
+/// Snapshot of the instantaneous and last-active state for an analog axis.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AxisSample {
+    pub value: f32,
+    pub last_active_value: Option<f32>,
+}
+
+/// Per-pad telemetry exposed to tooling.
+#[derive(Clone, Debug, Default)]
+pub struct ModernControllerPadSnapshot {
+    pub gamepad_id: Option<u32>,
+    pub buttons: Vec<(ControllerButton, ButtonSample)>,
+    pub axes: Vec<(ControllerAxis, AxisSample)>,
+    pub pot_x: u8,
+    pub pot_y: u8,
+}
+
+/// Combined controller telemetry for all tracked pads.
+#[derive(Clone, Debug, Default)]
+pub struct ModernInputSnapshot {
+    pub pads: Vec<ModernControllerPadSnapshot>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct InputSnapshot {
     pub port_a: u8,
     pub port_b: u8,
     pub pot_x: u8,
     pub pot_y: u8,
+    pub modern: ModernInputSnapshot,
 }
 
 #[derive(Default)]
@@ -30,6 +87,7 @@ impl InputState {
             port_b: self.port_b,
             pot_x: self.pot_x,
             pot_y: self.pot_y,
+            modern: ModernInputSnapshot::default(),
         }
     }
 }

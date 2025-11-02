@@ -130,7 +130,7 @@ fn read_gamepad_events(mut evr: EventReader<GamepadButtonChangedEvent>) {
 | Polling       | MMIO read     | `Input<GamepadButton>` + `Axis<GamepadAxis>` |
 
 ### asm465 Integration
-For **cross465/modern** targets:
+For **cross465/modern** targets (implemented in `bus/src/adapters/input.rs` and `asm465/src/lib.rs`):
 - Cache raw Bevy button/axis events per gamepad in a host-side state block so other systems (MMIO adapters, developer tools) can read both the *current* and *last* non-release values.
 - Write the cached state into `$DC00/$DC01` (C64) or `$D300/$D301` (Atari); conversions happen inside the controller adapter so personalities always see legacy-active-low bits.
 - Map Bevy axis values into analog paddle registers (`$D200+` or `$C064+`). When an axis reaches the edge of its range (≈0.0/1.0, or 0/255 after scaling), the adapter also toggles the corresponding D-pad bit so analog sticks and paddle-only devices behave like digital joysticks.

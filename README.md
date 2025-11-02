@@ -46,11 +46,10 @@ The desktop/wasm viewer in `crossdev/asm465` exposes several flags for tuning th
   live view of the IRQ/NMI controller. Pending/enabled masks and source-specific
   flags update in real time so you can confirm host events are reaching the
   guest.
-- Input inspector (planned Milestone 6 work): the developer tools panel will show
-  gamepad 0/1 and keyboard state side-by-side, reporting both the current and last
-  non-release events recorded by the shared controller tracker. Analog-only pads
-  will synthesize D-pad bits when POT values saturate so the MMIO view always
-  reflects usable directions.
+- Input inspector: the developer tools panel shows gamepad 0/1 and keyboard state
+  side-by-side, reporting both the current and last meaningful events recorded by
+  the shared controller tracker. Analog-only pads synthesize D-pad bits when POT
+  values saturate so the MMIO view always reflects usable directions.
 
 These flags apply to both the native binary and the wasm wrapper so games/tools can match the behaviour of their target hardware.
 
