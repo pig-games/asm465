@@ -33,8 +33,10 @@ use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{unicode_to_screen, Bus, VideoState};
 use core6502::{Cpu, RunLimit, RunOutcome};
+use video_backend::VideoOverlaySignals;
 
 mod cpu_worker;
+mod video_backend;
 use cpu_worker::{
     CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs, PersonalitySelection,
 };
@@ -1055,6 +1057,7 @@ pub fn run_app(config: AppConfig) {
             keyboard_interrupt_system,
             gamepad_interrupt_system,
             update_sprite_viewport,
+            update_video_overlay_line,
             ui_system,
         ),
     )
@@ -1185,6 +1188,10 @@ impl EmulatorState {
 
     fn video_state(&self) -> Arc<Mutex<VideoState>> {
         self.outputs.video.clone()
+    }
+
+    fn video_overlay(&self) -> Arc<VideoOverlaySignals> {
+        self.outputs.video_overlay.clone()
     }
 
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
@@ -1450,6 +1457,9 @@ struct SpriteSlot {
 #[derive(Component)]
 struct ContentBackground;
 
+#[derive(Component)]
+struct RasterLine;
+
 #[derive(Resource)]
 struct SpriteCatalog {
     handles: Vec<Handle<Image>>,
@@ -1654,6 +1664,18 @@ fn setup_scene(
             BorderOverlay { side },
         ));
     }
+
+    let raster_material = materials.add(ColorMaterial::from(Color::rgba(1.0, 0.0, 0.0, 0.6)));
+    commands.spawn((
+        MaterialMesh2dBundle {
+            mesh: overlay_mesh.clone(),
+            material: raster_material,
+            transform: Transform::from_xyz(0.0, 0.0, 4.5),
+            visibility: Visibility::Hidden,
+            ..Default::default()
+        },
+        RasterLine,
+    ));
 }
 
 fn ui_system(
@@ -1896,6 +1918,17 @@ fn ui_system(
                                 ui.label(format!("IRQ Enable (VIC): 0x{enable:02X}"));
                             }
                         }
+                        let overlay_snapshot = emulator.video_overlay().snapshot();
+                        ui.separator();
+                        ui.label(format!("Raster line: {}", overlay_snapshot.raster));
+                        ui.label(format!(
+                            "Sprite collisions: 0x{:02X}",
+                            overlay_snapshot.sprite_collisions
+                        ));
+                        ui.label(format!(
+                            "Background collisions: 0x{:02X}",
+                            overlay_snapshot.background_collisions
+                        ));
                     } else {
                         ui.label("Interrupt bindings unavailable.");
                     }
@@ -2484,6 +2517,39 @@ fn update_sprite_viewport(
             }
         }
     }
+}
+
+fn update_video_overlay_line(
+    emulator: NonSend<EmulatorState>,
+    viewport: Res<SpriteViewport>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    mut query: Query<(&mut Transform, &mut Visibility), With<RasterLine>>,
+) {
+    let Ok((mut transform, mut visibility)) = query.get_single_mut() else {
+        return;
+    };
+
+    let snapshot = emulator.video_overlay().snapshot();
+    let content_height = viewport.content_height();
+    let content_width = viewport.content_width();
+    if content_height <= 0.0 || content_width <= 0.0 {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    let virtual_height = virtual_resolution.height().max(1.0);
+    let raster = snapshot.raster.min(255) as f32;
+    let y_virtual = (raster / 255.0) * virtual_height;
+    let scale_y = viewport.scale_y();
+    let content_top = viewport.window_height() * 0.5 - viewport.border_y();
+    let host_y = content_top - y_virtual * scale_y;
+
+    transform.translation.x = 0.0;
+    transform.translation.y = host_y;
+    transform.translation.z = 4.5;
+    transform.scale.x = content_width.max(1.0);
+    transform.scale.y = 2.0;
+    *visibility = Visibility::Visible;
 }
 
 fn compute_viewport_geometry(

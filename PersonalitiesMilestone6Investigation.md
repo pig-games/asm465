@@ -50,7 +50,12 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - The viewer's interrupt panel now surfaces raster/IRQ state captured via the adapter-backed backend (`crossdev/asm465/src/lib.rs:1882`).
 - [x] Update C64 personalities to bind the new adapters, then drive them through integration tests or demo harness runs to confirm behaviour.
   - Toml-driven builds now auto-attach sprite/video adapters when instantiating the bus, wiring the `SpriteOutput` snapshot and a video backend hook before the CPU starts (`crossdev/asm465/src/cpu_worker.rs:36`, `crossdev/asm465/src/cpu_worker.rs:611`).
-- [ ] Wire the sprite/video adapters to the modern 2D rendering backend so both legacy and custom personalities use the shared infrastructure.
+- [x] Wire the sprite/video adapters to the modern 2D rendering backend so both legacy and custom personalities use the shared infrastructure.
+  - Introduced a Bevy-facing `ModernVideoBackend` that streams VIC register updates to a shared overlay, drives the raster indicator, and surfaces collision status in the viewer UI (`crossdev/asm465/src/video_backend.rs`, `crossdev/asm465/src/lib.rs:1888`).
+- [ ] Extend the video adapter to trigger raster IRQs via the interrupt controller when VIC compare conditions are met.
+- [ ] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
+- [ ] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
+  - [ ] Ensure the C64-compatible TOML personality maps CIA joystick/paddle registers through the new input adapter pipeline.
 - [x] Verify `modern-retro-range.toml` meets the latest v2 schema (instance arrays, fanout, transforms) and flows through the adapter-backed rendering path.
   - Extended the sprite/system ranges to expose `Enable`, `RasterLo`, and collision registers so adapter events propagate through the modern backend (`crossdev/cross465/personality_defs/modern-retro-range.toml:19`).
 
