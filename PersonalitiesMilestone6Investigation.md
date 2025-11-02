@@ -54,7 +54,7 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Introduced a Bevy-facing `ModernVideoBackend` that streams VIC register updates to a shared overlay, drives the raster indicator, and surfaces collision status in the viewer UI (`crossdev/asm465/src/video_backend.rs`, `crossdev/asm465/src/lib.rs:1888`).
   - Added a display adapter/back-end pairing so border/background colour writes flow through the shared adapter pipeline (`crossdev/cross465/bus/src/adapters/display.rs`, `crossdev/asm465/src/cpu_worker.rs:32`).
 - [ ] Extend the video adapter to trigger raster IRQs via the interrupt controller when VIC compare conditions are met.
-- [ ] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
+- [x] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
 - [ ] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
   - [ ] Ensure the C64-compatible TOML personality maps CIA joystick/paddle registers through the new input adapter pipeline.
 - [x] Verify `modern-retro-range.toml` meets the latest v2 schema (instance arrays, fanout, transforms) and flows through the adapter-backed rendering path.
