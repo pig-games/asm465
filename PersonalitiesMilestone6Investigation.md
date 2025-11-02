@@ -57,6 +57,7 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Added a shared `RasterIrqState` so system MMIO writes and the video adapter observe the same compare/beam values (`crossdev/cross465/bus/src/adapters/video.rs:17`, `crossdev/cross465/bus/src/system_mmio.rs:10`).
   - `VideoAdapter` now raises IRQ bit 0 when the current raster equals the programmed compare, with regression tests and bus integration coverage (`crossdev/cross465/bus/src/adapters/video.rs:246`, `crossdev/cross465/bus/src/lib.rs:690`).
   - Personalities map the `RasterCompareLo`/`RasterCompareHi` registers so guests can program the full compare value alongside the read-only raster counter (`crossdev/cross465/personality_defs/modern-retro-range.toml:35`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:35`).
+  - The viewer now drives the live raster position via a shared `RasterDriver`, so IRQs fire from the Bevy update loop rather than depending on guest writes (`crossdev/asm465/src/lib.rs:1570`).
 - [x] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
 - [x] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
   - `CpuWorker` now auto-attaches the input adapter and exposes the backend handle so the Bevy UI can stream controller state (`crossdev/asm465/src/cpu_worker.rs:32`, `crossdev/asm465/src/cpu_worker.rs:66`).

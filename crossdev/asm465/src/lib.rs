@@ -36,7 +36,10 @@ use bus::mmio::SystemReg;
 use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
 use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
-use bus::{adapters::input::InputBackend, unicode_to_screen, Bus, VideoState};
+use bus::{
+    adapters::input::InputBackend, unicode_to_screen, Bus, RasterIrqState, VideoState,
+    RASTER_IRQ_MASK,
+};
 use core6502::{Cpu, RunLimit, RunOutcome};
 use video_backend::VideoOverlaySignals;
 
@@ -979,9 +982,15 @@ pub fn run_app(config: AppConfig) {
 
     let controller_state =
         ControllerState::new(emulator.input_backend(), emulator.input_snapshot());
+    let raster_driver = RasterDriver::new(
+        emulator.raster_state(),
+        emulator.video_overlay(),
+        emulator.interrupts(),
+    );
 
     let mut app = App::new();
     app.insert_resource(controller_state);
+    app.insert_resource(raster_driver);
     app.insert_non_send_resource(emulator);
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
@@ -1066,6 +1075,7 @@ pub fn run_app(config: AppConfig) {
             controller_input_system,
             emit_frame_start_interrupt,
             timer_interrupt_system,
+            drive_raster_counter,
             keyboard_interrupt_system,
             gamepad_interrupt_system,
             update_sprite_viewport,
@@ -1085,6 +1095,7 @@ struct EmulatorState {
     status_message: Option<String>,
     last_outcome: Option<RunOutcome>,
     interrupts: Arc<InterruptController>,
+    raster_irq: Arc<RasterIrqState>,
 }
 
 impl EmulatorState {
@@ -1104,6 +1115,7 @@ impl EmulatorState {
             .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
         let interrupts = outputs.interrupts.clone();
+        let raster_irq = outputs.raster.clone();
 
         Self {
             cpu,
@@ -1112,6 +1124,7 @@ impl EmulatorState {
             status_message: status,
             last_outcome: outcome,
             interrupts,
+            raster_irq,
         }
     }
 
@@ -1136,6 +1149,10 @@ impl EmulatorState {
         self.interrupts.clone()
     }
 
+    fn raster_state(&self) -> Arc<RasterIrqState> {
+        self.raster_irq.clone()
+    }
+
     /// Ask the worker to load and execute a program, returning the status text.
     fn run_program(
         &mut self,
@@ -1158,6 +1175,7 @@ impl EmulatorState {
             }) => {
                 self.outputs = outputs;
                 self.interrupts = self.outputs.interrupts.clone();
+                self.raster_irq = self.outputs.raster.clone();
                 self.status_message = Some(summary.clone());
                 self.last_outcome = outcome;
                 match status {
@@ -1584,6 +1602,52 @@ fn timer_interrupt_system(
     if state.timer.tick(time.delta()).just_finished() {
         bindings.raise_timer0();
     }
+}
+
+#[derive(Resource)]
+struct RasterDriver {
+    state: Arc<RasterIrqState>,
+    overlay: Arc<VideoOverlaySignals>,
+    controller: Arc<InterruptController>,
+    phase: f32,
+}
+
+impl RasterDriver {
+    fn new(
+        state: Arc<RasterIrqState>,
+        overlay: Arc<VideoOverlaySignals>,
+        controller: Arc<InterruptController>,
+    ) -> Self {
+        Self {
+            state,
+            overlay,
+            controller,
+            phase: 0.0,
+        }
+    }
+
+    fn advance(&mut self, delta: f32, total_lines: u16) {
+        const RASTER_REFRESH_HZ: f32 = 60.0;
+        let lines = total_lines.max(1);
+        let lines_per_second = lines as f32 * RASTER_REFRESH_HZ;
+        self.phase = (self.phase + delta * lines_per_second) % lines as f32;
+        let line = self.phase.floor() as u16;
+        self.state.set_current_low(line as u8);
+        self.state.set_current_high((line >> 8) as u8);
+        self.overlay.record_raster(line);
+        if self.state.compare() == line {
+            self.controller.raise_irq(RASTER_IRQ_MASK);
+        }
+    }
+}
+
+fn drive_raster_counter(
+    time: Res<Time>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    mut driver: ResMut<RasterDriver>,
+) {
+    let lines = virtual_resolution.height().round().clamp(1.0, 1024.0) as u16;
+    driver.advance(time.delta_seconds(), lines);
 }
 
 fn sync_controller_backend(

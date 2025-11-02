@@ -37,6 +37,7 @@ struct AdapterHandles {
     video_state: Arc<Mutex<VideoState>>,
     video_overlay: Arc<VideoOverlaySignals>,
     input_backend: Option<Arc<dyn InputBackend>>,
+    raster_irq: Arc<RasterIrqState>,
 }
 
 fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
@@ -109,6 +110,7 @@ fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
         video_state,
         video_overlay,
         input_backend,
+        raster_irq,
     }
 }
 
@@ -123,6 +125,7 @@ pub struct CpuWorkerOutputs {
     pub interrupts: Arc<InterruptController>,
     pub video: Arc<Mutex<VideoState>>,
     pub video_overlay: Arc<VideoOverlaySignals>,
+    pub raster: Arc<RasterIrqState>,
 }
 
 impl CpuWorkerOutputs {
@@ -148,6 +151,7 @@ impl CpuWorkerOutputs {
             interrupts,
             video: adapters.video_state.clone(),
             video_overlay: adapters.video_overlay.clone(),
+            raster: adapters.raster_irq.clone(),
         }
     }
 }
@@ -244,6 +248,7 @@ mod native {
         personality: PersonalitySelection,
         video_state: Arc<Mutex<VideoState>>,
         video_overlay: Arc<VideoOverlaySignals>,
+        raster_irq: Arc<RasterIrqState>,
         status: Arc<CpuWorkerStatus>,
     }
 
@@ -266,6 +271,7 @@ mod native {
                 personality,
                 video_state: outputs.video.clone(),
                 video_overlay: outputs.video_overlay.clone(),
+                raster_irq: outputs.raster.clone(),
                 status: status.clone(),
             };
             let init = CpuWorkerInit {
@@ -385,6 +391,7 @@ mod native {
             self.cpu.reset();
             self.video_state = adapters.video_state.clone();
             self.video_overlay = adapters.video_overlay.clone();
+            self.raster_irq = adapters.raster_irq.clone();
             CpuRunReply {
                 summary: message,
                 status,
@@ -524,6 +531,7 @@ mod wasm {
         #[allow(dead_code)]
         video_state: Arc<Mutex<VideoState>>,
         video_overlay: Arc<VideoOverlaySignals>,
+        raster_irq: Arc<RasterIrqState>,
     }
 
     impl CpuWorker {
@@ -535,12 +543,14 @@ mod wasm {
             let (bus, outputs, status, outcome) = initialize_bus(&personality, startup)?;
             let video_state = outputs.video.clone();
             let video_overlay = outputs.video_overlay.clone();
+            let raster_irq = outputs.raster.clone();
             Ok((
                 Self {
                     bus,
                     personality,
                     video_state,
                     video_overlay,
+                    raster_irq,
                 },
                 CpuWorkerInit {
                     outputs,
@@ -560,6 +570,7 @@ mod wasm {
                     self.bus = bus;
                     self.video_state = adapters.video_state.clone();
                     self.video_overlay = adapters.video_overlay.clone();
+                    self.raster_irq = adapters.raster_irq.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Success,
@@ -574,6 +585,7 @@ mod wasm {
                     self.bus = bus;
                     self.video_state = adapters.video_state.clone();
                     self.video_overlay = adapters.video_overlay.clone();
+                    self.raster_irq = adapters.raster_irq.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Failure,

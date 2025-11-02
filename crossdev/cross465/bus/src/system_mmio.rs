@@ -156,6 +156,16 @@ impl SystemMmio {
 
 impl MmioDevice for SystemMmio {
     fn read(&mut self, addr: u16) -> u8 {
+        let current = self
+            .raster_irq
+            .as_ref()
+            .map(|state| state.current())
+            .unwrap_or(self.raster_current);
+        let compare = self
+            .raster_irq
+            .as_ref()
+            .map(|state| state.compare())
+            .unwrap_or(self.raster_compare);
         match addr & 0x000F {
             0x00 => self.irq_pending(),
             0x01 => self.irq_enabled(),
@@ -184,9 +194,9 @@ impl MmioDevice for SystemMmio {
                 }
                 status
             }
-            0x07 => (self.raster_current & 0x00FF) as u8,
-            0x08 => (self.raster_compare & 0x00FF) as u8,
-            0x09 => (self.raster_compare >> 8) as u8,
+            0x07 => (current & 0x00FF) as u8,
+            0x08 => (compare & 0x00FF) as u8,
+            0x09 => (compare >> 8) as u8,
             0x0A => 0,
             0x0B => 0,
             _ => 0xFF,
@@ -242,6 +252,16 @@ impl Module for SystemMmio {
     }
 
     fn read_reg(&mut self, reg: RegId) -> u8 {
+        let current = self
+            .raster_irq
+            .as_ref()
+            .map(|state| state.current())
+            .unwrap_or(self.raster_current);
+        let compare = self
+            .raster_irq
+            .as_ref()
+            .map(|state| state.compare())
+            .unwrap_or(self.raster_compare);
         match reg {
             RegId::System(SystemReg::IrqPending) => self.irq_pending(),
             RegId::System(SystemReg::IrqEnable) => self.irq_enabled(),
@@ -270,9 +290,9 @@ impl Module for SystemMmio {
                 }
                 status
             }
-            RegId::System(SystemReg::RasterLo) => (self.raster_current & 0x00FF) as u8,
-            RegId::System(SystemReg::RasterCompareLo) => (self.raster_compare & 0x00FF) as u8,
-            RegId::System(SystemReg::RasterCompareHi) => (self.raster_compare >> 8) as u8,
+            RegId::System(SystemReg::RasterLo) => (current & 0x00FF) as u8,
+            RegId::System(SystemReg::RasterCompareLo) => (compare & 0x00FF) as u8,
+            RegId::System(SystemReg::RasterCompareHi) => (compare >> 8) as u8,
             RegId::System(SystemReg::SpriteCollisions)
             | RegId::System(SystemReg::BackgroundCollisions) => 0,
             _ => 0xFF,
