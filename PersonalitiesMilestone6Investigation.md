@@ -66,6 +66,14 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
     - `modern-retro-range.toml` and `c64-compat-sparse.toml` declare the `input.joystick` module and expose PortA/PortB/POT registers so guests observe adapter-backed state (`crossdev/cross465/personality_defs/modern-retro-range.toml:33`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:25`).
 - [x] Verify `modern-retro-range.toml` meets the latest v2 schema (instance arrays, fanout, transforms) and flows through the adapter-backed rendering path.
   - Extended the sprite/system ranges to expose `Enable`, `RasterLo`, and collision registers so adapter events propagate through the modern backend (`crossdev/cross465/personality_defs/modern-retro-range.toml:19`).
+- [ ] Surface controller/keyboard telemetry in the developer tools UI so input traffic can be inspected live.
+  - Track Bevy controller buttons/axes in their native identifiers (e.g. `GamepadButtonType::South`, `GamepadAxisType::LeftStickX`) and persist both current and last-change snapshots per pad.
+  - Render the developer tools panel with side-by-side columns for gamepads 0 and 1, showing modern state, translated MMIO values, and the most recent non-release event.
+  - Keep keyboard history stable between key-down transitions so "last" values don’t flicker when keys are released.
+  - Use the shared tracker as the single source of truth; controller adapters consume it to drive PortA/PortB/POT registers while the UI reads the same structure.
+  - Normalize analog-only controllers by synthesizing D-pad presses whenever POT values hit 0/255 so thumbsticks and paddle-style devices still drive the legacy MMIO bits.
+  - Move the MMIO translation responsibility into the controller adapter so personalities consistently see active-low bits derived from the shared modern state, keeping the UI purely observational.
+- [ ] Make the VideoOverlaySignals optional via a cli parameter.
 
 ## Deliverables
 - `crossdev/cross465/personality_defs/c64-compat-extended.toml`.

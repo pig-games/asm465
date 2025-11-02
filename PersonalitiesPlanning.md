@@ -39,6 +39,8 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Define mirrors and open-bus behaviour for unmapped C64 ranges.
 - [x] Activate compute expressions for raster/collision status reads.
 - [ ] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
+- [ ] Rework controller handling so Bevy-native button/axis state feeds both MMIO adapters and the developer tools input panel (showing gamepads 0/1 plus keyboard history).
+  - Cache modern events, ignore release-only transitions when recording "last" values, and synthesize D-pad bits when analog axes hit 0/255 so paddle-only devices still drive the MMIO ports.
 - [ ] Ship `c64-compat-extended.toml` and an interactive demo proving behavioural parity.
 
 ## Milestone 7 – Extended Compatibility & Conformance

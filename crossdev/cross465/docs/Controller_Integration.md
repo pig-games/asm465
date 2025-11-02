@@ -131,8 +131,11 @@ fn read_gamepad_events(mut evr: EventReader<GamepadButtonChangedEvent>) {
 
 ### asm465 Integration
 For **cross465/modern** targets:
-- Write Bevy input state into `$DC00/$DC01` (C64) or `$D300/$D301` (Atari).
-- Map Bevy axis values into analog paddle registers (`$D200+` or `$C064+`).
+- Cache raw Bevy button/axis events per gamepad in a host-side state block so other systems (MMIO adapters, developer tools) can read both the *current* and *last* non-release values.
+- Write the cached state into `$DC00/$DC01` (C64) or `$D300/$D301` (Atari); conversions happen inside the controller adapter so personalities always see legacy-active-low bits.
+- Map Bevy axis values into analog paddle registers (`$D200+` or `$C064+`). When an axis reaches the edge of its range (≈0.0/1.0, or 0/255 after scaling), the adapter also toggles the corresponding D-pad bit so analog sticks and paddle-only devices behave like digital joysticks.
+- Ignore release-only events when recording the "last" value; the developer tools panel should continue showing the most recent meaningful press until a new press arrives.
+- Expose per-pad telemetry (pads 0 and 1) and keyboard history in the developer tools panel so testers can confirm both the modern state and the translated MMIO view in real time.
 
 This allows modern controllers to emulate 6502-era inputs in simulations and development tools.
 
