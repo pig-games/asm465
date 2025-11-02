@@ -149,6 +149,8 @@ pub enum SystemReg {
     NmiAck,
     Status,
     RasterLo,
+    RasterCompare,
+    RasterCompareHi,
     SpriteCollisions,
     BackgroundCollisions,
 }

@@ -36,7 +36,8 @@ decode = { sparse = [
 [[map]]
 priority = 10
 decode = { sparse = [
-  { addr = "D012", kind = "system", id = "RasterLo", compute = "beam.y & 0xFF", suppress_write = true }
+  { addr = "D012", kind = "system", id = "RasterCompare" },
+  { addr = "D011", kind = "system", id = "RasterCompareHi", field = { bit = 7, target_bit = 0 } }
 ] }
 
 [[map]]

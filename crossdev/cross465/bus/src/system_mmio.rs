@@ -1,3 +1,4 @@
+use crate::adapters::video::RasterIrqState;
 use crate::interrupts::InterruptController;
 use crate::mmio::{
     Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc, SystemReg,
@@ -8,6 +9,9 @@ use std::sync::Arc;
 /// MMIO view over the shared interrupt controller.
 pub struct SystemMmio {
     controller: Arc<InterruptController>,
+    raster_irq: Option<Arc<RasterIrqState>>,
+    raster_current: u16,
+    raster_compare: u16,
 }
 
 const SYSTEM_REGS: &[RegisterDesc] = &[
@@ -80,7 +84,25 @@ const SYSTEM_REGS: &[RegisterDesc] = &[
         1,
         0,
         true,
-        false,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::RasterCompare),
+        "RasterCompare",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::System(SystemReg::RasterCompareHi),
+        "RasterCompareHi",
+        1,
+        0,
+        true,
+        true,
         &[],
     ),
     RegisterDesc::new(
@@ -105,7 +127,18 @@ const SYSTEM_REGS: &[RegisterDesc] = &[
 
 impl SystemMmio {
     pub fn new(controller: Arc<InterruptController>) -> Self {
-        Self { controller }
+        Self {
+            controller,
+            raster_irq: None,
+            raster_current: 0,
+            raster_compare: 0,
+        }
+    }
+
+    pub fn set_raster_irq_state(&mut self, state: Arc<RasterIrqState>) {
+        state.set_current(self.raster_current);
+        state.set_compare(self.raster_compare);
+        self.raster_irq = Some(state);
     }
 
     fn irq_pending(&self) -> u8 {
@@ -123,7 +156,7 @@ impl SystemMmio {
 
 impl MmioDevice for SystemMmio {
     fn read(&mut self, addr: u16) -> u8 {
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x00 => self.irq_pending(),
             0x01 => self.irq_enabled(),
             0x02 => self.irq_pending(),
@@ -151,13 +184,18 @@ impl MmioDevice for SystemMmio {
                 }
                 status
             }
+            0x07 => (self.raster_current & 0x00FF) as u8,
+            0x08 => (self.raster_compare & 0x00FF) as u8,
+            0x09 => (self.raster_compare >> 8) as u8,
+            0x0A => 0,
+            0x0B => 0,
             _ => 0xFF,
         }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
         let mask = value as u32;
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x01 => {
                 self.controller.set_irq_enable(mask);
             }
@@ -169,6 +207,24 @@ impl MmioDevice for SystemMmio {
             0x05 => {
                 if mask != 0 {
                     self.controller.clear_nmi(mask);
+                }
+            }
+            0x07 => {
+                self.raster_current = (self.raster_current & 0xFF00) | value as u16;
+                if let Some(state) = &self.raster_irq {
+                    state.set_current_low(value);
+                }
+            }
+            0x08 => {
+                self.raster_compare = (self.raster_compare & 0xFF00) | value as u16;
+                if let Some(state) = &self.raster_irq {
+                    state.set_compare_low(value);
+                }
+            }
+            0x09 => {
+                self.raster_compare = ((value as u16) << 8) | (self.raster_compare & 0x00FF);
+                if let Some(state) = &self.raster_irq {
+                    state.set_compare_high(value);
                 }
             }
             _ => {}
@@ -214,8 +270,10 @@ impl Module for SystemMmio {
                 }
                 status
             }
-            RegId::System(SystemReg::RasterLo)
-            | RegId::System(SystemReg::SpriteCollisions)
+            RegId::System(SystemReg::RasterLo) => (self.raster_current & 0x00FF) as u8,
+            RegId::System(SystemReg::RasterCompare) => (self.raster_compare & 0x00FF) as u8,
+            RegId::System(SystemReg::RasterCompareHi) => (self.raster_compare >> 8) as u8,
+            RegId::System(SystemReg::SpriteCollisions)
             | RegId::System(SystemReg::BackgroundCollisions) => 0,
             _ => 0xFF,
         }
@@ -235,6 +293,24 @@ impl Module for SystemMmio {
             RegId::System(SystemReg::NmiAck) => {
                 if mask != 0 {
                     self.controller.clear_nmi(mask);
+                }
+            }
+            RegId::System(SystemReg::RasterLo) => {
+                self.raster_current = (self.raster_current & 0xFF00) | value as u16;
+                if let Some(state) = &self.raster_irq {
+                    state.set_current_low(value);
+                }
+            }
+            RegId::System(SystemReg::RasterCompare) => {
+                self.raster_compare = (self.raster_compare & 0xFF00) | value as u16;
+                if let Some(state) = &self.raster_irq {
+                    state.set_compare_low(value);
+                }
+            }
+            RegId::System(SystemReg::RasterCompareHi) => {
+                self.raster_compare = ((value as u16) << 8) | (self.raster_compare & 0x00FF);
+                if let Some(state) = &self.raster_irq {
+                    state.set_compare_high(value);
                 }
             }
             _ => {}

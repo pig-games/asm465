@@ -40,10 +40,10 @@ decode = { range = { addr = "DF30..=DF38", kind = "sprite", order = [
 
 [[map]]
 priority = 10
-decode = { range = { addr = "DF40..=DF49", kind = "system", order = [
+decode = { range = { addr = "DF40..=DF4B", kind = "system", order = [
   "IrqPending","IrqEnable","IrqAck","IrqSource",
-  "NmiPending","NmiAck","Status","RasterLo",
-  "SpriteCollisions","BackgroundCollisions"
+  "NmiPending","NmiAck","Status","RasterLo","RasterCompare",
+  "RasterCompareHi","SpriteCollisions","BackgroundCollisions"
 ] } }
 
 [[map]]

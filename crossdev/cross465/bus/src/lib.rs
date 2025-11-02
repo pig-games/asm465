@@ -44,10 +44,14 @@ pub mod sprite_mmio; // expose sprite device as bus::sprite_mmio::*
 pub mod system_mmio; // expose system-level MMIO (interrupt controller)
 pub mod utils; // expose helpers as bus::utils::*
 
+use system_mmio::SystemMmio;
+
 pub use adapters::display::{DisplayAdapter, DisplayBackend, DisplayOutputBackend};
 pub use adapters::input::{InputAdapter, InputBackend, InputBackendHandle};
 pub use adapters::sprite::{SpriteAdapter, SpriteBackend, SpriteOutputBackend, SpriteRenderState};
-pub use adapters::video::{VideoAdapter, VideoBackend, VideoState, VideoStateBackend};
+pub use adapters::video::{
+    RasterIrqState, VideoAdapter, VideoBackend, VideoState, VideoStateBackend, RASTER_IRQ_MASK,
+};
 
 /// Resolved mapping entry produced by the personality compiler.
 #[derive(Clone, Debug)]
@@ -650,6 +654,68 @@ decode = { sparse = [
 
         bus.set_signal_int("beam.y", 0x00);
         assert_eq!(bus.read(0xD012), 0x00);
+    }
+
+    #[test]
+    fn raster_compare_write_triggers_irq_via_adapter() {
+        let toml = r#"
+[personality]
+id = "raster-demo"
+title = "Raster IRQ Demo"
+
+[modules.system]
+impl = "system.interrupts"
+
+[[map]]
+priority = 10
+decode = { range = { addr = "DF40..=DF4B", kind = "system", order = [
+  "IrqPending","IrqEnable","IrqAck","IrqSource",
+  "NmiPending","NmiAck","Status","RasterLo","RasterCompare",
+  "RasterCompareHi","SpriteCollisions","BackgroundCollisions"
+] } }
+"#;
+
+        let registry = builtin_module_registry();
+        let def = personality_v2::PersonalityDef::from_toml_str(toml, &registry)
+            .expect("load raster personality");
+        let mut bus = Bus::from_personality_def(def).expect("build bus");
+
+        let raster_state = Arc::new(RasterIrqState::new());
+        bus.attach_raster_irq_state(raster_state.clone());
+
+        let controller = bus.interrupt_controller();
+        controller.set_irq_enable(RASTER_IRQ_MASK);
+
+        let video_state = Arc::new(Mutex::new(VideoState::default()));
+        let backend: Arc<dyn VideoBackend> = Arc::new(VideoStateBackend::new(video_state));
+        bus.attach_adapter(
+            ModuleKind::System,
+            Box::new(VideoAdapter::new(
+                backend,
+                controller.clone(),
+                Some(raster_state),
+            )),
+        )
+        .expect("attach video adapter");
+
+        // Write compare (lo/high) and confirm no IRQ until the raster matches.
+        bus.write(0xDF48, 0x50);
+        bus.write(0xDF49, 0x00);
+        bus.write(0xDF47, 0x10);
+        assert_eq!(controller.irq_pending(), 0);
+
+        // Update raster to the compare value and expect the IRQ bit to assert.
+        bus.write(0xDF47, 0x50);
+        assert_eq!(controller.irq_pending(), RASTER_IRQ_MASK);
+
+        // Acknowledge and ensure the source clears.
+        bus.write(0xDF42, RASTER_IRQ_MASK as u8);
+        assert_eq!(controller.irq_pending(), 0);
+
+        // Move the compare high byte away from the current raster so no IRQ is raised.
+        bus.write(0xDF49, 0x01);
+        bus.write(0xDF47, 0x50);
+        assert_eq!(controller.irq_pending(), 0);
     }
 
     #[test]
@@ -2024,6 +2090,12 @@ impl PersonalityRuntime {
         })
     }
 
+    fn set_raster_irq_state(&mut self, state: Arc<RasterIrqState>) {
+        if let Some(system) = self.module_downcast_mut::<SystemMmio>(ModuleKind::System) {
+            system.set_raster_irq_state(state);
+        }
+    }
+
     fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
         self.module_downcast::<ConsoleMmio>(ModuleKind::Console)
             .map(|console| console.output())
@@ -2381,6 +2453,22 @@ impl Bus {
             }
         }
         None
+    }
+
+    /// Share the raster IRQ state with the system MMIO implementation so
+    /// adapters and host backends can coordinate compare/current updates.
+    pub fn attach_raster_irq_state(&mut self, state: Arc<RasterIrqState>) {
+        if let Some(runtime) = self.runtime_v2.as_mut() {
+            runtime.set_raster_irq_state(state.clone());
+        }
+
+        for mapped in self.mmio.iter_mut() {
+            if mapped.kind == Some(PersonalityMmioKind::System) {
+                if let Some(system) = mapped.device.as_any_mut().downcast_mut::<SystemMmio>() {
+                    system.set_raster_irq_state(state.clone());
+                }
+            }
+        }
     }
 
     /// Expose the sprite device's shared output buffer.

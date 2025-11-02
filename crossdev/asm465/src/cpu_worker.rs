@@ -21,8 +21,8 @@ use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
 use bus::{
     AdapterError, Bus, DisplayAdapter, DisplayBackend, DisplayOutputBackend, InputAdapter,
-    InputBackend, InputBackendHandle, SpriteAdapter, SpriteBackend, SpriteOutputBackend,
-    VideoAdapter, VideoBackend, VideoState,
+    InputBackend, InputBackendHandle, RasterIrqState, SpriteAdapter, SpriteBackend,
+    SpriteOutputBackend, VideoAdapter, VideoBackend, VideoState,
 };
 use core6502::RunOutcome;
 use log::warn;
@@ -85,13 +85,19 @@ fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
 
     let video_state = Arc::new(Mutex::new(VideoState::default()));
     let video_overlay = Arc::new(VideoOverlaySignals::new());
+    let raster_irq = Arc::new(RasterIrqState::new());
+    bus.attach_raster_irq_state(raster_irq.clone());
     let video_backend: Arc<dyn VideoBackend> = Arc::new(ModernVideoBackend::new(
         video_state.clone(),
         video_overlay.clone(),
     ));
     if let Err(err) = bus.attach_adapter(
         ModuleKind::System,
-        Box::new(VideoAdapter::new(video_backend)),
+        Box::new(VideoAdapter::new(
+            video_backend,
+            bus.interrupt_controller(),
+            Some(raster_irq.clone()),
+        )),
     ) {
         match err {
             AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}

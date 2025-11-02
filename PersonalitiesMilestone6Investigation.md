@@ -53,7 +53,10 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
 - [x] Wire the sprite/video adapters to the modern 2D rendering backend so both legacy and custom personalities use the shared infrastructure.
   - Introduced a Bevy-facing `ModernVideoBackend` that streams VIC register updates to a shared overlay, drives the raster indicator, and surfaces collision status in the viewer UI (`crossdev/asm465/src/video_backend.rs`, `crossdev/asm465/src/lib.rs:1888`).
   - Added a display adapter/back-end pairing so border/background colour writes flow through the shared adapter pipeline (`crossdev/cross465/bus/src/adapters/display.rs`, `crossdev/asm465/src/cpu_worker.rs:32`).
-- [ ] Extend the video adapter to trigger raster IRQs via the interrupt controller when VIC compare conditions are met.
+- [x] Extend the video adapter to trigger raster IRQs via the interrupt controller when VIC compare conditions are met.
+  - Added a shared `RasterIrqState` so system MMIO writes and the video adapter observe the same compare/beam values (`crossdev/cross465/bus/src/adapters/video.rs:17`, `crossdev/cross465/bus/src/system_mmio.rs:10`).
+  - `VideoAdapter` now raises IRQ bit 0 when the current raster equals the programmed compare, with regression tests and bus integration coverage (`crossdev/cross465/bus/src/adapters/video.rs:246`, `crossdev/cross465/bus/src/lib.rs:690`).
+  - Personalities map the new `RasterCompare` register so guests can program the compare value alongside the read-only raster counter (`crossdev/cross465/personality_defs/modern-retro-range.toml:39`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:38`).
 - [x] Route display border/background colours through the adapter pathway so the modern renderer and legacy snapshots stay in sync.
 - [x] Integrate controller input via adapters, including modern-retro personalities (MMIO layout + runtime wiring per `Controller_Integration.md`).
   - `CpuWorker` now auto-attaches the input adapter and exposes the backend handle so the Bevy UI can stream controller state (`crossdev/asm465/src/cpu_worker.rs:32`, `crossdev/asm465/src/cpu_worker.rs:66`).

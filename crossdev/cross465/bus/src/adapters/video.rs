@@ -1,7 +1,66 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::interrupts::InterruptController;
 use crate::mmio::{HookAction, ModuleAdapter, ModuleAdapterEvent, SystemReg};
+
+/// Bit mask used for the raster interrupt source.
+pub const RASTER_IRQ_MASK: u32 = 1 << 0;
+
+/// Shared state that tracks the raster compare target and the most recent beam value.
+#[derive(Default)]
+pub struct RasterIrqState {
+    compare: AtomicU16,
+    current: AtomicU16,
+}
+
+impl RasterIrqState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn update_atomic(atomic: &AtomicU16, update: impl Fn(u16) -> u16) {
+        let _ = atomic.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| Some(update(old)));
+    }
+
+    pub fn set_compare(&self, value: u16) {
+        self.compare.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_compare_low(&self, value: u8) {
+        Self::update_atomic(&self.compare, |old| (old & 0xFF00) | value as u16);
+    }
+
+    pub fn set_compare_high(&self, value: u8) {
+        Self::update_atomic(&self.compare, |old| ((value as u16) << 8) | (old & 0x00FF));
+    }
+
+    pub fn set_compare_high_bit(&self, bit: bool) {
+        let high = if bit { 1u8 } else { 0u8 };
+        self.set_compare_high(high);
+    }
+
+    pub fn compare(&self) -> u16 {
+        self.compare.load(Ordering::Relaxed)
+    }
+
+    pub fn set_current(&self, value: u16) {
+        self.current.store(value, Ordering::Relaxed);
+    }
+
+    pub fn set_current_low(&self, value: u8) {
+        Self::update_atomic(&self.current, |old| (old & 0xFF00) | value as u16);
+    }
+
+    pub fn set_current_high(&self, value: u8) {
+        Self::update_atomic(&self.current, |old| ((value as u16) << 8) | (old & 0x00FF));
+    }
+
+    pub fn current(&self) -> u16 {
+        self.current.load(Ordering::Relaxed)
+    }
+}
 
 /// Backend interface that consumes system/video register activity.
 pub trait VideoBackend: Send + Sync {
@@ -34,11 +93,30 @@ pub trait VideoBackend: Send + Sync {
 /// Adapter that routes system/video MMIO events to a [`VideoBackend`].
 pub struct VideoAdapter {
     backend: Arc<dyn VideoBackend>,
+    controller: Arc<InterruptController>,
+    raster_irq: Option<Arc<RasterIrqState>>,
 }
 
 impl VideoAdapter {
-    pub fn new(backend: Arc<dyn VideoBackend>) -> Self {
-        Self { backend }
+    pub fn new(
+        backend: Arc<dyn VideoBackend>,
+        controller: Arc<InterruptController>,
+        raster_irq: Option<Arc<RasterIrqState>>,
+    ) -> Self {
+        Self {
+            backend,
+            controller,
+            raster_irq,
+        }
+    }
+
+    fn evaluate_raster_irq(&self) {
+        let Some(state) = &self.raster_irq else {
+            return;
+        };
+        if state.current() == state.compare() {
+            self.controller.raise_irq(RASTER_IRQ_MASK);
+        }
     }
 }
 
@@ -47,6 +125,27 @@ impl ModuleAdapter for VideoAdapter {
         match event {
             ModuleAdapterEvent::PrimaryWrite(write) => {
                 if let Some(reg) = write.reg.system() {
+                    match reg {
+                        SystemReg::RasterLo => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_current_low(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        SystemReg::RasterCompare => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_compare_low(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        SystemReg::RasterCompareHi => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_compare_high(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        _ => {}
+                    }
                     self.backend
                         .write_register(reg, write.cpu_value, write.module_value);
                 }
@@ -61,6 +160,27 @@ impl ModuleAdapter for VideoAdapter {
                         write.source_bit,
                         write.target_bit,
                     );
+                    match reg {
+                        SystemReg::RasterCompare => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_compare_low(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        SystemReg::RasterCompareHi => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_compare_high(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        SystemReg::RasterLo => {
+                            if let Some(state) = &self.raster_irq {
+                                state.set_current_low(write.module_value);
+                                self.evaluate_raster_irq();
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             ModuleAdapterEvent::FanoutWrite(write) => {
@@ -124,6 +244,7 @@ impl VideoBackend for VideoStateBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interrupts::InterruptController;
     use crate::mmio::{
         FanoutWriteEvent, ModuleAdapterEvent, PrimaryWriteEvent, RegId, ScatterWriteEvent,
     };
@@ -164,7 +285,8 @@ mod tests {
     #[test]
     fn primary_write_forwards_to_backend() {
         let backend = Arc::new(RecordingBackend::new());
-        let mut adapter = VideoAdapter::new(backend.clone());
+        let controller = Arc::new(InterruptController::new());
+        let mut adapter = VideoAdapter::new(backend.clone(), controller, None);
 
         adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
             reg: RegId::System(SystemReg::IrqEnable),
@@ -185,7 +307,8 @@ mod tests {
     #[test]
     fn hook_events_are_forwarded() {
         let backend = Arc::new(RecordingBackend::new());
-        let mut adapter = VideoAdapter::new(backend.clone());
+        let controller = Arc::new(InterruptController::new());
+        let mut adapter = VideoAdapter::new(backend.clone(), controller, None);
         adapter.handle_event(ModuleAdapterEvent::Hook {
             hook: "irq_ack_bits",
             action: HookAction::Read {
@@ -251,7 +374,12 @@ mod tests {
         }
 
         let backend = Arc::new(CounterBackend::new());
-        let mut adapter = VideoAdapter::new(backend.clone());
+        let controller = Arc::new(InterruptController::new());
+        let mut adapter = VideoAdapter::new(
+            backend.clone(),
+            controller,
+            Some(Arc::new(RasterIrqState::new())),
+        );
 
         adapter.handle_event(ModuleAdapterEvent::ScatterWrite(ScatterWriteEvent {
             reg: RegId::System(SystemReg::RasterLo),
@@ -303,5 +431,70 @@ mod tests {
             "expected state backend to record register value"
         );
         assert!(snapshot.last_hook.is_some(), "expected hook to be recorded");
+    }
+
+    #[test]
+    fn raster_compare_triggers_irq_when_current_matches() {
+        let backend = Arc::new(RecordingBackend::new());
+        let controller = Arc::new(InterruptController::new());
+        controller.set_irq_enable(RASTER_IRQ_MASK);
+        let raster_state = Arc::new(RasterIrqState::new());
+        let mut adapter =
+            VideoAdapter::new(backend, controller.clone(), Some(raster_state.clone()));
+
+        // Configure compare line and confirm no pending IRQ without a match.
+        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+            reg: RegId::System(SystemReg::RasterCompare),
+            cpu_value: 0x50,
+            module_value: 0x50,
+            instance: None,
+        }));
+
+        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+            reg: RegId::System(SystemReg::RasterLo),
+            cpu_value: 0x10,
+            module_value: 0x10,
+            instance: None,
+        }));
+
+        assert_eq!(
+            controller.irq_pending(),
+            0,
+            "no interrupt expected when raster does not match compare"
+        );
+
+        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+            reg: RegId::System(SystemReg::RasterLo),
+            cpu_value: 0x50,
+            module_value: 0x50,
+            instance: None,
+        }));
+
+        assert_eq!(
+            controller.irq_pending(),
+            RASTER_IRQ_MASK,
+            "raster compare should raise the IRQ source"
+        );
+
+        controller.clear_irq(RASTER_IRQ_MASK);
+
+        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+            reg: RegId::System(SystemReg::RasterLo),
+            cpu_value: 0x51,
+            module_value: 0x51,
+            instance: None,
+        }));
+        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
+            reg: RegId::System(SystemReg::RasterLo),
+            cpu_value: 0x50,
+            module_value: 0x50,
+            instance: None,
+        }));
+
+        assert_eq!(
+            controller.irq_pending(),
+            RASTER_IRQ_MASK,
+            "IRQ should re-assert after acknowledge when the raster matches again"
+        );
     }
 }
