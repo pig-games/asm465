@@ -2,18 +2,18 @@ use std::array;
 use std::sync::{Arc, Mutex};
 
 use crate::input_mmio::{
-    AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputOutput, InputSnapshot,
-    ModernControllerPadSnapshot, ModernInputSnapshot,
+    button_bit, port_from_buttons, AxisSample, ButtonSample, ControllerAxis, ControllerButton,
+    InputOutput, InputPadSnapshot, InputSnapshot, ModernControllerPadSnapshot, ModernInputSnapshot,
+    CONTROLLER_PAD_COUNT,
 };
-use crate::mmio::{HookAction, InputReg, ModuleAdapter, ModuleAdapterEvent};
+use crate::mmio::{HookAction, InputReg, ModuleAdapter, ModuleAdapterEvent, ScatterWriteEvent};
 
-const CONTROLLER_PADS: usize = 2;
 const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
 const AXIS_ACTIVE_THRESHOLD: f32 = 0.2;
 const POT_MIN: u8 = 0;
 const POT_MAX: u8 = 255;
 
-const BUTTONS: &[ControllerButton] = &[
+const BUTTONS: [ControllerButton; 16] = [
     ControllerButton::DPadUp,
     ControllerButton::DPadDown,
     ControllerButton::DPadLeft,
@@ -24,47 +24,50 @@ const BUTTONS: &[ControllerButton] = &[
     ControllerButton::North,
     ControllerButton::Start,
     ControllerButton::Select,
-    ControllerButton::Mode,
+    ControllerButton::LeftShoulder,
+    ControllerButton::RightShoulder,
+    ControllerButton::LeftTrigger,
+    ControllerButton::RightTrigger,
     ControllerButton::LeftThumb,
+    ControllerButton::RightThumb,
 ];
 
-const AXES: &[ControllerAxis] = &[ControllerAxis::LeftStickX, ControllerAxis::LeftStickY];
+const AXES: [ControllerAxis; 2] = [ControllerAxis::LeftStickX, ControllerAxis::LeftStickY];
 
-/// Backend interface that accepts controller state updates.
+/// Backend interface consumed by the MMIO adapter.
 pub trait InputBackend: Send + Sync {
     fn update_gamepad(&self, pad: usize, gamepad_id: Option<u32>);
     fn update_button(&self, pad: usize, button: ControllerButton, value: f32);
     fn update_axis(&self, pad: usize, axis: ControllerAxis, value: f32);
 
-    fn write_port_a(&self, value: u8);
-    fn write_port_b(&self, value: u8);
-    fn write_pot_x(&self, value: u8);
-    fn write_pot_y(&self, value: u8);
+    fn write_port_a(&self, pad: usize, value: u8);
+    fn write_port_b(&self, pad: usize, value: u8);
+    fn write_buttons_lo(&self, pad: usize, value: u8);
+    fn write_buttons_hi(&self, pad: usize, value: u8);
+    fn write_pot_x(&self, pad: usize, value: u8);
+    fn write_pot_y(&self, pad: usize, value: u8);
 
     fn snapshot(&self) -> InputSnapshot;
     fn handle_hook(&self, _hook: &str, _action: HookAction) {}
 }
 
-/// Concrete backend that mirrors modern controller state into [`InputOutput`].
+/// Concrete backend that mirrors controller state into [`InputOutput`].
 pub struct InputBackendHandle {
     output: Arc<Mutex<InputOutput>>,
     state: Arc<Mutex<ModernInputState>>,
 }
 
 impl InputBackendHandle {
-    pub fn new(state: Arc<Mutex<InputOutput>>) -> Self {
+    pub fn new(output: Arc<Mutex<InputOutput>>) -> Self {
         Self {
-            output: state,
+            output,
             state: Arc::new(Mutex::new(ModernInputState::default())),
         }
     }
 
-    fn write_output(&self, port_a: u8, port_b: u8, pot_x: u8, pot_y: u8) {
+    fn publish(&self, publish: PadPublish) {
         if let Ok(mut output) = self.output.lock() {
-            output.set_port_a(port_a);
-            output.set_port_b(port_b);
-            output.set_pot_x(pot_x);
-            output.set_pot_y(pot_y);
+            output.set_pad_snapshot(publish.pad, publish.snapshot);
         }
     }
 }
@@ -77,62 +80,90 @@ impl InputBackend for InputBackendHandle {
     }
 
     fn update_button(&self, pad: usize, button: ControllerButton, value: f32) {
-        let ports = if let Ok(mut state) = self.state.lock() {
-            state.update_button(pad, button, value)
-        } else {
-            None
-        };
-
-        if let Some((port_a, port_b, pot_x, pot_y)) = ports {
-            self.write_output(port_a, port_b, pot_x, pot_y);
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.update_button(pad, button, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
     fn update_axis(&self, pad: usize, axis: ControllerAxis, value: f32) {
-        let ports = if let Ok(mut state) = self.state.lock() {
-            state.update_axis(pad, axis, value)
-        } else {
-            None
-        };
-
-        if let Some((port_a, port_b, pot_x, pot_y)) = ports {
-            self.write_output(port_a, port_b, pot_x, pot_y);
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.update_axis(pad, axis, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
-    fn write_port_a(&self, value: u8) {
-        if let Ok(mut output) = self.output.lock() {
-            output.set_port_a(value);
+    fn write_port_a(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_port_a(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
-    fn write_port_b(&self, value: u8) {
-        if let Ok(mut output) = self.output.lock() {
-            output.set_port_b(value);
+    fn write_port_b(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_port_b(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
-    fn write_pot_x(&self, value: u8) {
-        let ports = if let Ok(mut state) = self.state.lock() {
-            state.write_primary_pot_x(value)
-        } else {
-            None
-        };
-
-        if let Some((port_a, port_b, pot_x, pot_y)) = ports {
-            self.write_output(port_a, port_b, pot_x, pot_y);
+    fn write_buttons_lo(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_buttons_lo(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
-    fn write_pot_y(&self, value: u8) {
-        let ports = if let Ok(mut state) = self.state.lock() {
-            state.write_primary_pot_y(value)
-        } else {
-            None
-        };
+    fn write_buttons_hi(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_buttons_hi(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
+        }
+    }
 
-        if let Some((port_a, port_b, pot_x, pot_y)) = ports {
-            self.write_output(port_a, port_b, pot_x, pot_y);
+    fn write_pot_x(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_pot_x(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
+        }
+    }
+
+    fn write_pot_y(&self, pad: usize, value: u8) {
+        let publish = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|mut state| state.write_pot_y(pad, value));
+        if let Some(publish) = publish {
+            self.publish(publish);
         }
     }
 
@@ -151,9 +182,15 @@ impl InputBackend for InputBackendHandle {
         snapshot.modern = modern;
         snapshot
     }
+
+    fn handle_hook(&self, hook: &str, action: HookAction) {
+        if let Ok(mut state) = self.state.lock() {
+            state.handle_hook(hook, action);
+        }
+    }
 }
 
-/// Adapter that proxies MMIO writes/reads to an [`InputBackend`].
+/// Adapter that proxies MMIO writes to an [`InputBackend`].
 pub struct InputAdapter {
     backend: Arc<dyn InputBackend>,
 }
@@ -168,20 +205,160 @@ impl ModuleAdapter for InputAdapter {
     fn handle_event(&mut self, event: ModuleAdapterEvent<'_>) {
         match event {
             ModuleAdapterEvent::PrimaryWrite(write) => {
-                if let Some(reg) = write.reg.input() {
-                    match reg {
-                        InputReg::PortA => self.backend.write_port_a(write.module_value),
-                        InputReg::PortB => self.backend.write_port_b(write.module_value),
-                        InputReg::PotX => self.backend.write_pot_x(write.module_value),
-                        InputReg::PotY => self.backend.write_pot_y(write.module_value),
+                let pad = write.instance.unwrap_or(0) as usize;
+                match write.reg.input() {
+                    Some(InputReg::PortA) => self.backend.write_port_a(pad, write.module_value),
+                    Some(InputReg::PortB) => self.backend.write_port_b(pad, write.module_value),
+                    Some(InputReg::ButtonsLo) => {
+                        self.backend.write_buttons_lo(pad, write.module_value)
                     }
+                    Some(InputReg::ButtonsHi) => {
+                        self.backend.write_buttons_hi(pad, write.module_value)
+                    }
+                    Some(InputReg::PotX) => self.backend.write_pot_x(pad, write.module_value),
+                    Some(InputReg::PotY) => self.backend.write_pot_y(pad, write.module_value),
+                    Some(InputReg::Select) | None => {}
                 }
             }
-            ModuleAdapterEvent::Hook { hook, action } => {
-                self.backend.handle_hook(hook, action);
+            ModuleAdapterEvent::ScatterWrite(write) => self.handle_scatter(write),
+            ModuleAdapterEvent::Hook { hook, action } => self.backend.handle_hook(hook, action),
+            _ => {}
+        }
+    }
+}
+
+impl InputAdapter {
+    fn handle_scatter(&self, write: ScatterWriteEvent) {
+        let pad = write.instance.unwrap_or(0) as usize;
+        let snapshot = self.backend.snapshot();
+        let pad_snapshot = snapshot.pads.get(pad).cloned().unwrap_or_default();
+        match write.reg.input() {
+            Some(InputReg::ButtonsLo) => {
+                let mut value = pad_snapshot.buttons as u8;
+                value = update_bit(value, write.target_bit, write.bit_value);
+                self.backend.write_buttons_lo(pad, value);
+            }
+            Some(InputReg::ButtonsHi) => {
+                let mut value = (pad_snapshot.buttons >> 8) as u8;
+                value = update_bit(value, write.target_bit, write.bit_value);
+                self.backend.write_buttons_hi(pad, value);
+            }
+            Some(InputReg::PortA) => {
+                let mut value = pad_snapshot.port_a;
+                value = update_bit(value, write.target_bit, write.bit_value);
+                self.backend.write_port_a(pad, value);
+            }
+            Some(InputReg::PortB) => {
+                let mut value = pad_snapshot.port_b;
+                value = update_bit(value, write.target_bit, write.bit_value);
+                self.backend.write_port_b(pad, value);
             }
             _ => {}
         }
+    }
+}
+
+fn update_bit(mut value: u8, bit: u8, set: bool) -> u8 {
+    let mask = 1u8 << bit;
+    if set {
+        value |= mask;
+    } else {
+        value &= !mask;
+    }
+    value
+}
+
+#[derive(Default)]
+struct ModernInputState {
+    pads: [ControllerPadState; CONTROLLER_PAD_COUNT],
+}
+
+impl ModernInputState {
+    fn update_gamepad(&mut self, pad: usize, gamepad_id: Option<u32>) {
+        if let Some(state) = self.pads.get_mut(pad) {
+            state.gamepad_id = gamepad_id;
+        }
+    }
+
+    fn update_button(
+        &mut self,
+        pad: usize,
+        button: ControllerButton,
+        value: f32,
+    ) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.set_button_value(button, value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn update_axis(&mut self, pad: usize, axis: ControllerAxis, value: f32) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.set_axis_value(axis, value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_buttons_lo(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        let current = state.digital_mask;
+        let new_mask = (current & 0xFF00) | value as u16;
+        state.apply_digital_mask(new_mask);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_buttons_hi(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        let current = state.digital_mask;
+        let new_mask = (current & 0x00FF) | ((value as u16) << 8);
+        state.apply_digital_mask(new_mask);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_port_a(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.apply_port_a(value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_port_b(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.apply_port_b(value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_pot_x(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.set_pot_x(value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn write_pot_y(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
+        let state = self.pads.get_mut(pad)?;
+        state.set_pot_y(value);
+        Some(PadPublish::new(pad, state.pad_snapshot()))
+    }
+
+    fn to_modern_snapshot(&self) -> ModernInputSnapshot {
+        let pads = self
+            .pads
+            .iter()
+            .map(ControllerPadState::modern_snapshot)
+            .collect();
+        ModernInputSnapshot { pads }
+    }
+
+    fn handle_hook(&mut self, _hook: &str, _action: HookAction) {
+        // Hooks not used yet; kept for future adapter diagnostics.
+    }
+}
+
+struct PadPublish {
+    pad: usize,
+    snapshot: InputPadSnapshot,
+}
+
+impl PadPublish {
+    fn new(pad: usize, snapshot: InputPadSnapshot) -> Self {
+        Self { pad, snapshot }
     }
 }
 
@@ -222,6 +399,7 @@ struct ControllerPadState {
     gamepad_id: Option<u32>,
     buttons: [ButtonState; BUTTONS.len()],
     axes: [AxisState; AXES.len()],
+    digital_mask: u16,
     pot_x: u8,
     pot_y: u8,
 }
@@ -232,6 +410,7 @@ impl Default for ControllerPadState {
             gamepad_id: None,
             buttons: array::from_fn(|_| ButtonState::default()),
             axes: array::from_fn(|_| AxisState::default()),
+            digital_mask: 0,
             pot_x: POT_MIN,
             pot_y: POT_MIN,
         }
@@ -239,243 +418,196 @@ impl Default for ControllerPadState {
 }
 
 impl ControllerPadState {
-    fn set_gamepad(&mut self, gamepad_id: Option<u32>) {
-        self.gamepad_id = gamepad_id;
-    }
-
-    fn update_button(&mut self, button: ControllerButton, value: f32) {
+    fn set_button_value(&mut self, button: ControllerButton, value: f32) {
         if let Some(state) = self.button_state_mut(button) {
             state.current_value = value;
             state.pressed = value > BUTTON_PRESS_THRESHOLD;
             if state.pressed {
                 state.last_active_value = Some(value);
+                self.digital_mask |= button_bit(button);
+            } else {
+                self.digital_mask &= !button_bit(button);
             }
         }
     }
 
-    fn update_axis(&mut self, axis: ControllerAxis, value: f32) {
+    fn set_axis_value(&mut self, axis: ControllerAxis, value: f32) {
         if let Some(state) = self.axis_state_mut(axis) {
             state.value = value;
             if value.abs() >= AXIS_ACTIVE_THRESHOLD {
                 state.last_active_value = Some(value);
             }
         }
-
         match axis {
-            ControllerAxis::LeftStickX => {
-                self.pot_x = axis_to_pot(value);
-            }
-            ControllerAxis::LeftStickY => {
-                self.pot_y = axis_to_pot(value);
+            ControllerAxis::LeftStickX => self.pot_x = axis_to_pot(value),
+            ControllerAxis::LeftStickY => self.pot_y = axis_to_pot(value),
+        }
+    }
+
+    fn apply_digital_mask(&mut self, mask: u16) {
+        self.digital_mask = mask;
+        for button in BUTTONS {
+            let pressed = (mask & button_bit(button)) != 0;
+            if let Some(state) = self.button_state_mut(button) {
+                state.pressed = pressed;
+                state.current_value = if pressed { 1.0 } else { 0.0 };
+                if pressed {
+                    state.last_active_value = Some(1.0);
+                }
             }
         }
     }
 
-    fn write_pot_x(&mut self, value: u8) {
+    fn apply_port_a(&mut self, port_a: u8) {
+        self.set_button_from_port(port_a, ControllerButton::DPadUp, 0);
+        self.set_button_from_port(port_a, ControllerButton::DPadDown, 1);
+        self.set_button_from_port(port_a, ControllerButton::DPadLeft, 2);
+        self.set_button_from_port(port_a, ControllerButton::DPadRight, 3);
+        self.set_button_from_port(port_a, ControllerButton::South, 4);
+    }
+
+    fn apply_port_b(&mut self, port_b: u8) {
+        self.set_button_from_port(port_b, ControllerButton::Start, 0);
+        self.set_button_from_port(port_b, ControllerButton::Select, 1);
+        self.set_button_from_port(port_b, ControllerButton::RightShoulder, 2);
+        self.set_button_from_port(port_b, ControllerButton::LeftThumb, 3);
+        self.set_button_from_port(port_b, ControllerButton::East, 4);
+    }
+
+    fn set_button_from_port(&mut self, port: u8, button: ControllerButton, bit: u8) {
+        let pressed = (port & (1 << bit)) == 0;
+        if let Some(state) = self.button_state_mut(button) {
+            state.pressed = pressed;
+            state.current_value = if pressed { 1.0 } else { 0.0 };
+            if pressed {
+                state.last_active_value = Some(1.0);
+                self.digital_mask |= button_bit(button);
+            } else {
+                self.digital_mask &= !button_bit(button);
+            }
+        }
+    }
+
+    fn set_pot_x(&mut self, value: u8) {
         self.pot_x = value;
-        if let Some(axis) = self.axis_state_mut(ControllerAxis::LeftStickX) {
-            axis.value = pot_to_axis(value);
+        if let Some(state) = self.axis_state_mut(ControllerAxis::LeftStickX) {
+            state.value = pot_to_axis(value);
         }
     }
 
-    fn write_pot_y(&mut self, value: u8) {
+    fn set_pot_y(&mut self, value: u8) {
         self.pot_y = value;
-        if let Some(axis) = self.axis_state_mut(ControllerAxis::LeftStickY) {
-            axis.value = pot_to_axis(value);
+        if let Some(state) = self.axis_state_mut(ControllerAxis::LeftStickY) {
+            state.value = pot_to_axis(value);
         }
     }
 
-    fn button_sample(&self, button: ControllerButton) -> ButtonSample {
-        let digital_pressed = self
-            .button_state(button)
-            .map(|state| state.pressed)
-            .unwrap_or(false);
-        let aggregated_pressed = digital_pressed || self.analog_drives_button(button);
-
-        let (value, last_active) = self
-            .button_state(button)
-            .map(|state| (state.current_value, state.last_active_value))
-            .unwrap_or((0.0, None));
-
-        ButtonSample {
-            pressed: aggregated_pressed,
-            value,
-            last_active_value: last_active,
+    fn pad_snapshot(&self) -> InputPadSnapshot {
+        let buttons = self.buttons_mask();
+        let (port_a, port_b) = port_from_buttons(buttons);
+        InputPadSnapshot {
+            port_a,
+            port_b,
+            buttons,
+            pot_x: self.pot_x,
+            pot_y: self.pot_y,
         }
     }
 
-    fn axis_sample(&self, axis: ControllerAxis) -> AxisSample {
-        self.axis_state(axis)
-            .map(|state| AxisSample {
-                value: state.value,
-                last_active_value: state.last_active_value,
-            })
-            .unwrap_or_default()
+    fn buttons_mask(&self) -> u16 {
+        self.digital_mask | self.analog_mask()
     }
 
-    fn button_state(&self, button: ControllerButton) -> Option<&ButtonState> {
-        button_index(button).map(|idx| &self.buttons[idx])
+    fn analog_mask(&self) -> u16 {
+        let mut mask = 0;
+        if self.pot_x == POT_MIN {
+            mask |= button_bit(ControllerButton::DPadLeft);
+        } else if self.pot_x == POT_MAX {
+            mask |= button_bit(ControllerButton::DPadRight);
+        }
+
+        if self.pot_y == POT_MIN {
+            mask |= button_bit(ControllerButton::DPadUp);
+        } else if self.pot_y == POT_MAX {
+            mask |= button_bit(ControllerButton::DPadDown);
+        }
+        mask
     }
 
     fn button_state_mut(&mut self, button: ControllerButton) -> Option<&mut ButtonState> {
-        button_index(button).map(|idx| &mut self.buttons[idx])
+        BUTTONS
+            .iter()
+            .position(|candidate| *candidate == button)
+            .map(|index| &mut self.buttons[index])
     }
 
-    fn axis_state(&self, axis: ControllerAxis) -> Option<&AxisState> {
-        axis_index(axis).map(|idx| &self.axes[idx])
+    fn button_state(&self, button: ControllerButton) -> Option<&ButtonState> {
+        BUTTONS
+            .iter()
+            .position(|candidate| *candidate == button)
+            .map(|index| &self.buttons[index])
     }
 
     fn axis_state_mut(&mut self, axis: ControllerAxis) -> Option<&mut AxisState> {
-        axis_index(axis).map(|idx| &mut self.axes[idx])
+        AXES.iter()
+            .position(|candidate| *candidate == axis)
+            .map(|index| &mut self.axes[index])
     }
 
-    fn is_pressed(&self, button: ControllerButton) -> bool {
-        self.button_state(button)
-            .map(|state| state.pressed)
-            .unwrap_or(false)
-            || self.analog_drives_button(button)
+    fn axis_state(&self, axis: ControllerAxis) -> Option<&AxisState> {
+        AXES.iter()
+            .position(|candidate| *candidate == axis)
+            .map(|index| &self.axes[index])
     }
 
-    fn analog_drives_button(&self, button: ControllerButton) -> bool {
-        match button {
-            ControllerButton::DPadLeft => self.pot_x == POT_MIN,
-            ControllerButton::DPadRight => self.pot_x == POT_MAX,
-            ControllerButton::DPadUp => self.pot_y == POT_MIN,
-            ControllerButton::DPadDown => self.pot_y == POT_MAX,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Default)]
-struct ModernInputState {
-    pads: [ControllerPadState; CONTROLLER_PADS],
-}
-
-impl ModernInputState {
-    fn update_gamepad(&mut self, pad: usize, gamepad_id: Option<u32>) {
-        if pad < CONTROLLER_PADS {
-            self.pads[pad].set_gamepad(gamepad_id);
-        }
-    }
-
-    fn update_button(
-        &mut self,
-        pad: usize,
-        button: ControllerButton,
-        value: f32,
-    ) -> Option<(u8, u8, u8, u8)> {
-        if pad >= CONTROLLER_PADS {
-            return None;
-        }
-
-        self.pads[pad].update_button(button, value);
-        Some(self.primary_ports())
-    }
-
-    fn update_axis(
-        &mut self,
-        pad: usize,
-        axis: ControllerAxis,
-        value: f32,
-    ) -> Option<(u8, u8, u8, u8)> {
-        if pad >= CONTROLLER_PADS {
-            return None;
-        }
-
-        self.pads[pad].update_axis(axis, value);
-        Some(self.primary_ports())
-    }
-
-    fn write_primary_pot_x(&mut self, value: u8) -> Option<(u8, u8, u8, u8)> {
-        let idx = self.primary_pad_index();
-        self.pads[idx].write_pot_x(value);
-        Some(self.primary_ports())
-    }
-
-    fn write_primary_pot_y(&mut self, value: u8) -> Option<(u8, u8, u8, u8)> {
-        let idx = self.primary_pad_index();
-        self.pads[idx].write_pot_y(value);
-        Some(self.primary_ports())
-    }
-
-    fn primary_ports(&self) -> (u8, u8, u8, u8) {
-        let idx = self.primary_pad_index();
-        let pad = &self.pads[idx];
-        let mut port_a = 0xFF;
-        let mut port_b = 0xFF;
-
-        if pad.is_pressed(ControllerButton::DPadUp) {
-            port_a &= !(1 << 0);
-        }
-        if pad.is_pressed(ControllerButton::DPadDown) {
-            port_a &= !(1 << 1);
-        }
-        if pad.is_pressed(ControllerButton::DPadLeft) {
-            port_a &= !(1 << 2);
-        }
-        if pad.is_pressed(ControllerButton::DPadRight) {
-            port_a &= !(1 << 3);
-        }
-        if pad.is_pressed(ControllerButton::South) {
-            port_a &= !(1 << 4);
-        }
-
-        if pad.is_pressed(ControllerButton::Start) {
-            port_b &= !(1 << 0);
-        }
-        if pad.is_pressed(ControllerButton::Select) {
-            port_b &= !(1 << 1);
-        }
-        if pad.is_pressed(ControllerButton::Mode) {
-            port_b &= !(1 << 2);
-        }
-        if pad.is_pressed(ControllerButton::LeftThumb) {
-            port_b &= !(1 << 3);
-        }
-        if pad.is_pressed(ControllerButton::East) {
-            port_b &= !(1 << 4);
-        }
-
-        (port_a, port_b, pad.pot_x, pad.pot_y)
-    }
-
-    fn primary_pad_index(&self) -> usize {
-        self.pads
+    fn modern_snapshot(&self) -> ModernControllerPadSnapshot {
+        let buttons = BUTTONS
             .iter()
-            .position(|pad| pad.gamepad_id.is_some())
-            .unwrap_or(0)
-    }
-
-    fn to_modern_snapshot(&self) -> ModernInputSnapshot {
-        let pads = self
-            .pads
-            .iter()
-            .map(|pad| ModernControllerPadSnapshot {
-                gamepad_id: pad.gamepad_id,
-                buttons: BUTTONS
-                    .iter()
-                    .map(|button| (*button, pad.button_sample(*button)))
-                    .collect(),
-                axes: AXES
-                    .iter()
-                    .map(|axis| (*axis, pad.axis_sample(*axis)))
-                    .collect(),
-                pot_x: pad.pot_x,
-                pot_y: pad.pot_y,
+            .map(|button| {
+                let digital = self.button_state(*button).cloned().unwrap_or_default();
+                let analog_pressed = (self.analog_mask() & button_bit(*button)) != 0;
+                let pressed = digital.pressed || analog_pressed;
+                let value = if digital.pressed {
+                    digital.current_value
+                } else if analog_pressed {
+                    1.0
+                } else {
+                    0.0
+                };
+                let mut sample = ButtonSample {
+                    pressed,
+                    value,
+                    last_active_value: digital.last_active_value,
+                };
+                if analog_pressed && sample.last_active_value.is_none() {
+                    sample.last_active_value = Some(1.0);
+                }
+                (*button, sample)
             })
             .collect();
 
-        ModernInputSnapshot { pads }
+        let axes = AXES
+            .iter()
+            .map(|axis| {
+                let state = self.axis_state(*axis).cloned().unwrap_or_default();
+                (
+                    *axis,
+                    AxisSample {
+                        value: state.value,
+                        last_active_value: state.last_active_value,
+                    },
+                )
+            })
+            .collect();
+
+        ModernControllerPadSnapshot {
+            gamepad_id: self.gamepad_id,
+            buttons,
+            axes,
+            pot_x: self.pot_x,
+            pot_y: self.pot_y,
+        }
     }
-}
-
-fn button_index(button: ControllerButton) -> Option<usize> {
-    BUTTONS.iter().position(|candidate| *candidate == button)
-}
-
-fn axis_index(axis: ControllerAxis) -> Option<usize> {
-    AXES.iter().position(|candidate| *candidate == axis)
 }
 
 fn axis_to_pot(value: f32) -> u8 {
@@ -490,39 +622,58 @@ fn pot_to_axis(value: u8) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmio::{ModuleAdapterEvent, PrimaryWriteEvent};
-    use crate::RegId;
-    use std::sync::Mutex;
+    use crate::mmio::{ModuleAdapterEvent, PrimaryWriteEvent, RegId};
 
     #[derive(Default)]
     struct RecordingBackend {
-        port_a: Mutex<Vec<u8>>,
-        port_b: Mutex<Vec<u8>>,
-        pot_x: Mutex<Vec<u8>>,
-        pot_y: Mutex<Vec<u8>>,
+        events: Mutex<Vec<(usize, InputReg, u8)>>,
     }
 
     impl InputBackend for RecordingBackend {
         fn update_gamepad(&self, _pad: usize, _gamepad_id: Option<u32>) {}
-
         fn update_button(&self, _pad: usize, _button: ControllerButton, _value: f32) {}
-
         fn update_axis(&self, _pad: usize, _axis: ControllerAxis, _value: f32) {}
 
-        fn write_port_a(&self, value: u8) {
-            self.port_a.lock().unwrap().push(value);
+        fn write_port_a(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::PortA, value));
         }
 
-        fn write_port_b(&self, value: u8) {
-            self.port_b.lock().unwrap().push(value);
+        fn write_port_b(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::PortB, value));
         }
 
-        fn write_pot_x(&self, value: u8) {
-            self.pot_x.lock().unwrap().push(value);
+        fn write_buttons_lo(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::ButtonsLo, value));
         }
 
-        fn write_pot_y(&self, value: u8) {
-            self.pot_y.lock().unwrap().push(value);
+        fn write_buttons_hi(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::ButtonsHi, value));
+        }
+
+        fn write_pot_x(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::PotX, value));
+        }
+
+        fn write_pot_y(&self, pad: usize, value: u8) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pad, InputReg::PotY, value));
         }
 
         fn snapshot(&self) -> InputSnapshot {
@@ -539,33 +690,20 @@ mod tests {
             reg: RegId::Input(InputReg::PortA),
             cpu_value: 0,
             module_value: 0x7F,
-            instance: None,
+            instance: Some(0),
         }));
 
         adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
-            reg: RegId::Input(InputReg::PortB),
+            reg: RegId::Input(InputReg::ButtonsLo),
             cpu_value: 0,
-            module_value: 0xFE,
-            instance: None,
+            module_value: 0x55,
+            instance: Some(1),
         }));
 
-        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
-            reg: RegId::Input(InputReg::PotX),
-            cpu_value: 0,
-            module_value: 0x12,
-            instance: None,
-        }));
-
-        adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
-            reg: RegId::Input(InputReg::PotY),
-            cpu_value: 0,
-            module_value: 0x34,
-            instance: None,
-        }));
-
-        assert_eq!(backend.port_a.lock().unwrap()[..], [0x7F]);
-        assert_eq!(backend.port_b.lock().unwrap()[..], [0xFE]);
-        assert_eq!(backend.pot_x.lock().unwrap()[..], [0x12]);
-        assert_eq!(backend.pot_y.lock().unwrap()[..], [0x34]);
+        let events = backend.events.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![(0, InputReg::PortA, 0x7F), (1, InputReg::ButtonsLo, 0x55)]
+        );
     }
 }

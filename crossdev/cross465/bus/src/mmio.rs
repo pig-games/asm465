@@ -118,8 +118,11 @@ pub enum DisplayReg {
 /// Input register identifiers (e.g. joystick ports).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum InputReg {
+    Select,
     PortA,
     PortB,
+    ButtonsLo,
+    ButtonsHi,
     PotX,
     PotY,
 }

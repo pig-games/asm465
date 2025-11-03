@@ -68,11 +68,15 @@ decode = { sparse = [
 
 [[map]]
 priority = 10
+decode = { instances = { kind = "input", selector = "Select", count = 2, index_var = "p", layout = [
+  { addr = "DC00 + p", id = "PortA" }
+] } }
+
+[[map]]
+priority = 10
 decode = { sparse = [
-  { addr = "DC00", kind = "input", id = "PortA" },
-  { addr = "DC01", kind = "input", id = "PortB" },
-  { addr = "D419", kind = "input", id = "PotX" },
-  { addr = "D41A", kind = "input", id = "PotY" }
+  { addr = "D419", kind = "input", id = "PotX", transform = { pre_read_sets = [{ kind = "input", id = "Select", value = 0 }], pre_write_sets = [{ kind = "input", id = "Select", value = 0 }] } },
+  { addr = "D41A", kind = "input", id = "PotY", transform = { pre_read_sets = [{ kind = "input", id = "Select", value = 0 }], pre_write_sets = [{ kind = "input", id = "Select", value = 0 }] } }
 ] }
 
 [[map]]

@@ -73,6 +73,7 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Use the shared tracker as the single source of truth; controller adapters consume it to drive PortA/PortB/POT registers while the UI reads the same structure.
   - Normalize analog-only controllers by synthesizing D-pad presses whenever POT values hit 0/255 so thumbsticks and paddle-style devices still drive the legacy MMIO bits.
   - Move the MMIO translation responsibility into the controller adapter so personalities consistently see active-low bits derived from the shared modern state, keeping the UI purely observational.
+  - Publish a 16-bit button mask per pad (`ButtonsLo/ButtonsHi`) alongside active-low ports so personalities choose between modern and legacy views; the modern-retro personality exposes all six registers per pad via an instanced range, while the C64 personality maps pad 0/1 directly to `$DC00/$DC01`.
 - [ ] Make the VideoOverlaySignals optional via a cli parameter.
 
 ## Deliverables

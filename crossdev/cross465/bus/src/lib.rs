@@ -400,8 +400,13 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
             .expect("input output handle available");
         {
             let mut input = input_handle.lock().unwrap();
-            input.set_port_a(0xEF);
-            input.set_port_b(0xF7);
+            input.set_pad_port_a(0, 0xEF);
+            input.set_pad_port_a(1, 0xF7);
+        }
+        {
+            let input = input_handle.lock().unwrap();
+            assert_eq!(input.pad_snapshot(0).port_a, 0xEF);
+            assert_eq!(input.pad_snapshot(1).port_a, 0xF7);
         }
         assert_eq!(bus.read(0xDC00), 0xEF);
         assert_eq!(bus.read(0xDC01), 0xF7);

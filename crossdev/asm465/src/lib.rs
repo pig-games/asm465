@@ -7,6 +7,7 @@
 //! in platform-neutral modules.
 
 use std::cmp::Ordering;
+use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,8 +32,8 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::input_mmio::{
-    AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
-    ModernControllerPadSnapshot,
+    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputPadSnapshot,
+    InputSnapshot, ModernControllerPadSnapshot, CONTROLLER_PAD_COUNT,
 };
 use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::mmio::SystemReg;
@@ -1365,7 +1366,25 @@ impl InterruptBindings {
     }
 }
 
-const CONTROLLER_PADS: usize = 2;
+const CONTROLLER_PADS: usize = CONTROLLER_PAD_COUNT;
+const CONTROLLER_BUTTON_ORDER: [ControllerButton; 16] = [
+    ControllerButton::DPadUp,
+    ControllerButton::DPadDown,
+    ControllerButton::DPadLeft,
+    ControllerButton::DPadRight,
+    ControllerButton::South,
+    ControllerButton::East,
+    ControllerButton::West,
+    ControllerButton::North,
+    ControllerButton::Start,
+    ControllerButton::Select,
+    ControllerButton::LeftShoulder,
+    ControllerButton::RightShoulder,
+    ControllerButton::LeftTrigger,
+    ControllerButton::RightTrigger,
+    ControllerButton::LeftThumb,
+    ControllerButton::RightThumb,
+];
 
 #[derive(Clone, Copy, Default)]
 struct PadAssignment {
@@ -1408,7 +1427,7 @@ impl ControllerState {
         if changed {
             if let Some(new_backend) = backend.as_ref() {
                 for (index, pad) in self.pads.iter().enumerate() {
-                    let id = pad.gamepad.map(|gamepad| gamepad.id as u32);
+                    let id = pad.gamepad.and_then(gamepad_id_u32);
                     new_backend.update_gamepad(index, id);
                 }
             }
@@ -1485,10 +1504,23 @@ impl ControllerState {
         let index = self.first_free_pad()?;
         self.pads[index].gamepad = Some(gamepad);
         if let Some(backend) = &self.backend {
-            backend.update_gamepad(index, Some(gamepad.id as u32));
+            backend.update_gamepad(index, gamepad_id_u32(gamepad));
         }
         Some(index)
     }
+
+    fn pad_gamepad_label(&self, index: usize) -> String {
+        self.pads
+            .get(index)
+            .and_then(|pad| pad.gamepad)
+            .and_then(gamepad_id_u32)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "None".to_string())
+    }
+}
+
+fn gamepad_id_u32(gamepad: Gamepad) -> Option<u32> {
+    u32::try_from(gamepad.id).ok()
 }
 
 fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
@@ -1503,8 +1535,17 @@ fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
         GamepadButtonType::North => Some(ControllerButton::North),
         GamepadButtonType::Start => Some(ControllerButton::Start),
         GamepadButtonType::Select => Some(ControllerButton::Select),
-        GamepadButtonType::Mode => Some(ControllerButton::Mode),
+        GamepadButtonType::Mode => Some(ControllerButton::Select),
         GamepadButtonType::LeftThumb => Some(ControllerButton::LeftThumb),
+        GamepadButtonType::RightThumb => Some(ControllerButton::RightThumb),
+        GamepadButtonType::LeftTrigger | GamepadButtonType::LeftTrigger2 => {
+            Some(ControllerButton::LeftTrigger)
+        }
+        GamepadButtonType::RightTrigger | GamepadButtonType::RightTrigger2 => {
+            Some(ControllerButton::RightTrigger)
+        }
+        GamepadButtonType::C => Some(ControllerButton::LeftShoulder),
+        GamepadButtonType::Z => Some(ControllerButton::RightShoulder),
         _ => None,
     }
 }
@@ -1695,51 +1736,88 @@ fn gamepad_interrupt_system(
     }
 }
 
-fn render_controller_pad(ui: &mut egui::Ui, index: usize, pad: &ModernControllerPadSnapshot) {
+fn render_controller_pad(
+    ui: &mut egui::Ui,
+    index: usize,
+    gamepad_label: &str,
+    current: Option<&InputPadSnapshot>,
+    previous: Option<&InputPadSnapshot>,
+    modern: Option<&ModernControllerPadSnapshot>,
+) {
     ui.heading(format!("Controller {index}"));
-    let gamepad_label = pad
-        .gamepad_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "None".to_string());
     ui.label(format!("Gamepad ID: {gamepad_label}"));
-    ui.add_space(4.0);
 
-    ui.label("Buttons");
-    egui::Grid::new(format!("controller_{index}_buttons"))
-        .striped(true)
-        .show(ui, |grid| {
-            grid.label("Button");
-            grid.label("Current");
-            grid.label("Last");
-            grid.end_row();
-            for (button, sample) in &pad.buttons {
-                grid.label(controller_button_label(*button));
-                grid.label(button_current_text(sample));
-                grid.label(button_last_text(sample));
-                grid.end_row();
-            }
-        });
-
-    ui.add_space(6.0);
-    ui.label("Axes");
-    egui::Grid::new(format!("controller_{index}_axes"))
-        .striped(true)
-        .show(ui, |grid| {
-            grid.label("Axis");
-            grid.label("Current");
-            grid.label("Last");
-            grid.end_row();
-            for (axis, sample) in &pad.axes {
-                grid.label(controller_axis_label(*axis));
-                grid.label(axis_current_text(sample));
-                grid.label(axis_last_text(sample));
-                grid.end_row();
-            }
-        });
+    if let Some(current) = current {
+        let last = previous.unwrap_or(current);
+        ui.label(format!(
+            "Port A (active-low): now=0x{:02X} last=0x{:02X}",
+            current.port_a, last.port_a
+        ));
+        ui.label(format!(
+            "Port B (active-low): now=0x{:02X} last=0x{:02X}",
+            current.port_b, last.port_b
+        ));
+        ui.label(format!(
+            "Buttons mask: now=0x{:04X} last=0x{:04X}",
+            current.buttons, last.buttons
+        ));
+        ui.label(format!("Current buttons: {}", button_list(current.buttons)));
+        if current.buttons != last.buttons {
+            ui.label(format!("Last buttons: {}", button_list(last.buttons)));
+        }
+        ui.label(format!(
+            "Pot X: now={:03} last={:03}",
+            current.pot_x, last.pot_x
+        ));
+        ui.label(format!(
+            "Pot Y: now={:03} last={:03}",
+            current.pot_y, last.pot_y
+        ));
+    } else {
+        ui.label("MMIO state unavailable.");
+    }
 
     ui.add_space(6.0);
-    ui.label(format!("Pot X: 0x{:02X}", pad.pot_x));
-    ui.label(format!("Pot Y: 0x{:02X}", pad.pot_y));
+    if let Some(modern) = modern {
+        ui.label("Buttons");
+        egui::Grid::new(format!("controller_{index}_buttons"))
+            .striped(true)
+            .show(ui, |grid| {
+                grid.label("Button");
+                grid.label("Current");
+                grid.label("Last");
+                grid.end_row();
+                for (button, sample) in &modern.buttons {
+                    grid.label(controller_button_label(*button));
+                    grid.label(button_current_text(sample));
+                    grid.label(button_last_text(sample));
+                    grid.end_row();
+                }
+            });
+
+        ui.add_space(6.0);
+        ui.label("Axes");
+        egui::Grid::new(format!("controller_{index}_axes"))
+            .striped(true)
+            .show(ui, |grid| {
+                grid.label("Axis");
+                grid.label("Current");
+                grid.label("Last");
+                grid.end_row();
+                for (axis, sample) in &modern.axes {
+                    grid.label(controller_axis_label(*axis));
+                    grid.label(axis_current_text(sample));
+                    grid.label(axis_last_text(sample));
+                    grid.end_row();
+                }
+            });
+
+        ui.add_space(6.0);
+        ui.label(format!("Pot X (modern): 0x{:02X}", modern.pot_x));
+        ui.label(format!("Pot Y (modern): 0x{:02X}", modern.pot_y));
+    } else {
+        ui.label("Modern telemetry unavailable.");
+    }
 }
 
 fn controller_button_label(button: ControllerButton) -> &'static str {
@@ -1754,8 +1832,26 @@ fn controller_button_label(button: ControllerButton) -> &'static str {
         ControllerButton::North => "North",
         ControllerButton::Start => "Start",
         ControllerButton::Select => "Select",
-        ControllerButton::Mode => "Mode",
+        ControllerButton::LeftShoulder => "Left Shoulder",
+        ControllerButton::RightShoulder => "Right Shoulder",
         ControllerButton::LeftThumb => "Left Thumb",
+        ControllerButton::RightThumb => "Right Thumb",
+        ControllerButton::LeftTrigger => "Left Trigger",
+        ControllerButton::RightTrigger => "Right Trigger",
+    }
+}
+
+fn button_list(mask: u16) -> String {
+    let mut labels: Vec<&'static str> = Vec::new();
+    for button in CONTROLLER_BUTTON_ORDER {
+        if mask & button_bit(button) != 0 {
+            labels.push(controller_button_label(button));
+        }
+    }
+    if labels.is_empty() {
+        "None".to_string()
+    } else {
+        labels.join(", ")
     }
 }
 
@@ -2382,51 +2478,50 @@ fn ui_system(
                         if let Some((snapshot, previous_snapshot)) =
                             controller_state.snapshot_pair()
                         {
-                            let previous_port_a = previous_snapshot
-                                .as_ref()
-                                .map(|snapshot| snapshot.port_a)
-                                .unwrap_or(snapshot.port_a);
-                            let previous_port_b = previous_snapshot
-                                .as_ref()
-                                .map(|snapshot| snapshot.port_b)
-                                .unwrap_or(snapshot.port_b);
-                            let previous_pot_x = previous_snapshot
-                                .as_ref()
-                                .map(|snapshot| snapshot.pot_x)
-                                .unwrap_or(snapshot.pot_x);
-                            let previous_pot_y = previous_snapshot
-                                .as_ref()
-                                .map(|snapshot| snapshot.pot_y)
-                                .unwrap_or(snapshot.pot_y);
+                            if snapshot.pads.is_empty() {
+                                ui.label("No controller data available.");
+                            } else {
+                                let labels: Vec<String> = (0..snapshot.pads.len())
+                                    .map(|pad| controller_state.pad_gamepad_label(pad))
+                                    .collect();
+                                let prev_ref = previous_snapshot.as_ref();
+                                let primary_count = snapshot.pads.len().min(2);
+                                if primary_count > 0 {
+                                    ui.columns(primary_count, |columns| {
+                                        for (offset, column) in columns.iter_mut().enumerate() {
+                                            let pad_index = offset;
+                                            let label = labels
+                                                .get(pad_index)
+                                                .map(|s| s.as_str())
+                                                .unwrap_or("None");
+                                            let current = snapshot.pads.get(pad_index);
+                                            let previous =
+                                                prev_ref.and_then(|prev| prev.pads.get(pad_index));
+                                            let modern = snapshot.modern.pads.get(pad_index);
+                                            render_controller_pad(
+                                                column, pad_index, label, current, previous, modern,
+                                            );
+                                        }
+                                    });
+                                }
 
-                            ui.label(format!(
-                                "Port A (active-low): now=0x{:02X} last=0x{:02X}",
-                                snapshot.port_a, previous_port_a
-                            ));
-                            ui.label(format!(
-                                "Port B (active-low): now=0x{:02X} last=0x{:02X}",
-                                snapshot.port_b, previous_port_b
-                            ));
-                            ui.label(format!(
-                                "Pot X: now={:03} last={:03}",
-                                snapshot.pot_x, previous_pot_x
-                            ));
-                            ui.label(format!(
-                                "Pot Y: now={:03} last={:03}",
-                                snapshot.pot_y, previous_pot_y
-                            ));
-
-                            ui.add_space(6.0);
-                            ui.columns(2, |columns| {
-                                for (index, column) in columns.iter_mut().enumerate() {
-                                    if let Some(pad) = snapshot.modern.pads.get(index) {
-                                        render_controller_pad(column, index, pad);
-                                    } else {
-                                        column.heading(format!("Controller {index}"));
-                                        column.label("No controller data");
+                                if snapshot.pads.len() > 2 {
+                                    for pad_index in 2..snapshot.pads.len() {
+                                        ui.separator();
+                                        let label = labels
+                                            .get(pad_index)
+                                            .map(|s| s.as_str())
+                                            .unwrap_or("None");
+                                        let current = snapshot.pads.get(pad_index);
+                                        let previous =
+                                            prev_ref.and_then(|prev| prev.pads.get(pad_index));
+                                        let modern = snapshot.modern.pads.get(pad_index);
+                                        render_controller_pad(
+                                            ui, pad_index, label, current, previous, modern,
+                                        );
                                     }
                                 }
-                            });
+                            }
                         } else {
                             ui.label("Controller snapshot unavailable.");
                         }

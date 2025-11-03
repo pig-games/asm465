@@ -129,13 +129,34 @@ fn read_gamepad_events(mut evr: EventReader<GamepadButtonChangedEvent>) {
 | Analog paddle | 0–228 range   | Axis −1.0 … 1.0 |
 | Polling       | MMIO read     | `Input<GamepadButton>` + `Axis<GamepadAxis>` |
 
+16-bit button mask layout (stored in `ButtonsLo`/`ButtonsHi` and mirrored into the developer tools panel):
+
+| Bit | Button | Description |
+| --- | ------ | ----------- |
+| 0   | DPadUp | Direction up (active high in mask, active low in `PortA`) |
+| 1   | DPadDown | Direction down |
+| 2   | DPadLeft | Direction left |
+| 3   | DPadRight | Direction right |
+| 4   | South | Primary face button / fire |
+| 5   | East | Alternate face button |
+| 6   | West | Face button (X) |
+| 7   | North | Face button (Y) |
+| 8   | Start | Start / pause |
+| 9   | Select | Select / back / mode toggle |
+| 10  | LeftShoulder | Shoulder or extra face button (`GamepadButtonType::C`) |
+| 11  | RightShoulder | Shoulder or extra face button (`GamepadButtonType::Z`) |
+| 12  | LeftTrigger | Analog trigger thresholded (or digital bumper) |
+| 13  | RightTrigger | Analog trigger thresholded (or digital bumper) |
+| 14  | LeftThumb | Left stick press |
+| 15  | RightThumb | Right stick press |
+
 ### asm465 Integration
 For **cross465/modern** targets (implemented in `bus/src/adapters/input.rs` and `asm465/src/lib.rs`):
-- Cache raw Bevy button/axis events per gamepad in a host-side state block so other systems (MMIO adapters, developer tools) can read both the *current* and *last* non-release values.
-- Write the cached state into `$DC00/$DC01` (C64) or `$D300/$D301` (Atari); conversions happen inside the controller adapter so personalities always see legacy-active-low bits.
-- Map Bevy axis values into analog paddle registers (`$D200+` or `$C064+`). When an axis reaches the edge of its range (≈0.0/1.0, or 0/255 after scaling), the adapter also toggles the corresponding D-pad bit so analog sticks and paddle-only devices behave like digital joysticks.
-- Ignore release-only events when recording the "last" value; the developer tools panel should continue showing the most recent meaningful press until a new press arrives.
-- Expose per-pad telemetry (pads 0 and 1) and keyboard history in the developer tools panel so testers can confirm both the modern state and the translated MMIO view in real time.
+- Cache raw Bevy button/axis events per gamepad in a host-side state block so adapters and tooling can read both the *current* and the last non-release values.
+- Maintain a four-pad tracker with a 16-bit button mask; the adapter keeps `ButtonsLo`/`ButtonsHi`, active-low `PortA`/`PortB`, and paddle registers in sync so personalities can pick whichever representation fits their layout.
+- Use instanced personality maps to materialise those registers: `modern-retro-range` exposes an 8-byte stride per pad (`ButtonsLo`, `ButtonsHi`, `PortA`, `PortB`, `PotX`, `PotY`), while `c64-compat-sparse` maps pad 0/1 directly to `$DC00/$DC01`.
+- Map Bevy axis values into analog paddle registers. When an axis reaches an edge (≈0.0/1.0, or 0/255 after scaling), the adapter toggles the corresponding D-pad bit so analog-only devices still drive the digital view.
+- Ignore release-only events when recording the "last" value so the developer tools panel (controllers 0/1 side-by-side, additional pads listed below) always shows the most recent meaningful change alongside the keyboard history.
 
 This allows modern controllers to emulate 6502-era inputs in simulations and development tools.
 
