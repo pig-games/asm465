@@ -1586,6 +1586,7 @@ fn emit_frame_end_interrupt(bindings: Option<Res<InterruptBindings>>) {
 #[derive(Resource, Default)]
 struct KeyboardTracker {
     current: Vec<String>,
+    last: Vec<String>,
     previous: Vec<String>,
 }
 
@@ -1593,16 +1594,42 @@ impl KeyboardTracker {
     fn update_from_input(&mut self, input: &Input<KeyCode>) {
         let mut pressed: Vec<String> = input.get_pressed().map(|key| format!("{key:?}")).collect();
         pressed.sort();
-        self.previous = std::mem::take(&mut self.current);
+
+        if pressed.is_empty() {
+            self.last.clear();
+            self.current.clear();
+            return;
+        }
+
+        if pressed == self.current {
+            return;
+        }
+
+        // find newly pressed keys
+        let new_keys: Vec<_> = pressed
+            .iter()
+            .filter(|k| !self.current.contains(k))
+            .cloned()
+            .collect();
+
+        self.last = self.current.clone();
         self.current = pressed;
+
+        // only append new ones
+        self.previous.extend(new_keys);
+
+        if self.previous.len() > 20 {
+            let len = self.previous.len();
+            self.previous = self.previous[len - 20..].to_vec();
+        }
     }
 
     fn current(&self) -> &[String] {
         &self.current
     }
 
-    fn previous(&self) -> &[String] {
-        &self.previous
+    fn previous(&self) -> String {
+        self.previous.concat()
     }
 }
 
@@ -1740,42 +1767,10 @@ fn render_controller_pad(
     ui: &mut egui::Ui,
     index: usize,
     gamepad_label: &str,
-    current: Option<&InputPadSnapshot>,
-    previous: Option<&InputPadSnapshot>,
     modern: Option<&ModernControllerPadSnapshot>,
 ) {
     ui.heading(format!("Controller {index}"));
     ui.label(format!("Gamepad ID: {gamepad_label}"));
-
-    if let Some(current) = current {
-        let last = previous.unwrap_or(current);
-        ui.label(format!(
-            "Port A (active-low): now=0x{:02X} last=0x{:02X}",
-            current.port_a, last.port_a
-        ));
-        ui.label(format!(
-            "Port B (active-low): now=0x{:02X} last=0x{:02X}",
-            current.port_b, last.port_b
-        ));
-        ui.label(format!(
-            "Buttons mask: now=0x{:04X} last=0x{:04X}",
-            current.buttons, last.buttons
-        ));
-        ui.label(format!("Current buttons: {}", button_list(current.buttons)));
-        if current.buttons != last.buttons {
-            ui.label(format!("Last buttons: {}", button_list(last.buttons)));
-        }
-        ui.label(format!(
-            "Pot X: now={:03} last={:03}",
-            current.pot_x, last.pot_x
-        ));
-        ui.label(format!(
-            "Pot Y: now={:03} last={:03}",
-            current.pot_y, last.pot_y
-        ));
-    } else {
-        ui.label("MMIO state unavailable.");
-    }
 
     ui.add_space(6.0);
     if let Some(modern) = modern {
@@ -1784,13 +1779,11 @@ fn render_controller_pad(
             .striped(true)
             .show(ui, |grid| {
                 grid.label("Button");
-                grid.label("Current");
-                grid.label("Last");
+                grid.label("Value");
                 grid.end_row();
                 for (button, sample) in &modern.buttons {
                     grid.label(controller_button_label(*button));
                     grid.label(button_current_text(sample));
-                    grid.label(button_last_text(sample));
                     grid.end_row();
                 }
             });
@@ -1801,13 +1794,11 @@ fn render_controller_pad(
             .striped(true)
             .show(ui, |grid| {
                 grid.label("Axis");
-                grid.label("Current");
-                grid.label("Last");
+                grid.label("Value");
                 grid.end_row();
                 for (axis, sample) in &modern.axes {
                     grid.label(controller_axis_label(*axis));
                     grid.label(axis_current_text(sample));
-                    grid.label(axis_last_text(sample));
                     grid.end_row();
                 }
             });
@@ -1906,7 +1897,7 @@ fn render_keyboard_section(ui: &mut egui::Ui, tracker: &KeyboardTracker) {
     let last_text = if last.is_empty() {
         "None".to_string()
     } else {
-        last.join(", ")
+        last
     };
 
     ui.horizontal(|ui| {
@@ -2473,7 +2464,10 @@ fn ui_system(
                     }
                 }
                 ConsoleTab::Input => {
-                    ui.heading("Input");
+                    ui.heading("Keyboard");
+                    render_keyboard_section(ui, &keyboard_tracker);
+                    ui.separator();
+
                     if controller_state.has_backend() {
                         if let Some((snapshot, previous_snapshot)) =
                             controller_state.snapshot_pair()
@@ -2485,41 +2479,21 @@ fn ui_system(
                                     .map(|pad| controller_state.pad_gamepad_label(pad))
                                     .collect();
                                 let prev_ref = previous_snapshot.as_ref();
-                                let primary_count = snapshot.pads.len().min(2);
-                                if primary_count > 0 {
-                                    ui.columns(primary_count, |columns| {
+                                if snapshot.pads.len().min(2) > 0 {
+                                    ui.columns(snapshot.pads.len(), |columns| {
                                         for (offset, column) in columns.iter_mut().enumerate() {
                                             let pad_index = offset;
                                             let label = labels
                                                 .get(pad_index)
                                                 .map(|s| s.as_str())
                                                 .unwrap_or("None");
-                                            let current = snapshot.pads.get(pad_index);
-                                            let previous =
                                                 prev_ref.and_then(|prev| prev.pads.get(pad_index));
                                             let modern = snapshot.modern.pads.get(pad_index);
                                             render_controller_pad(
-                                                column, pad_index, label, current, previous, modern,
+                                                column, pad_index, label, modern,
                                             );
                                         }
                                     });
-                                }
-
-                                if snapshot.pads.len() > 2 {
-                                    for pad_index in 2..snapshot.pads.len() {
-                                        ui.separator();
-                                        let label = labels
-                                            .get(pad_index)
-                                            .map(|s| s.as_str())
-                                            .unwrap_or("None");
-                                        let current = snapshot.pads.get(pad_index);
-                                        let previous =
-                                            prev_ref.and_then(|prev| prev.pads.get(pad_index));
-                                        let modern = snapshot.modern.pads.get(pad_index);
-                                        render_controller_pad(
-                                            ui, pad_index, label, current, previous, modern,
-                                        );
-                                    }
                                 }
                             }
                         } else {
@@ -2528,10 +2502,6 @@ fn ui_system(
                     } else {
                         ui.label("Controller adapter not attached for this personality.");
                     }
-
-                    ui.separator();
-                    ui.heading("Keyboard");
-                    render_keyboard_section(ui, &keyboard_tracker);
                 }
             }
         });
