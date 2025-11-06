@@ -1866,22 +1866,8 @@ fn button_current_text(sample: &ButtonSample) -> String {
     }
 }
 
-fn button_last_text(sample: &ButtonSample) -> String {
-    sample
-        .last_active_value
-        .map(|value| format!("{value:.2}"))
-        .unwrap_or_else(|| "—".to_string())
-}
-
 fn axis_current_text(sample: &AxisSample) -> String {
     format!("{:.2}", sample.value)
-}
-
-fn axis_last_text(sample: &AxisSample) -> String {
-    sample
-        .last_active_value
-        .map(|value| format!("{value:.2}"))
-        .unwrap_or_else(|| "—".to_string())
 }
 
 fn render_keyboard_section(ui: &mut egui::Ui, tracker: &KeyboardTracker) {

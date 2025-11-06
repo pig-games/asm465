@@ -193,8 +193,8 @@ impl Default for InputOutput {
                 port_a: 0xFF,
                 port_b: 0xFF,
                 buttons: 0,
-                pot_x: 0,
-                pot_y: 0,
+                pot_x: 128,
+                pot_y: 128,
             }; CONTROLLER_PAD_COUNT],
         }
     }
@@ -337,7 +337,7 @@ const INPUT_REGS: &[RegisterDesc] = &[
         RegId::Input(InputReg::PotX),
         "PotX",
         1,
-        0x00,
+        0x7f,
         true,
         true,
         &[],
@@ -346,7 +346,7 @@ const INPUT_REGS: &[RegisterDesc] = &[
         RegId::Input(InputReg::PotY),
         "PotY",
         1,
-        0x00,
+        0x7f,
         true,
         true,
         &[],
