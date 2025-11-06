@@ -167,10 +167,12 @@ impl Default for InputOutput {
 }
 
 impl InputOutput {
+    /// Construct a new shared controller state block.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Produce a snapshot suitable for adapters/tooling.
     pub fn snapshot(&self) -> InputSnapshot {
         InputSnapshot {
             pads: self.pads.iter().map(InputPadState::as_snapshot).collect(),
@@ -178,6 +180,7 @@ impl InputOutput {
         }
     }
 
+    /// Replace an entire pad snapshot.
     pub fn set_pad_snapshot(&mut self, pad: usize, snapshot: InputPadSnapshot) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad] = InputPadState {
@@ -188,32 +191,38 @@ impl InputOutput {
         }
     }
 
+    /// Update the digital button mask for a specific pad.
     pub fn set_pad_buttons(&mut self, pad: usize, buttons: u16) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].buttons = buttons;
         }
     }
 
+    /// Convenience setter that writes POT X for pad 0.
     pub fn set_pot_x(&mut self, value: u8) {
         self.set_pad_pot_x(0, value);
     }
 
+    /// Set the POT X value for the chosen pad.
     pub fn set_pad_pot_x(&mut self, pad: usize, value: u8) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].pot_x = value;
         }
     }
 
+    /// Convenience setter that writes POT Y for pad 0.
     pub fn set_pot_y(&mut self, value: u8) {
         self.set_pad_pot_y(0, value);
     }
 
+    /// Set the POT Y value for the chosen pad.
     pub fn set_pad_pot_y(&mut self, pad: usize, value: u8) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].pot_y = value;
         }
     }
 
+    /// Snapshot a specific pad, returning defaults for out-of-range indices.
     pub fn pad_snapshot(&self, pad: usize) -> InputPadSnapshot {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].as_snapshot()
@@ -277,6 +286,7 @@ const INPUT_REGS: &[RegisterDesc] = &[
 ];
 
 impl InputMmio {
+    /// Construct the input MMIO module with empty controller state.
     pub fn new() -> Self {
         Self {
             select: 0,
@@ -284,10 +294,12 @@ impl InputMmio {
         }
     }
 
+    /// Access the shared controller state handle used by adapters.
     pub fn output(&self) -> Arc<Mutex<InputOutput>> {
         Arc::clone(&self.state)
     }
 
+    /// Produce a snapshot of the entire controller state.
     pub fn snapshot(&self) -> InputSnapshot {
         self.state
             .lock()

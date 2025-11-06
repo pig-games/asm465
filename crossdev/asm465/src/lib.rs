@@ -739,12 +739,15 @@ impl ServiceRequestPayload {
     }
 }
 
+/// Fully-specified viewer configuration used when bootstrapping the Bevy app.
 pub struct AppConfig {
     pub startup: Option<StartupConfig>,
     pub default_max_cycles: u64,
     pub virtual_resolution: VirtualResolution,
     pub display: DisplaySettings,
     pub personality: PersonalitySelection,
+    /// When `true`, spawn the raster/collision overlay helpers in addition to the
+    /// core emulator pipelines.
     pub video_overlay: bool,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
@@ -842,16 +845,20 @@ impl DisplayPalette {
     }
 }
 
+/// Runtime toggle describing whether the viewer should render the extra
+/// raster/collision overlay helpers.
 #[derive(Resource, Clone, Copy)]
 struct VideoOverlayConfig {
     enabled: bool,
 }
 
 impl VideoOverlayConfig {
+    /// Create a new configuration with the supplied enable flag.
     fn new(enabled: bool) -> Self {
         Self { enabled }
     }
 
+    /// Returns `true` when the overlay helpers should be visible.
     fn enabled(self) -> bool {
         self.enabled
     }
@@ -968,6 +975,7 @@ pub fn run_native() -> Result<(), String> {
     Ok(())
 }
 
+/// Launches the Bevy runtime using the supplied configuration.
 pub fn run_app(config: AppConfig) {
     let AppConfig {
         startup,
@@ -1008,6 +1016,7 @@ pub fn run_app(config: AppConfig) {
 
     let controller_state =
         ControllerState::new(emulator.input_backend(), emulator.input_snapshot());
+    // Only mirror the raster into the UI overlay when the flag is enabled.
     let overlay_handle = if video_overlay {
         Some(emulator.video_overlay())
     } else {
@@ -1676,6 +1685,8 @@ fn timer_interrupt_system(
     }
 }
 
+/// Drives the shared raster counter each frame, raising IRQs and keeping the
+/// optional overlay in sync.
 #[derive(Resource)]
 struct RasterDriver {
     state: Arc<RasterIrqState>,
@@ -1685,6 +1696,7 @@ struct RasterDriver {
 }
 
 impl RasterDriver {
+    /// Builds the driver that advances the shared raster state each frame.
     fn new(
         state: Arc<RasterIrqState>,
         overlay: Option<Arc<VideoOverlaySignals>>,
@@ -1698,6 +1710,8 @@ impl RasterDriver {
         }
     }
 
+    /// Advances the raster position based on elapsed time, updating the MMIO
+    /// snapshot and optionally mirroring it into the overlay helper.
     fn advance(&mut self, delta: f32, total_lines: u16) {
         const RASTER_REFRESH_HZ: f32 = 60.0;
         let lines = total_lines.max(1);
@@ -2120,6 +2134,7 @@ impl SpriteViewport {
     }
 }
 
+/// Sets up the 2D scene graph, including optional overlay helpers.
 fn setup_scene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -3106,6 +3121,7 @@ fn update_sprite_viewport(
     }
 }
 
+/// Positions the optional raster overlay element so it tracks the guest raster.
 fn update_video_overlay_line(
     emulator: NonSend<EmulatorState>,
     viewport: Res<SpriteViewport>,

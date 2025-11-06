@@ -18,18 +18,21 @@ pub struct DisplayOutputBackend {
 }
 
 impl DisplayOutputBackend {
+    /// Build a backend that mirrors adapter writes into the legacy snapshot.
     pub fn new(output: Arc<Mutex<DisplayOutput>>) -> Self {
         Self { output }
     }
 }
 
 impl DisplayBackend for DisplayOutputBackend {
+    /// Update the border colour in the shared snapshot.
     fn set_border_color(&self, value: u8) {
         if let Ok(mut output) = self.output.lock() {
             output.set_border_color(value);
         }
     }
 
+    /// Update the background colour in the shared snapshot.
     fn set_background_color(&self, value: u8) {
         if let Ok(mut output) = self.output.lock() {
             output.set_background_color(value);
@@ -43,6 +46,7 @@ pub struct DisplayAdapter {
 }
 
 impl DisplayAdapter {
+    /// Create a new adapter that forwards events to the supplied backend.
     pub fn new(backend: Arc<dyn DisplayBackend>) -> Self {
         Self { backend }
     }

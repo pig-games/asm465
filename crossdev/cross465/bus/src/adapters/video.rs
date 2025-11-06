@@ -1,3 +1,6 @@
+//! Video/system module adapter that mirrors MMIO activity into a backend while
+//! managing raster compare interrupts shared by modern and legacy personalities.
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,6 +19,7 @@ pub struct RasterIrqState {
 }
 
 impl RasterIrqState {
+    /// Construct a new raster IRQ state block.
     pub fn new() -> Self {
         Self::default()
     }
@@ -24,6 +28,7 @@ impl RasterIrqState {
         let _ = atomic.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| Some(update(old)));
     }
 
+    /// Program the full 16-bit raster compare value.
     pub fn set_compare(&self, value: u16) {
         self.compare.store(value, Ordering::Relaxed);
     }
@@ -41,10 +46,12 @@ impl RasterIrqState {
         self.set_compare_high(high);
     }
 
+    /// Return the currently programmed compare value.
     pub fn compare(&self) -> u16 {
         self.compare.load(Ordering::Relaxed)
     }
 
+    /// Update the present raster line.
     pub fn set_current(&self, value: u16) {
         self.current.store(value, Ordering::Relaxed);
     }
@@ -57,6 +64,7 @@ impl RasterIrqState {
         Self::update_atomic(&self.current, |old| ((value as u16) << 8) | (old & 0x00FF));
     }
 
+    /// Return the last recorded raster line.
     pub fn current(&self) -> u16 {
         self.current.load(Ordering::Relaxed)
     }
@@ -91,6 +99,8 @@ pub trait VideoBackend: Send + Sync {
 }
 
 /// Adapter that routes system/video MMIO events to a [`VideoBackend`].
+/// Module adapter that forwards system/video register traffic to a
+/// [`VideoBackend`] and raises raster IRQs when compare conditions are met.
 pub struct VideoAdapter {
     backend: Arc<dyn VideoBackend>,
     controller: Arc<InterruptController>,
@@ -215,6 +225,7 @@ impl VideoState {
 }
 
 /// Backend that records register writes and hook invocations in-memory.
+/// Simple backend used in tests to record MMIO writes for later inspection.
 pub struct VideoStateBackend {
     state: Arc<Mutex<VideoState>>,
 }

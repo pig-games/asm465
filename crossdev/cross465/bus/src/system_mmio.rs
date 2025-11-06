@@ -1,3 +1,6 @@
+//! System/interrupt MMIO device exposing IRQ/NMI enable state and the raster
+//! compare registers shared with the video adapter.
+
 use crate::adapters::video::RasterIrqState;
 use crate::interrupts::InterruptController;
 use crate::mmio::{
@@ -6,7 +9,8 @@ use crate::mmio::{
 use crate::MmioDevice;
 use std::sync::Arc;
 
-/// MMIO view over the shared interrupt controller.
+/// MMIO view over the shared interrupt controller, including raster compare
+/// registers fed by the video adapter.
 pub struct SystemMmio {
     controller: Arc<InterruptController>,
     raster_irq: Option<Arc<RasterIrqState>>,

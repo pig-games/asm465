@@ -405,14 +405,17 @@ impl ConsoleMmio {
         output.clear();
     }
 
+    /// Update the cursor X register (used when positioning via MMIO).
     pub fn set_x(&mut self, b: u8) {
         self.x = b;
     }
 
+    /// Update the cursor Y register (used when positioning via MMIO).
     pub fn set_y(&mut self, b: u8) {
         self.y = b;
     }
 
+    /// Apply the current X/Y cursor registers to both the terminal and buffer.
     pub fn set_location(&mut self) {
         self.term
             .move_cursor_to(self.x.into(), self.y.into())
@@ -420,18 +423,22 @@ impl ConsoleMmio {
         self.output.lock().unwrap().set_cursor(self.x, self.y);
     }
 
+    /// Update the foreground colour register.
     pub fn set_color(&mut self, b: u8) {
         self.color = b;
     }
 
+    /// Update the background colour register.
     pub fn set_bg_color(&mut self, b: u8) {
         self.bg_color = b;
     }
 
+    /// Update the low byte of the print-block pointer.
     pub fn set_lptr(&mut self, b: u8) {
         self.lptr = b;
     }
 
+    /// Update the high byte of the print-block pointer.
     pub fn set_hptr(&mut self, b: u8) {
         self.hptr = b;
     }

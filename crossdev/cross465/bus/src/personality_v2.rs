@@ -1,3 +1,8 @@
+//! Data-driven personality loader/compiler for the cross465 bus.
+//!
+//! This module parses TOML personalities, validates register mappings, and
+//! produces the runtime structures consumed by [`Bus::from_personality_def`].
+
 use std::collections::BTreeMap;
 
 use crate::mmio::{ModuleFactory, ModuleKind, ModuleOptions, ModuleRegistry, RegId, RegisterDesc};
@@ -22,12 +27,14 @@ pub struct PersonalityDef {
     pub interrupts: InterruptConfig,
 }
 
+/// Basic information describing a personality (id/title/default priority).
 pub struct PersonalityMetadata {
     pub id: String,
     pub title: String,
     pub default_map_priority: i32,
 }
 
+/// Resolved module configuration (factory + options) referenced by maps.
 pub struct ModuleConfig {
     pub kind: ModuleKind,
     pub impl_id: String,
@@ -35,6 +42,7 @@ pub struct ModuleConfig {
     pub options: ModuleOptions,
 }
 
+/// Compiled condition that toggles address maps based on module register state.
 pub struct Condition {
     pub module: ModuleKind,
     pub register: ResolvedRegister,
@@ -74,6 +82,7 @@ pub struct AddressRange {
 }
 
 impl AddressRange {
+    /// Returns `true` if the given address lies inside this range.
     pub fn contains(&self, addr: u16) -> bool {
         addr >= self.start && addr <= self.end
     }
@@ -350,6 +359,7 @@ impl From<toml::de::Error> for LoaderError {
 }
 
 impl PersonalityDef {
+    /// Parse a TOML personality definition into the in-memory representation.
     pub fn from_toml_str(src: &str, registry: &ModuleRegistry) -> Result<Self, LoaderError> {
         let raw: RawPersonalityFile = toml::from_str(src)?;
 
@@ -1616,6 +1626,7 @@ fn lex_compute_tokens(expr: &str) -> Result<Vec<ComputeToken>, String> {
 }
 
 impl ComputeExpr {
+    /// Evaluate the compute expression against the provided signal store.
     pub fn evaluate(&self, signals: &mut dyn InputSignals) -> u8 {
         let value = self.ast.eval(signals);
         (value & 0xFF) as u8
@@ -1670,6 +1681,7 @@ fn signal_value(name: &str, signals: &mut dyn InputSignals) -> i64 {
 }
 
 impl InstanceExpr {
+    /// Convenience constructor that yields a constant expression.
     pub fn constant(value: u32) -> Self {
         Self {
             source: format!("{value}"),
@@ -1677,6 +1689,7 @@ impl InstanceExpr {
         }
     }
 
+    /// Evaluate the expression for a given instance index.
     pub fn evaluate(&self, index: u32) -> Result<u32, LoaderError> {
         let mut output = Vec::with_capacity(self.tokens.len());
         for token in &self.tokens {
@@ -2195,6 +2208,7 @@ struct RawInterruptAck {
 }
 
 impl ValueBuilder {
+    /// Build the byte sequence described by this builder using the current signal values.
     pub fn build(&self, signals: &mut dyn InputSignals) -> Vec<u8> {
         let mut bytes = self
             .const_set

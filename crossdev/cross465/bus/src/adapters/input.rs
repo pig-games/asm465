@@ -1,3 +1,7 @@
+//! Bridges MMIO register activity for the `input.joystick` module to a modern
+//! controller backend, keeping the shared button/paddle snapshots in sync with
+//! Bevy’s gamepad events.
+
 use std::array;
 use std::sync::{Arc, Mutex};
 
@@ -32,7 +36,8 @@ const BUTTONS: [ControllerButton; 16] = [
 
 const AXES: [ControllerAxis; 2] = [ControllerAxis::LeftStickX, ControllerAxis::LeftStickY];
 
-/// Backend interface consumed by the MMIO adapter.
+/// Contract implemented by host backends that mirror MMIO writes and emit live
+/// controller telemetry.
 pub trait InputBackend: Send + Sync {
     fn update_gamepad(&self, pad: usize, gamepad_id: Option<u32>);
     fn update_button(&self, pad: usize, button: ControllerButton, value: f32);
@@ -47,7 +52,8 @@ pub trait InputBackend: Send + Sync {
     fn handle_hook(&self, _hook: &str, _action: HookAction) {}
 }
 
-/// Concrete backend that mirrors controller state into [`InputOutput`].
+/// Default backend used by the runtime to map MMIO traffic into the shared
+/// [`InputOutput`] snapshot while tracking modern button/axis telemetry.
 pub struct InputBackendHandle {
     output: Arc<Mutex<InputOutput>>,
     state: Arc<Mutex<ModernInputState>>,
@@ -61,6 +67,7 @@ impl InputBackendHandle {
         }
     }
 
+    /// Push the latest pad snapshot into the shared MMIO output.
     fn publish(&self, publish: PadPublish) {
         if let Ok(mut output) = self.output.lock() {
             output.set_pad_snapshot(publish.pad, publish.snapshot);
@@ -164,7 +171,8 @@ impl InputBackend for InputBackendHandle {
     }
 }
 
-/// Adapter that proxies MMIO writes to an [`InputBackend`].
+/// Module adapter that listens to MMIO events and forwards them to an
+/// [`InputBackend`], keeping the logical pad state coherent.
 pub struct InputAdapter {
     backend: Arc<dyn InputBackend>,
 }
@@ -200,6 +208,7 @@ impl ModuleAdapter for InputAdapter {
 }
 
 impl InputAdapter {
+    /// Handle scatter updates (bit-level writes) against the input registers.
     fn handle_scatter(&self, write: ScatterWriteEvent) {
         let pad = write.instance.unwrap_or(0) as usize;
         let snapshot = self.backend.snapshot();
@@ -230,6 +239,7 @@ fn update_bit(mut value: u8, bit: u8, set: bool) -> u8 {
     value
 }
 
+/// Aggregated button/axis state for each tracked pad.
 #[derive(Default)]
 struct ModernInputState {
     pads: [ControllerPadState; CONTROLLER_PAD_COUNT],
@@ -345,6 +355,8 @@ impl Default for AxisState {
 }
 
 #[derive(Clone)]
+/// Live controller state for a single pad, including synthesized button
+/// masking and paddle values.
 struct ControllerPadState {
     gamepad_id: Option<u32>,
     buttons: [ButtonState; BUTTONS.len()],

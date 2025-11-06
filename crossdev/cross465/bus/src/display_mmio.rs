@@ -82,6 +82,7 @@ const DISPLAY_REGS: &[RegisterDesc] = &[
 ];
 
 impl DisplayMmio {
+    /// Construct the display MMIO device with fresh output state.
     pub fn new() -> Self {
         let output = Arc::new(Mutex::new(DisplayOutput::new()));
         Self {
@@ -91,6 +92,7 @@ impl DisplayMmio {
         }
     }
 
+    /// Access the shared output buffer for adapters and viewers.
     pub fn output(&self) -> Arc<Mutex<DisplayOutput>> {
         Arc::clone(&self.output)
     }

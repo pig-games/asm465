@@ -1,3 +1,6 @@
+//! Sprite module adapter that aggregates per-slot MMIO updates before handing
+//! them off to a backend renderer.
+
 use std::sync::{Arc, Mutex};
 
 use crate::mmio::{
@@ -6,7 +9,7 @@ use crate::mmio::{
 };
 use crate::sprite_mmio::{SpriteOutput, SpriteState};
 
-/// Snapshot of a sprite slot consumed by sprite backends.
+/// Snapshot of a single sprite slot consumed by sprite backends.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SpriteRenderState {
     pub number: u8,

@@ -1,3 +1,9 @@
+//! Core MMIO traits and registry infrastructure used by the cross465 bus.
+//!
+//! This module defines the enums shared by all MMIO modules (`ModuleKind`,
+//! `RegId`), the trait objects used to communicate with devices, and the
+//! registry/runtime helpers that personalities rely on when wiring modules.
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,6 +24,7 @@ pub enum ModuleKind {
 }
 
 impl ModuleKind {
+    /// Return the lowercase string identifier used in TOML/personality files.
     pub fn as_str(self) -> &'static str {
         match self {
             ModuleKind::Console => "console",
@@ -30,6 +37,7 @@ impl ModuleKind {
         }
     }
 
+    /// Parse a module kind from its string representation.
     pub fn from_str(kind: &str) -> Option<Self> {
         match kind {
             "console" => Some(ModuleKind::Console),
@@ -55,6 +63,7 @@ pub enum RegId {
 }
 
 impl RegId {
+    /// If this register is a console register, return it.
     pub fn console(self) -> Option<ConsoleReg> {
         match self {
             RegId::Console(reg) => Some(reg),
@@ -62,6 +71,7 @@ impl RegId {
         }
     }
 
+    /// If this register is a display register, return it.
     pub fn display(self) -> Option<DisplayReg> {
         match self {
             RegId::Display(reg) => Some(reg),
@@ -69,6 +79,7 @@ impl RegId {
         }
     }
 
+    /// If this register is a sprite register, return it.
     pub fn sprite(self) -> Option<SpriteReg> {
         match self {
             RegId::Sprite(reg) => Some(reg),
@@ -76,6 +87,7 @@ impl RegId {
         }
     }
 
+    /// If this register is an input register, return it.
     pub fn input(self) -> Option<InputReg> {
         match self {
             RegId::Input(reg) => Some(reg),
@@ -83,6 +95,7 @@ impl RegId {
         }
     }
 
+    /// If this register is a system register, return it.
     pub fn system(self) -> Option<SystemReg> {
         match self {
             RegId::System(reg) => Some(reg),
@@ -230,16 +243,19 @@ pub struct BackendHandles {
 }
 
 impl BackendHandles {
+    /// Create an empty set of backend handles.
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
         }
     }
 
+    /// Return `true` when no handles have been registered.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
+    /// Associate a backend handle with its concrete type.
     pub fn insert<T>(&mut self, handle: Arc<T>)
     where
         T: Any + Send + Sync + 'static,
@@ -248,6 +264,7 @@ impl BackendHandles {
         self.map.insert(TypeId::of::<T>(), handle);
     }
 
+    /// Convenience builder that returns `Self` for chaining.
     pub fn with_handle<T>(mut self, handle: Arc<T>) -> Self
     where
         T: Any + Send + Sync + 'static,
@@ -256,6 +273,7 @@ impl BackendHandles {
         self
     }
 
+    /// Retrieve a handle by type, cloning the `Arc`.
     pub fn get<T>(&self) -> Option<Arc<T>>
     where
         T: Any + Send + Sync + 'static,
@@ -265,6 +283,7 @@ impl BackendHandles {
             .and_then(|handle| handle.clone().downcast::<T>().ok())
     }
 
+    /// Returns `true` if a handle of the given type is registered.
     pub fn contains<T>(&self) -> bool
     where
         T: Any + Send + Sync + 'static,
@@ -273,6 +292,7 @@ impl BackendHandles {
     }
 }
 
+/// Shared dependencies handed to module factories upon construction.
 /// Shared dependencies handed to module factories upon construction.
 #[derive(Clone)]
 pub struct ModuleDeps {
@@ -284,6 +304,7 @@ pub struct ModuleDeps {
 pub type ModuleOptions = Table;
 
 impl ModuleDeps {
+    /// Construct dependency bundle from the supplied shared resources.
     pub fn new(
         ram: Arc<Mutex<Memory>>,
         controller: Arc<InterruptController>,
@@ -296,6 +317,7 @@ impl ModuleDeps {
         }
     }
 
+    /// Retrieve a backend handle of type `T`, if one is registered.
     pub fn backend<T>(&self) -> Option<Arc<T>>
     where
         T: Any + Send + Sync + 'static,
@@ -304,6 +326,7 @@ impl ModuleDeps {
     }
 }
 
+/// Runtime contract for MMIO modules in the v2 personality system.
 /// Runtime contract for MMIO modules in the v2 personality system.
 pub trait Module: MmioDevice {
     fn kind(&self) -> ModuleKind;
@@ -330,6 +353,8 @@ pub trait ModuleFactory: Send + Sync {
 }
 
 /// Registry of available module implementations.
+/// Registry of available module implementations. Populated during startup so
+/// personalities can lookup factories by identifier.
 #[derive(Default)]
 pub struct ModuleRegistry {
     builders: Vec<&'static dyn ModuleFactory>,
@@ -382,6 +407,8 @@ pub enum ModuleAdapterEvent<'a> {
 }
 
 /// Adapter bridge that mirrors MMIO activity into external backends.
+/// Adapter hook that observes module activity and mirrors it to external
+/// backends (renderers, audio engines, etc.).
 pub trait ModuleAdapter: Send {
     fn handle_event(&mut self, event: ModuleAdapterEvent<'_>);
 }
