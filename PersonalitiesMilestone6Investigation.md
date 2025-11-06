@@ -74,7 +74,8 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - Normalize analog-only controllers by synthesizing D-pad presses whenever POT values hit 0/255 so thumbsticks and paddle-style devices still drive the legacy MMIO bits.
   - Translate the 16-bit button mask per pad into shared signals while leaving the runtime free of `PortA`/`PortB`; modern-retro personalities read `ButtonsLo`/`ButtonsHi` directly, and legacy layouts rebuild active-low ports through value builders (`DC00`/`DC01` for the C64 case).
 - [x] Clean up occurance of port_a and port_b, from the MMIO. These are not relevant on the modern side. They should only show up in the C64 compat personality mapping and even then they should represent the limited set of inputs that were available on the C64 and represent controller 0 and 1 instead of combining non-original outputs of a single controller.
-- [ ] Make the VideoOverlaySignals optional via a cli parameter.
+- [x] Make the VideoOverlaySignals optional via a cli parameter.
+  - Added a native flag (`--enable-video-overlay`) that turns on the raster/collision instrumentation when needed; the overlay stays off by default while the raster IRQ timing continues to run behind the scenes.
 
 ## Deliverables
 - `crossdev/cross465/personality_defs/c64-compat-extended.toml`.

@@ -32,8 +32,8 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::input_mmio::{
-    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputPadSnapshot,
-    InputSnapshot, ModernControllerPadSnapshot, CONTROLLER_PAD_COUNT,
+    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
+    ModernControllerPadSnapshot, CONTROLLER_PAD_COUNT,
 };
 use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::mmio::SystemReg;
@@ -59,7 +59,7 @@ use rfd::FileDialog;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 #[cfg(feature = "native-service")]
-use clap::Parser;
+use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -564,6 +564,10 @@ pub struct Args {
     #[arg(long, default_value_t = true)]
     pub resize_window: bool,
 
+    /// Enable the raster/collision overlay instrumentation.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub enable_video_overlay: bool,
+
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
     pub program: Option<PathBuf>,
@@ -741,6 +745,7 @@ pub struct AppConfig {
     pub virtual_resolution: VirtualResolution,
     pub display: DisplaySettings,
     pub personality: PersonalitySelection,
+    pub video_overlay: bool,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -834,6 +839,21 @@ impl DisplayPalette {
     fn apply_snapshot(&mut self, snapshot: &DisplaySnapshot, defaults: &DisplaySettings) {
         self.border = mmio_color(snapshot.border_color, defaults.border_color);
         self.background = mmio_color(snapshot.background_color, defaults.background_color);
+    }
+}
+
+#[derive(Resource, Clone, Copy)]
+struct VideoOverlayConfig {
+    enabled: bool,
+}
+
+impl VideoOverlayConfig {
+    fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+
+    fn enabled(self) -> bool {
+        self.enabled
     }
 }
 
@@ -940,6 +960,7 @@ pub fn run_native() -> Result<(), String> {
         virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
         display,
         personality: personality_selection,
+        video_overlay: args.enable_video_overlay,
         #[cfg(feature = "native-service")]
         service,
     });
@@ -954,6 +975,7 @@ pub fn run_app(config: AppConfig) {
         virtual_resolution,
         display,
         personality,
+        video_overlay,
         #[cfg(feature = "native-service")]
         service,
     } = config;
@@ -986,9 +1008,14 @@ pub fn run_app(config: AppConfig) {
 
     let controller_state =
         ControllerState::new(emulator.input_backend(), emulator.input_snapshot());
+    let overlay_handle = if video_overlay {
+        Some(emulator.video_overlay())
+    } else {
+        None
+    };
     let raster_driver = RasterDriver::new(
         emulator.raster_state(),
-        emulator.video_overlay(),
+        overlay_handle,
         emulator.interrupts(),
     );
     let keyboard_tracker = KeyboardTracker::default();
@@ -998,6 +1025,7 @@ pub fn run_app(config: AppConfig) {
     app.insert_resource(raster_driver);
     app.insert_resource(keyboard_tracker);
     app.insert_non_send_resource(emulator);
+    app.insert_resource(VideoOverlayConfig::new(video_overlay));
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
         if has_timer {
@@ -1651,7 +1679,7 @@ fn timer_interrupt_system(
 #[derive(Resource)]
 struct RasterDriver {
     state: Arc<RasterIrqState>,
-    overlay: Arc<VideoOverlaySignals>,
+    overlay: Option<Arc<VideoOverlaySignals>>,
     controller: Arc<InterruptController>,
     phase: f32,
 }
@@ -1659,7 +1687,7 @@ struct RasterDriver {
 impl RasterDriver {
     fn new(
         state: Arc<RasterIrqState>,
-        overlay: Arc<VideoOverlaySignals>,
+        overlay: Option<Arc<VideoOverlaySignals>>,
         controller: Arc<InterruptController>,
     ) -> Self {
         Self {
@@ -1678,7 +1706,9 @@ impl RasterDriver {
         let line = self.phase.floor() as u16;
         self.state.set_current_low(line as u8);
         self.state.set_current_high((line >> 8) as u8);
-        self.overlay.record_raster(line);
+        if let Some(overlay) = self.overlay.as_ref() {
+            overlay.record_raster(line);
+        }
         if self.state.compare() == line {
             self.controller.raise_irq(RASTER_IRQ_MASK);
         }
@@ -2094,6 +2124,7 @@ fn setup_scene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     palette: Res<DisplayPalette>,
+    overlay_config: Res<VideoOverlayConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
@@ -2173,17 +2204,19 @@ fn setup_scene(
         ));
     }
 
-    let raster_material = materials.add(ColorMaterial::from(Color::rgba(1.0, 0.0, 0.0, 0.6)));
-    commands.spawn((
-        MaterialMesh2dBundle {
-            mesh: overlay_mesh.clone(),
-            material: raster_material,
-            transform: Transform::from_xyz(0.0, 0.0, 4.5),
-            visibility: Visibility::Hidden,
-            ..Default::default()
-        },
-        RasterLine,
-    ));
+    if overlay_config.enabled() {
+        let raster_material = materials.add(ColorMaterial::from(Color::rgba(1.0, 0.0, 0.0, 0.6)));
+        commands.spawn((
+            MaterialMesh2dBundle {
+                mesh: overlay_mesh.clone(),
+                material: raster_material,
+                transform: Transform::from_xyz(0.0, 0.0, 4.5),
+                visibility: Visibility::Hidden,
+                ..Default::default()
+            },
+            RasterLine,
+        ));
+    }
 }
 
 fn ui_system(
@@ -2473,11 +2506,9 @@ fn ui_system(
                                                 .get(pad_index)
                                                 .map(|s| s.as_str())
                                                 .unwrap_or("None");
-                                                prev_ref.and_then(|prev| prev.pads.get(pad_index));
+                                            prev_ref.and_then(|prev| prev.pads.get(pad_index));
                                             let modern = snapshot.modern.pads.get(pad_index);
-                                            render_controller_pad(
-                                                column, pad_index, label, modern,
-                                            );
+                                            render_controller_pad(column, pad_index, label, modern);
                                         }
                                     });
                                 }
@@ -3079,11 +3110,17 @@ fn update_video_overlay_line(
     emulator: NonSend<EmulatorState>,
     viewport: Res<SpriteViewport>,
     virtual_resolution: Res<SpriteVirtualResolution>,
+    overlay_config: Res<VideoOverlayConfig>,
     mut query: Query<(&mut Transform, &mut Visibility), With<RasterLine>>,
 ) {
     let Ok((mut transform, mut visibility)) = query.get_single_mut() else {
         return;
     };
+
+    if !overlay_config.enabled() {
+        *visibility = Visibility::Hidden;
+        return;
+    }
 
     let snapshot = emulator.video_overlay().snapshot();
     let content_height = viewport.content_height();
