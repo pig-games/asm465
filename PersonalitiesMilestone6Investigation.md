@@ -63,17 +63,17 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
   - `CpuWorker` now auto-attaches the input adapter and exposes the backend handle so the Bevy UI can stream controller state (`crossdev/asm465/src/cpu_worker.rs:32`, `crossdev/asm465/src/cpu_worker.rs:66`).
   - The viewer feeds Bevy gamepad events into the `InputBackend`, mirroring port/paddle values for both legacy and TOML personalities (`crossdev/asm465/src/lib.rs:155`, `crossdev/asm465/src/lib.rs:1991`).
   - [x] Ensure the C64-compatible TOML personality maps CIA joystick/paddle registers through the new input adapter pipeline.
-    - `modern-retro-range.toml` and `c64-compat-sparse.toml` declare the `input.joystick` module and expose PortA/PortB/POT registers so guests observe adapter-backed state (`crossdev/cross465/personality_defs/modern-retro-range.toml:33`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:25`).
+    - `modern-retro-range.toml` now strides 4 bytes per pad (`ButtonsLo`, `ButtonsHi`, `PotX`, `PotY`), while `c64-compat-sparse.toml` uses value builders over the shared `p0`/`p1` button signals to synthesise the active-low `$DC00/$DC01` ports without storing `PortA`/`PortB` inside the runtime (`crossdev/cross465/personality_defs/modern-retro-range.toml:33`, `crossdev/cross465/personality_defs/c64-compat-sparse.toml:25`).
 - [x] Verify `modern-retro-range.toml` meets the latest v2 schema (instance arrays, fanout, transforms) and flows through the adapter-backed rendering path.
   - Extended the sprite/system ranges to expose `Enable`, `RasterLo`, and collision registers so adapter events propagate through the modern backend (`crossdev/cross465/personality_defs/modern-retro-range.toml:19`).
 - [x] Surface controller/keyboard telemetry in the developer tools UI so input traffic can be inspected live.
   - Track Bevy controller buttons/axes in their native identifiers (e.g. `GamepadButtonType::South`, `GamepadAxisType::LeftStickX`) and persist both current and last-change snapshots per pad.
   - Render the developer tools panel with side-by-side columns for gamepads 0 and 1, showing modern state, translated MMIO values, and the most recent non-release event.
   - Keep keyboard history stable between key-down transitions so "last" values don’t flicker when keys are released.
-  - Use the shared tracker as the single source of truth; controller adapters consume it to drive PortA/PortB/POT registers while the UI reads the same structure.
+  - Use the shared tracker as the single source of truth; the runtime now emits `p{n}.dpad_*`/`p{n}.button_*` signals from the consolidated button mask so personality value builders and tooling both read consistent data.
   - Normalize analog-only controllers by synthesizing D-pad presses whenever POT values hit 0/255 so thumbsticks and paddle-style devices still drive the legacy MMIO bits.
-  - Move the MMIO translation responsibility into the controller adapter so personalities consistently see active-low bits derived from the shared modern state, keeping the UI purely observational.
-  - Publish a 16-bit button mask per pad (`ButtonsLo/ButtonsHi`) alongside active-low ports so personalities choose between modern and legacy views; the modern-retro personality exposes all six registers per pad via an instanced range, while the C64 personality maps pad 0/1 directly to `$DC00/$DC01`.
+  - Translate the 16-bit button mask per pad into shared signals while leaving the runtime free of `PortA`/`PortB`; modern-retro personalities read `ButtonsLo`/`ButtonsHi` directly, and legacy layouts rebuild active-low ports through value builders (`DC00`/`DC01` for the C64 case).
+- [x] Clean up occurance of port_a and port_b, from the MMIO. These are not relevant on the modern side. They should only show up in the C64 compat personality mapping and even then they should represent the limited set of inputs that were available on the C64 and represent controller 0 and 1 instead of combining non-original outputs of a single controller.
 - [ ] Make the VideoOverlaySignals optional via a cli parameter.
 
 ## Deliverables

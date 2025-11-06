@@ -400,13 +400,8 @@ decode = { sparse = [ { addr = "DF40", kind = "system", id = "IrqEnable" } ] }
             .expect("input output handle available");
         {
             let mut input = input_handle.lock().unwrap();
-            input.set_pad_port_a(0, 0xEF);
-            input.set_pad_port_a(1, 0xF7);
-        }
-        {
-            let input = input_handle.lock().unwrap();
-            assert_eq!(input.pad_snapshot(0).port_a, 0xEF);
-            assert_eq!(input.pad_snapshot(1).port_a, 0xF7);
+            input.set_pad_buttons(0, button_bit(ControllerButton::South));
+            input.set_pad_buttons(1, button_bit(ControllerButton::DPadRight));
         }
         assert_eq!(bus.read(0xDC00), 0xEF);
         assert_eq!(bus.read(0xDC01), 0xF7);
@@ -845,7 +840,7 @@ use crate::mmio::{
 };
 use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
-use input_mmio::InputMmio;
+use input_mmio::{button_bit, ControllerButton, InputMmio, InputPadSnapshot, CONTROLLER_PAD_COUNT};
 use interrupts::InterruptController;
 use personality::{InterruptLine, Personality, PersonalityMmioKind};
 use personality_v2::{
@@ -854,6 +849,46 @@ use personality_v2::{
     Transform, ValueBuilder,
 };
 use sprite_mmio::SpriteMmio;
+
+const CONTROLLER_BUTTONS: [ControllerButton; 16] = [
+    ControllerButton::DPadUp,
+    ControllerButton::DPadDown,
+    ControllerButton::DPadLeft,
+    ControllerButton::DPadRight,
+    ControllerButton::South,
+    ControllerButton::East,
+    ControllerButton::West,
+    ControllerButton::North,
+    ControllerButton::Start,
+    ControllerButton::Select,
+    ControllerButton::LeftShoulder,
+    ControllerButton::RightShoulder,
+    ControllerButton::LeftThumb,
+    ControllerButton::RightThumb,
+    ControllerButton::LeftTrigger,
+    ControllerButton::RightTrigger,
+];
+
+fn controller_button_aliases(button: ControllerButton) -> &'static [&'static str] {
+    match button {
+        ControllerButton::DPadUp => &["dpad_up"],
+        ControllerButton::DPadDown => &["dpad_down"],
+        ControllerButton::DPadLeft => &["dpad_left"],
+        ControllerButton::DPadRight => &["dpad_right"],
+        ControllerButton::South => &["button_south", "button_primary", "button_a"],
+        ControllerButton::East => &["button_east", "button_secondary", "button_b"],
+        ControllerButton::West => &["button_west", "button_x"],
+        ControllerButton::North => &["button_north", "button_y"],
+        ControllerButton::Start => &["start", "button_start"],
+        ControllerButton::Select => &["select", "button_select"],
+        ControllerButton::LeftShoulder => &["left_shoulder", "button_lb"],
+        ControllerButton::RightShoulder => &["right_shoulder", "button_rb"],
+        ControllerButton::LeftThumb => &["left_thumb"],
+        ControllerButton::RightThumb => &["right_thumb"],
+        ControllerButton::LeftTrigger => &["left_trigger", "button_lt"],
+        ControllerButton::RightTrigger => &["right_trigger", "button_rt"],
+    }
+}
 
 /// Represents the flat 64KB RAM array of the 6502 address space.
 ///
@@ -1691,6 +1726,14 @@ impl PersonalityRuntime {
         self.apply_register_sets(&slot.pre_read_sets);
 
         let module_index = slot.module_index;
+        if self
+            .modules
+            .get(module_index)
+            .map(|entry| entry.kind == ModuleKind::Input)
+            .unwrap_or(false)
+        {
+            self.populate_input_signals(module_index);
+        }
         let aggregated = if slot.suppress_primary && !slot.write_fanout.is_empty() {
             Some(self.read_fanout_value(slot.instance, &slot.write_fanout))
         } else {
@@ -1774,6 +1817,49 @@ impl PersonalityRuntime {
             self.apply_register_sets(&entry.post_read_sets);
         }
         Some(result)
+    }
+
+    fn populate_input_signals(&mut self, module_index: usize) {
+        let Some(entry) = self.modules.get_mut(module_index) else {
+            return;
+        };
+        if entry.kind != ModuleKind::Input {
+            return;
+        }
+
+        let device: &mut dyn MmioDevice = entry.module.as_mut();
+        let Some(input) = device.as_any_mut().downcast_mut::<InputMmio>() else {
+            return;
+        };
+        let snapshot = input.snapshot();
+        for pad in 0..CONTROLLER_PAD_COUNT {
+            let pad_snapshot = snapshot
+                .pads
+                .get(pad)
+                .copied()
+                .unwrap_or_else(InputPadSnapshot::default);
+            self.emit_pad_signals(pad, pad_snapshot);
+        }
+    }
+
+    fn emit_pad_signals(&mut self, pad: usize, snapshot: InputPadSnapshot) {
+        let prefix = format!("p{}", pad);
+        let buttons = snapshot.buttons;
+        self.signals
+            .set_int(format!("{}.buttons_mask", prefix), buttons as i32);
+
+        for button in CONTROLLER_BUTTONS {
+            let pressed = (buttons & button_bit(button)) != 0;
+            for alias in controller_button_aliases(button) {
+                self.signals
+                    .set_bool(format!("{}.{}", prefix, alias), pressed);
+            }
+        }
+
+        self.signals
+            .set_int(format!("{}.pot_x", prefix), snapshot.pot_x as i32);
+        self.signals
+            .set_int(format!("{}.pot_y", prefix), snapshot.pot_y as i32);
     }
 
     fn write_direct(&mut self, value: u8, slot: DirectSlot) -> bool {

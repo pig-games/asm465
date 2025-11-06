@@ -119,8 +119,6 @@ pub enum DisplayReg {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum InputReg {
     Select,
-    PortA,
-    PortB,
     ButtonsLo,
     ButtonsHi,
     PotX,

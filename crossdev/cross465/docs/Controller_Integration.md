@@ -133,7 +133,7 @@ fn read_gamepad_events(mut evr: EventReader<GamepadButtonChangedEvent>) {
 
 | Bit | Button | Description |
 | --- | ------ | ----------- |
-| 0   | DPadUp | Direction up (active high in mask, active low in `PortA`) |
+| 0   | DPadUp | Direction up (active high in mask; value builders can invert for legacy ports) |
 | 1   | DPadDown | Direction down |
 | 2   | DPadLeft | Direction left |
 | 3   | DPadRight | Direction right |
@@ -150,11 +150,22 @@ fn read_gamepad_events(mut evr: EventReader<GamepadButtonChangedEvent>) {
 | 14  | LeftThumb | Left stick press |
 | 15  | RightThumb | Right stick press |
 
+### Controller Signals for Value Builders
+
+The input module publishes per-pad signals so personalities can rebuild legacy layouts declaratively:
+
+- `p{n}.dpad_up`, `dpad_down`, `dpad_left`, `dpad_right`
+- `p{n}.button_primary`, `button_secondary`, `button_south`, `button_east`, `button_west`, `button_north`
+- `p{n}.start`, `select`, `left_shoulder`, `right_shoulder`, `left_trigger`, `right_trigger`, `left_thumb`, `right_thumb`
+- `p{n}.buttons_mask` (integer), `p{n}.pot_x`, `p{n}.pot_y`
+
+Value builders can mark any of these sources as `active_low = true` to mirror the C64-style convention where a pressed bit reads `0`.
+
 ### asm465 Integration
 For **cross465/modern** targets (implemented in `bus/src/adapters/input.rs` and `asm465/src/lib.rs`):
 - Cache raw Bevy button/axis events per gamepad in a host-side state block so adapters and tooling can read both the *current* and the last non-release values.
-- Maintain a four-pad tracker with a 16-bit button mask; the adapter keeps `ButtonsLo`/`ButtonsHi`, active-low `PortA`/`PortB`, and paddle registers in sync so personalities can pick whichever representation fits their layout.
-- Use instanced personality maps to materialise those registers: `modern-retro-range` exposes an 8-byte stride per pad (`ButtonsLo`, `ButtonsHi`, `PortA`, `PortB`, `PotX`, `PotY`), while `c64-compat-sparse` maps pad 0/1 directly to `$DC00/$DC01`.
+- Maintain a four-pad tracker with a 16-bit button mask; the runtime emits `p{n}.dpad_*`/`button_*` signals plus paddle samples so personalities choose their preferred register layout.
+- Use instanced personality maps to expose the canonical state: `modern-retro-range` provides a 4-byte stride per pad (`ButtonsLo`, `ButtonsHi`, `PotX`, `PotY`), while `c64-compat-sparse` attaches value builders that synthesise the active-low `$DC00/$DC01` bytes from the same signals.
 - Map Bevy axis values into analog paddle registers. When an axis reaches an edge (≈0.0/1.0, or 0/255 after scaling), the adapter toggles the corresponding D-pad bit so analog-only devices still drive the digital view.
 - Ignore release-only events when recording the "last" value so the developer tools panel (controllers 0/1 side-by-side, additional pads listed below) always shows the most recent meaningful change alongside the keyboard history.
 

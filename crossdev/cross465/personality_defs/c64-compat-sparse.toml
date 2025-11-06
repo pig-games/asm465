@@ -68,9 +68,22 @@ decode = { sparse = [
 
 [[map]]
 priority = 10
-decode = { instances = { kind = "input", selector = "Select", count = 2, index_var = "p", layout = [
-  { addr = "DC00 + p", id = "PortA" }
-] } }
+decode = { sparse = [
+  { addr = "DC00", kind = "input", id = "ButtonsLo", suppress_write = true, value_builder = { width = 1, const_set = "11100000", bits = [
+    { bit = 0, src = "p0.dpad_up", active_low = true },
+    { bit = 1, src = "p0.dpad_down", active_low = true },
+    { bit = 2, src = "p0.dpad_left", active_low = true },
+    { bit = 3, src = "p0.dpad_right", active_low = true },
+    { bit = 4, src = "p0.button_primary", active_low = true }
+  ] } },
+  { addr = "DC01", kind = "input", id = "ButtonsLo", suppress_write = true, value_builder = { width = 1, const_set = "11100000", bits = [
+    { bit = 0, src = "p1.dpad_up", active_low = true },
+    { bit = 1, src = "p1.dpad_down", active_low = true },
+    { bit = 2, src = "p1.dpad_left", active_low = true },
+    { bit = 3, src = "p1.dpad_right", active_low = true },
+    { bit = 4, src = "p1.button_primary", active_low = true }
+  ] } }
+] }
 
 [[map]]
 priority = 10

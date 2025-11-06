@@ -2,8 +2,8 @@ use std::array;
 use std::sync::{Arc, Mutex};
 
 use crate::input_mmio::{
-    button_bit, port_from_buttons, AxisSample, ButtonSample, ControllerAxis, ControllerButton,
-    InputOutput, InputPadSnapshot, InputSnapshot, ModernControllerPadSnapshot, ModernInputSnapshot,
+    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputOutput,
+    InputPadSnapshot, InputSnapshot, ModernControllerPadSnapshot, ModernInputSnapshot,
     CONTROLLER_PAD_COUNT, POT_MAX, POT_MIN, POT_NEUTRAL,
 };
 use crate::mmio::{HookAction, InputReg, ModuleAdapter, ModuleAdapterEvent, ScatterWriteEvent};
@@ -17,9 +17,6 @@ const BUTTONS: [ControllerButton; 16] = [
     ControllerButton::DPadLeft,
     ControllerButton::DPadRight,
     ControllerButton::South,
-    ControllerButton::East,
-    ControllerButton::West,
-    ControllerButton::North,
     ControllerButton::Start,
     ControllerButton::Select,
     ControllerButton::LeftShoulder,
@@ -28,6 +25,9 @@ const BUTTONS: [ControllerButton; 16] = [
     ControllerButton::RightTrigger,
     ControllerButton::LeftThumb,
     ControllerButton::RightThumb,
+    ControllerButton::East,
+    ControllerButton::West,
+    ControllerButton::North,
 ];
 
 const AXES: [ControllerAxis; 2] = [ControllerAxis::LeftStickX, ControllerAxis::LeftStickY];
@@ -38,8 +38,6 @@ pub trait InputBackend: Send + Sync {
     fn update_button(&self, pad: usize, button: ControllerButton, value: f32);
     fn update_axis(&self, pad: usize, axis: ControllerAxis, value: f32);
 
-    fn write_port_a(&self, pad: usize, value: u8);
-    fn write_port_b(&self, pad: usize, value: u8);
     fn write_buttons_lo(&self, pad: usize, value: u8);
     fn write_buttons_hi(&self, pad: usize, value: u8);
     fn write_pot_x(&self, pad: usize, value: u8);
@@ -94,28 +92,6 @@ impl InputBackend for InputBackendHandle {
             .lock()
             .ok()
             .and_then(|mut state| state.update_axis(pad, axis, value));
-        if let Some(publish) = publish {
-            self.publish(publish);
-        }
-    }
-
-    fn write_port_a(&self, pad: usize, value: u8) {
-        let publish = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|mut state| state.write_port_a(pad, value));
-        if let Some(publish) = publish {
-            self.publish(publish);
-        }
-    }
-
-    fn write_port_b(&self, pad: usize, value: u8) {
-        let publish = self
-            .state
-            .lock()
-            .ok()
-            .and_then(|mut state| state.write_port_b(pad, value));
         if let Some(publish) = publish {
             self.publish(publish);
         }
@@ -205,8 +181,6 @@ impl ModuleAdapter for InputAdapter {
             ModuleAdapterEvent::PrimaryWrite(write) => {
                 let pad = write.instance.unwrap_or(0) as usize;
                 match write.reg.input() {
-                    Some(InputReg::PortA) => self.backend.write_port_a(pad, write.module_value),
-                    Some(InputReg::PortB) => self.backend.write_port_b(pad, write.module_value),
                     Some(InputReg::ButtonsLo) => {
                         self.backend.write_buttons_lo(pad, write.module_value)
                     }
@@ -240,16 +214,6 @@ impl InputAdapter {
                 let mut value = (pad_snapshot.buttons >> 8) as u8;
                 value = update_bit(value, write.target_bit, write.bit_value);
                 self.backend.write_buttons_hi(pad, value);
-            }
-            Some(InputReg::PortA) => {
-                let mut value = pad_snapshot.port_a;
-                value = update_bit(value, write.target_bit, write.bit_value);
-                self.backend.write_port_a(pad, value);
-            }
-            Some(InputReg::PortB) => {
-                let mut value = pad_snapshot.port_b;
-                value = update_bit(value, write.target_bit, write.bit_value);
-                self.backend.write_port_b(pad, value);
             }
             _ => {}
         }
@@ -308,18 +272,6 @@ impl ModernInputState {
         let current = state.digital_mask;
         let new_mask = (current & 0x00FF) | ((value as u16) << 8);
         state.apply_digital_mask(new_mask);
-        Some(PadPublish::new(pad, state.pad_snapshot()))
-    }
-
-    fn write_port_a(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
-        let state = self.pads.get_mut(pad)?;
-        state.apply_port_a(value);
-        Some(PadPublish::new(pad, state.pad_snapshot()))
-    }
-
-    fn write_port_b(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
-        let state = self.pads.get_mut(pad)?;
-        state.apply_port_b(value);
         Some(PadPublish::new(pad, state.pad_snapshot()))
     }
 
@@ -456,36 +408,6 @@ impl ControllerPadState {
         }
     }
 
-    fn apply_port_a(&mut self, port_a: u8) {
-        self.set_button_from_port(port_a, ControllerButton::DPadUp, 0);
-        self.set_button_from_port(port_a, ControllerButton::DPadDown, 1);
-        self.set_button_from_port(port_a, ControllerButton::DPadLeft, 2);
-        self.set_button_from_port(port_a, ControllerButton::DPadRight, 3);
-        self.set_button_from_port(port_a, ControllerButton::South, 4);
-    }
-
-    fn apply_port_b(&mut self, port_b: u8) {
-        self.set_button_from_port(port_b, ControllerButton::Start, 0);
-        self.set_button_from_port(port_b, ControllerButton::Select, 1);
-        self.set_button_from_port(port_b, ControllerButton::RightShoulder, 2);
-        self.set_button_from_port(port_b, ControllerButton::LeftThumb, 3);
-        self.set_button_from_port(port_b, ControllerButton::East, 4);
-    }
-
-    fn set_button_from_port(&mut self, port: u8, button: ControllerButton, bit: u8) {
-        let pressed = (port & (1 << bit)) == 0;
-        if let Some(state) = self.button_state_mut(button) {
-            state.pressed = pressed;
-            state.current_value = if pressed { 1.0 } else { 0.0 };
-            if pressed {
-                state.last_active_value = Some(1.0);
-                self.digital_mask |= button_bit(button);
-            } else {
-                self.digital_mask &= !button_bit(button);
-            }
-        }
-    }
-
     fn set_pot_x(&mut self, value: u8) {
         self.pot_x = value;
         if let Some(state) = self.axis_state_mut(ControllerAxis::LeftStickX) {
@@ -502,10 +424,7 @@ impl ControllerPadState {
 
     fn pad_snapshot(&self) -> InputPadSnapshot {
         let buttons = self.buttons_mask();
-        let (port_a, port_b) = port_from_buttons(buttons);
         InputPadSnapshot {
-            port_a,
-            port_b,
             buttons,
             pot_x: self.pot_x,
             pot_y: self.pot_y,
@@ -632,20 +551,6 @@ mod tests {
         fn update_button(&self, _pad: usize, _button: ControllerButton, _value: f32) {}
         fn update_axis(&self, _pad: usize, _axis: ControllerAxis, _value: f32) {}
 
-        fn write_port_a(&self, pad: usize, value: u8) {
-            self.events
-                .lock()
-                .unwrap()
-                .push((pad, InputReg::PortA, value));
-        }
-
-        fn write_port_b(&self, pad: usize, value: u8) {
-            self.events
-                .lock()
-                .unwrap()
-                .push((pad, InputReg::PortB, value));
-        }
-
         fn write_buttons_lo(&self, pad: usize, value: u8) {
             self.events
                 .lock()
@@ -685,7 +590,7 @@ mod tests {
         let mut adapter = InputAdapter::new(backend.clone());
 
         adapter.handle_event(ModuleAdapterEvent::PrimaryWrite(PrimaryWriteEvent {
-            reg: RegId::Input(InputReg::PortA),
+            reg: RegId::Input(InputReg::ButtonsLo),
             cpu_value: 0,
             module_value: 0x7F,
             instance: Some(0),
@@ -701,7 +606,10 @@ mod tests {
         let events = backend.events.lock().unwrap().clone();
         assert_eq!(
             events,
-            vec![(0, InputReg::PortA, 0x7F), (1, InputReg::ButtonsLo, 0x55)]
+            vec![
+                (0, InputReg::ButtonsLo, 0x7F),
+                (1, InputReg::ButtonsLo, 0x55)
+            ]
         );
     }
 }

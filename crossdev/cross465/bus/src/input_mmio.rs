@@ -76,47 +76,6 @@ pub fn button_bit(button: ControllerButton) -> u16 {
     1u16 << button.index()
 }
 
-/// Convert the unified button mask into active-low C64-style port values.
-#[inline]
-pub fn port_from_buttons(buttons: u16) -> (u8, u8) {
-    let mut port_a = 0xFF;
-    let mut port_b = 0xFF;
-
-    if buttons & button_bit(ControllerButton::DPadUp) != 0 {
-        port_a &= !(1 << 0);
-    }
-    if buttons & button_bit(ControllerButton::DPadDown) != 0 {
-        port_a &= !(1 << 1);
-    }
-    if buttons & button_bit(ControllerButton::DPadLeft) != 0 {
-        port_a &= !(1 << 2);
-    }
-    if buttons & button_bit(ControllerButton::DPadRight) != 0 {
-        port_a &= !(1 << 3);
-    }
-    if buttons & button_bit(ControllerButton::South) != 0 {
-        port_a &= !(1 << 4);
-    }
-
-    if buttons & button_bit(ControllerButton::Start) != 0 {
-        port_b &= !(1 << 0);
-    }
-    if buttons & button_bit(ControllerButton::Select) != 0 {
-        port_b &= !(1 << 1);
-    }
-    if buttons & button_bit(ControllerButton::RightShoulder) != 0 {
-        port_b &= !(1 << 2);
-    }
-    if buttons & button_bit(ControllerButton::LeftThumb) != 0 {
-        port_b &= !(1 << 3);
-    }
-    if buttons & button_bit(ControllerButton::East) != 0 {
-        port_b &= !(1 << 4);
-    }
-
-    (port_a, port_b)
-}
-
 /// Snapshot of the instantaneous and last-active state for a controller button.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ButtonSample {
@@ -149,13 +108,21 @@ pub struct ModernInputSnapshot {
 }
 
 /// Binary snapshot returned to consumers that only need register-level state.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct InputPadSnapshot {
-    pub port_a: u8,
-    pub port_b: u8,
     pub buttons: u16,
     pub pot_x: u8,
     pub pot_y: u8,
+}
+
+impl Default for InputPadSnapshot {
+    fn default() -> Self {
+        Self {
+            buttons: 0,
+            pot_x: POT_NEUTRAL,
+            pot_y: POT_NEUTRAL,
+        }
+    }
 }
 
 /// MMIO snapshot combining binary pad state and modern telemetry.
@@ -167,8 +134,6 @@ pub struct InputSnapshot {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct InputPadState {
-    port_a: u8,
-    port_b: u8,
     buttons: u16,
     pot_x: u8,
     pot_y: u8,
@@ -177,8 +142,6 @@ struct InputPadState {
 impl InputPadState {
     fn as_snapshot(&self) -> InputPadSnapshot {
         InputPadSnapshot {
-            port_a: self.port_a,
-            port_b: self.port_b,
             buttons: self.buttons,
             pot_x: self.pot_x,
             pot_y: self.pot_y,
@@ -195,8 +158,6 @@ impl Default for InputOutput {
     fn default() -> Self {
         Self {
             pads: [InputPadState {
-                port_a: 0xFF,
-                port_b: 0xFF,
                 buttons: 0,
                 pot_x: POT_NEUTRAL,
                 pot_y: POT_NEUTRAL,
@@ -220,8 +181,6 @@ impl InputOutput {
     pub fn set_pad_snapshot(&mut self, pad: usize, snapshot: InputPadSnapshot) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad] = InputPadState {
-                port_a: snapshot.port_a,
-                port_b: snapshot.port_b,
                 buttons: snapshot.buttons,
                 pot_x: snapshot.pot_x,
                 pot_y: snapshot.pot_y,
@@ -232,29 +191,6 @@ impl InputOutput {
     pub fn set_pad_buttons(&mut self, pad: usize, buttons: u16) {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].buttons = buttons;
-            let (port_a, port_b) = port_from_buttons(buttons);
-            self.pads[pad].port_a = port_a;
-            self.pads[pad].port_b = port_b;
-        }
-    }
-
-    pub fn set_port_a(&mut self, value: u8) {
-        self.set_pad_port_a(0, value);
-    }
-
-    pub fn set_pad_port_a(&mut self, pad: usize, value: u8) {
-        if pad < CONTROLLER_PAD_COUNT {
-            self.pads[pad].port_a = value;
-        }
-    }
-
-    pub fn set_port_b(&mut self, value: u8) {
-        self.set_pad_port_b(0, value);
-    }
-
-    pub fn set_pad_port_b(&mut self, pad: usize, value: u8) {
-        if pad < CONTROLLER_PAD_COUNT {
-            self.pads[pad].port_b = value;
         }
     }
 
@@ -303,24 +239,6 @@ const INPUT_REGS: &[RegisterDesc] = &[
         &[],
     ),
     RegisterDesc::new(
-        RegId::Input(InputReg::PortA),
-        "PortA",
-        1,
-        0xFF,
-        true,
-        true,
-        &[],
-    ),
-    RegisterDesc::new(
-        RegId::Input(InputReg::PortB),
-        "PortB",
-        1,
-        0xFF,
-        true,
-        true,
-        &[],
-    ),
-    RegisterDesc::new(
         RegId::Input(InputReg::ButtonsLo),
         "ButtonsLo",
         1,
@@ -342,7 +260,7 @@ const INPUT_REGS: &[RegisterDesc] = &[
         RegId::Input(InputReg::PotX),
         "PotX",
         1,
-        0x7f,
+        POT_NEUTRAL as u32,
         true,
         true,
         &[],
@@ -351,7 +269,7 @@ const INPUT_REGS: &[RegisterDesc] = &[
         RegId::Input(InputReg::PotY),
         "PotY",
         1,
-        0x7f,
+        POT_NEUTRAL as u32,
         true,
         true,
         &[],
@@ -370,57 +288,59 @@ impl InputMmio {
         Arc::clone(&self.state)
     }
 
+    pub fn snapshot(&self) -> InputSnapshot {
+        self.state
+            .lock()
+            .map(|state| state.snapshot())
+            .unwrap_or_default()
+    }
+
     fn select_index(&self) -> usize {
         (self.select as usize) % CONTROLLER_PAD_COUNT
     }
 
     fn read_reg_locked(&self, reg: InputReg) -> u8 {
-        match reg {
-            InputReg::Select => self.select,
-            _ => self
-                .state
-                .lock()
-                .map(|state| match reg {
-                    InputReg::Select => self.select,
-                    InputReg::PortA => state.pad_snapshot(self.select_index()).port_a,
-                    InputReg::PortB => state.pad_snapshot(self.select_index()).port_b,
-                    InputReg::ButtonsLo => state.pad_snapshot(self.select_index()).buttons as u8,
-                    InputReg::ButtonsHi => {
-                        (state.pad_snapshot(self.select_index()).buttons >> 8) as u8
-                    }
-                    InputReg::PotX => state.pad_snapshot(self.select_index()).pot_x,
-                    InputReg::PotY => state.pad_snapshot(self.select_index()).pot_y,
-                })
-                .unwrap_or(0xFF),
+        if let InputReg::Select = reg {
+            return self.select;
         }
+
+        self.state
+            .lock()
+            .map(|state| {
+                let snapshot = state.pad_snapshot(self.select_index());
+                match reg {
+                    InputReg::ButtonsLo => snapshot.buttons as u8,
+                    InputReg::ButtonsHi => (snapshot.buttons >> 8) as u8,
+                    InputReg::PotX => snapshot.pot_x,
+                    InputReg::PotY => snapshot.pot_y,
+                    InputReg::Select => self.select,
+                }
+            })
+            .unwrap_or(0xFF)
     }
 
     fn write_reg_locked(&mut self, reg: InputReg, value: u8) {
-        match reg {
-            InputReg::Select => {
-                self.select = value;
-            }
-            _ => {
-                if let Ok(mut state) = self.state.lock() {
-                    let pad = self.select_index();
-                    match reg {
-                        InputReg::Select => {}
-                        InputReg::PortA => state.set_pad_port_a(pad, value),
-                        InputReg::PortB => state.set_pad_port_b(pad, value),
-                        InputReg::ButtonsLo => {
-                            let snapshot = state.pad_snapshot(pad);
-                            let combined = (snapshot.buttons & 0xFF00) | value as u16;
-                            state.set_pad_buttons(pad, combined);
-                        }
-                        InputReg::ButtonsHi => {
-                            let snapshot = state.pad_snapshot(pad);
-                            let combined = (snapshot.buttons & 0x00FF) | ((value as u16) << 8);
-                            state.set_pad_buttons(pad, combined);
-                        }
-                        InputReg::PotX => state.set_pad_pot_x(pad, value),
-                        InputReg::PotY => state.set_pad_pot_y(pad, value),
-                    }
+        if let InputReg::Select = reg {
+            self.select = value;
+            return;
+        }
+
+        if let Ok(mut state) = self.state.lock() {
+            let pad = self.select_index();
+            match reg {
+                InputReg::ButtonsLo => {
+                    let snapshot = state.pad_snapshot(pad);
+                    let combined = (snapshot.buttons & 0xFF00) | value as u16;
+                    state.set_pad_buttons(pad, combined);
                 }
+                InputReg::ButtonsHi => {
+                    let snapshot = state.pad_snapshot(pad);
+                    let combined = (snapshot.buttons & 0x00FF) | ((value as u16) << 8);
+                    state.set_pad_buttons(pad, combined);
+                }
+                InputReg::PotX => state.set_pad_pot_x(pad, value),
+                InputReg::PotY => state.set_pad_pot_y(pad, value),
+                InputReg::Select => {}
             }
         }
     }
@@ -428,27 +348,23 @@ impl InputMmio {
 
 impl MmioDevice for InputMmio {
     fn read(&mut self, addr: u16) -> u8 {
-        match addr & 0x0007 {
-            0x0000 => self.read_reg_locked(InputReg::PortA),
-            0x0001 => self.read_reg_locked(InputReg::PortB),
+        match addr & 0x0004 {
+            0x0000 => self.read_reg_locked(InputReg::ButtonsLo),
+            0x0001 => self.read_reg_locked(InputReg::ButtonsHi),
             0x0002 => self.read_reg_locked(InputReg::PotX),
             0x0003 => self.read_reg_locked(InputReg::PotY),
-            0x0004 => self.read_reg_locked(InputReg::ButtonsLo),
-            0x0005 => self.read_reg_locked(InputReg::ButtonsHi),
-            0x0006 => self.read_reg_locked(InputReg::Select),
+            0x0004 => self.read_reg_locked(InputReg::Select),
             _ => 0xFF,
         }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        match addr & 0x0007 {
-            0x0000 => self.write_reg_locked(InputReg::PortA, value),
-            0x0001 => self.write_reg_locked(InputReg::PortB, value),
+        match addr & 0x0004 {
+            0x0000 => self.write_reg_locked(InputReg::ButtonsLo, value),
+            0x0001 => self.write_reg_locked(InputReg::ButtonsHi, value),
             0x0002 => self.write_reg_locked(InputReg::PotX, value),
             0x0003 => self.write_reg_locked(InputReg::PotY, value),
-            0x0004 => self.write_reg_locked(InputReg::ButtonsLo, value),
-            0x0005 => self.write_reg_locked(InputReg::ButtonsHi, value),
-            0x0006 => self.write_reg_locked(InputReg::Select, value),
+            0x0004 => self.write_reg_locked(InputReg::Select, value),
             _ => {}
         }
     }
