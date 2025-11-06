@@ -76,6 +76,14 @@ Deliver a register-accurate Commodore 64 personality that runs unmodified 6502 c
 - [x] Clean up occurance of port_a and port_b, from the MMIO. These are not relevant on the modern side. They should only show up in the C64 compat personality mapping and even then they should represent the limited set of inputs that were available on the C64 and represent controller 0 and 1 instead of combining non-original outputs of a single controller.
 - [x] Make the VideoOverlaySignals optional via a cli parameter.
   - Added a native flag (`--enable-video-overlay`) that turns on the raster/collision instrumentation when needed; the overlay stays off by default while the raster IRQ timing continues to run behind the scenes.
+- [ ] Drive sprite/background collision latches from the modern backend.
+  - Detect sprite↔sprite and sprite↔background overlaps in the Bevy runtime, mirror the results into `coll.spr_spr`/`coll.spr_bg` signals, and expose sticky latches in `SystemMmio::read_reg` that clear on write like the real VIC-II.
+- [ ] Implement video scatter/fanout handling for collision/IRQ registers.
+  - Wire `VideoAdapter::scatter_write`/`fanout_write` so field-level writes (e.g. ACK bits) and multi-target registers update the backend state instead of being dropped.
+- [ ] Plumb collision state into modern tooling.
+  - Update the developer overlay/UI to surface the live collision bits and add regression tests covering latch set/clear and map value-builder output.
+- [ ] Introduce an audio MMIO module and adapter path.
+  - Flesh out `ModuleKind::Audio` with a concrete MMIO implementation, attach an adapter/backend that mirrors writes into the modern runtime, and extend personalities/tests so audio state is no longer a stub.
 
 ## Deliverables
 - `crossdev/cross465/personality_defs/c64-compat-extended.toml`.

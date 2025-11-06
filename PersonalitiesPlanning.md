@@ -38,7 +38,10 @@ Progress tracker for rolling out the cross465 Personalities v2 architecture.
 - [x] Support write fan-out for sprite enable and mask registers.
 - [x] Define mirrors and open-bus behaviour for unmapped C64 ranges.
 - [x] Activate compute expressions for raster/collision status reads.
-- [ ] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
+- [x] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
+- [ ] Feed collision registers and signals from the modern renderer so value builders and MMIO reads observe real sprite/background hits; ensure writes clear the latches like the VIC-II.
+- [ ] Extend the video adapter/backend to honour scatter/fanout updates (e.g. ACK bits, masked writes) so modern tooling stays in sync with system register changes.
+- [ ] Stand up an audio MMIO/adapter pipeline so modern personalities can drive sound hardware alongside legacy layouts.
 - [x] Rework controller handling so Bevy-native button/axis state feeds both MMIO adapters and the developer tools input panel (showing gamepads 0/1 plus keyboard history).
   - Cache modern events, ignore release-only transitions when recording "last" values, and synthesize D-pad bits when analog axes hit 0/255 so paddle-only devices still drive the MMIO ports.
   - Surface per-pad `ButtonsLo`/`ButtonsHi` and paddles through instanced personality maps (modern-retro now strides 4 bytes per pad), while C64-style layouts rebuild `$DC00/$DC01` via value builders over the emitted `p0`/`p1` button signals instead of relying on runtime `PortA`/`PortB` state.
