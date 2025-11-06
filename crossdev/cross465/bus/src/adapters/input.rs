@@ -4,14 +4,12 @@ use std::sync::{Arc, Mutex};
 use crate::input_mmio::{
     button_bit, port_from_buttons, AxisSample, ButtonSample, ControllerAxis, ControllerButton,
     InputOutput, InputPadSnapshot, InputSnapshot, ModernControllerPadSnapshot, ModernInputSnapshot,
-    CONTROLLER_PAD_COUNT,
+    CONTROLLER_PAD_COUNT, POT_MAX, POT_MIN, POT_NEUTRAL,
 };
 use crate::mmio::{HookAction, InputReg, ModuleAdapter, ModuleAdapterEvent, ScatterWriteEvent};
 
 const BUTTON_PRESS_THRESHOLD: f32 = 0.5;
 const AXIS_ACTIVE_THRESHOLD: f32 = 0.2;
-const POT_MIN: u8 = 0;
-const POT_MAX: u8 = 255;
 
 const BUTTONS: [ControllerButton; 16] = [
     ControllerButton::DPadUp,
@@ -411,8 +409,8 @@ impl Default for ControllerPadState {
             buttons: array::from_fn(|_| ButtonState::default()),
             axes: array::from_fn(|_| AxisState::default()),
             digital_mask: 0,
-            pot_x: POT_MIN,
-            pot_y: POT_MIN,
+            pot_x: POT_NEUTRAL,
+            pot_y: POT_NEUTRAL,
         }
     }
 }
@@ -612,11 +610,11 @@ impl ControllerPadState {
 
 fn axis_to_pot(value: f32) -> u8 {
     let clamped = value.clamp(-1.0, 1.0);
-    ((clamped + 1.0) * 0.5 * 255.0).round() as u8
+    ((clamped + 1.0) * 0.5 * POT_MAX as f32).round() as u8
 }
 
 fn pot_to_axis(value: u8) -> f32 {
-    (value as f32 / 255.0) * 2.0 - 1.0
+    (value as f32 / POT_MAX as f32) * 2.0 - 1.0
 }
 
 #[cfg(test)]

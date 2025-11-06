@@ -10,6 +10,11 @@ use crate::MmioDevice;
 /// Maximum number of pads tracked by the shared controller backend.
 pub const CONTROLLER_PAD_COUNT: usize = 4;
 
+/// Neutral and boundary values for the analog potentiometers.
+pub const POT_MIN: u8 = 0;
+pub const POT_MAX: u8 = 255;
+pub const POT_NEUTRAL: u8 = 128;
+
 /// Logical buttons exposed by the modern controller tracker.
 ///
 /// The ordering is stable so personalities can rely on the bit positions in the
@@ -193,8 +198,8 @@ impl Default for InputOutput {
                 port_a: 0xFF,
                 port_b: 0xFF,
                 buttons: 0,
-                pot_x: 128,
-                pot_y: 128,
+                pot_x: POT_NEUTRAL,
+                pot_y: POT_NEUTRAL,
             }; CONTROLLER_PAD_COUNT],
         }
     }
