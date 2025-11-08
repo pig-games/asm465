@@ -3,35 +3,53 @@
 Progress tracker for rolling out the cross465 Personalities v2 architecture.
 
 ## Milestone 0 – Baseline Audit
-- [ ] Catalogue current bus/MMIO wiring and document where register addresses and semantics live.
-- [ ] Inventory existing module implementations and identify missing register descriptors versus the v2 model.
+- [x] Catalogue current bus/MMIO wiring and document where register addresses and semantics live. (see `PersonalitiesMilestone0Audit.md`)
+- [x] Inventory existing module implementations and identify missing register descriptors versus the v2 model.
 
 ## Milestone 1 – Module Runtime Upgrades
-- [ ] Introduce shared enums/traits (`ModuleKind`, `RegId`, `Module`, `RegisterDesc`) to support address-free registers.
-- [ ] Wrap each implementation in a `ModuleFactory` and register it in a central `ModuleRegistry`.
-- [ ] Populate `regs()` descriptors with reset/RO/WO metadata for each module, adding spot tests where needed.
+- [x] Introduce shared enums/traits (`ModuleKind`, `RegId`, `Module`, `RegisterDesc`) to support address-free registers. (see `crossdev/cross465/bus/src/mmio.rs`)
+- [x] Wrap each implementation in a `ModuleFactory` and register it in a central `ModuleRegistry`. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Populate `regs()` descriptors with reset/RO/WO metadata for each module, adding spot tests where needed. (see `PersonalitiesMilestone1Notes.md`)
 
 ## Milestone 2 – Personality Data Model
-- [ ] Define in-memory structures mirroring the v2 TOML schema (modules, maps, transforms, conditions, interrupts, value builders).
-- [ ] Implement the TOML loader with validation for module IDs, register IDs, hooks, and transforms.
-- [ ] Provide clear diagnostics for invalid personalities and surface loader errors to callers.
+- [x] Define in-memory structures mirroring the v2 TOML schema (modules, maps, transforms, conditions, interrupts, value builders). (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Implement the TOML loader with validation for module IDs, register IDs, hooks, and transforms. (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Provide clear diagnostics for invalid personalities and surface loader errors to callers. (see `PersonalitiesMilestone2Notes.md`)
 
 ## Milestone 3 – Decoder Integration
-- [ ] Compile range and sparse maps into an address lookup table with priority resolution.
-- [ ] Update bus construction to instantiate modules via the registry and apply the compiled decoder output.
-- [ ] Wire condition tracking so decoder tables rebuild when personality-defined triggers change.
+- [x] Compile range and sparse maps into an address lookup table with priority resolution. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Update bus construction to instantiate modules via the registry and apply the compiled decoder output. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Wire condition tracking so decoder tables rebuild when personality-defined triggers change. (see `crossdev/cross465/bus/src/lib.rs`)
 
 ## Milestone 4 – Value Builder Pipeline
-- [ ] Implement the value-builder engine and input signal resolution API with cached lookups.
-- [ ] Execute builders in the bus read path ahead of module `read` calls, then apply transforms.
-- [ ] Cover boolean bit packing, numeric field packing, multi-byte outputs, and post-processing with targeted tests.
+- [x] Implement the value-builder engine and input signal resolution API with cached lookups. (see `crossdev/cross465/bus/src/personality_v2.rs`)
+- [x] Execute builders in the bus read path ahead of module `read` calls, then apply transforms. (see `crossdev/cross465/bus/src/lib.rs`)
+- [x] Cover boolean bit packing, numeric field packing, multi-byte outputs, and post-processing with targeted tests. (see `crossdev/cross465/bus/src/lib.rs` tests)
 
 ## Milestone 5 – Reference Personalities
-- [ ] Author a range-based personality that reproduces today’s contiguous layout as a regression baseline.
-- [ ] Create sparse sample personalities (e.g., C64, Atari) demonstrating active-low transforms, read-to-ack hooks, and banking.
-- [ ] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, map viewer stubs) for selecting and inspecting personalities.
+- [x] Author a range-based personality that reproduces today’s contiguous layout as a regression baseline. (see `crossdev/cross465/personality_defs/modern-retro-range.toml`)
+- [x] Create sparse sample personalities (e.g., C64, Atari) demonstrating active-low transforms, read-to-ack hooks, and banking. (see `crossdev/cross465/personality_defs/c64-compat-sparse.toml`)
+- [x] Expose CLI/tooling hooks (`--personality`, `--list-personalities`, `--list-modules`, map dumps) for selecting and inspecting personalities. (runner & asm465 CLI options)
 
-## Milestone 6 – Conformance & Regression Tests
-- [ ] Add suites validating register contracts (RO/WO, reset values, hook side effects) across module kinds.
-- [ ] Test decoder behavior for ranges, sparse overlaps, and condition switching scenarios.
-- [ ] Verify value builders (C64 joystick, Atari ports, float scaling) and measure decoder performance for O(1) lookups.
+## Milestone 6 – C64 Semantic Prototype
+- [ ] After completing each task below, update `crossdev/cross465/personality_defs/c64-compat-sparse.toml` and rerun the mapping tests to confirm the C64 layout still behaves correctly.
+- [x] Implement sprite instance arrays with `$D010` scatter mapping for X-hi bits.
+- [x] Add bitfield-level policies and `on_read` hooks for VIC-II IRQ/collision registers.
+- [x] Support write fan-out for sprite enable and mask registers.
+- [x] Define mirrors and open-bus behaviour for unmapped C64 ranges.
+- [x] Activate compute expressions for raster/collision status reads.
+- [x] Provide sprite/video adapter shims that bridge MMIO to the modern rendering backend.
+- [ ] Feed collision registers and signals from the modern renderer so value builders and MMIO reads observe real sprite/background hits; ensure writes clear the latches like the VIC-II.
+- [ ] Extend the video adapter/backend to honour scatter/fanout updates (e.g. ACK bits, masked writes) so modern tooling stays in sync with system register changes.
+- [ ] Stand up an audio MMIO/adapter pipeline so modern personalities can drive sound hardware alongside legacy layouts.
+- [x] Rework controller handling so Bevy-native button/axis state feeds both MMIO adapters and the developer tools input panel (showing gamepads 0/1 plus keyboard history).
+  - Cache modern events, ignore release-only transitions when recording "last" values, and synthesize D-pad bits when analog axes hit 0/255 so paddle-only devices still drive the MMIO ports.
+  - Surface per-pad `ButtonsLo`/`ButtonsHi` and paddles through instanced personality maps (modern-retro now strides 4 bytes per pad), while C64-style layouts rebuild `$DC00/$DC01` via value builders over the emitted `p0`/`p1` button signals instead of relying on runtime `PortA`/`PortB` state.
+  - Value builders only project joystick directions plus the primary fire button into legacy ports so C64-era layouts keep the expected active-low semantics without inheriting modern-only buttons.
+- [ ] Ship `c64-compat-extended.toml` and an interactive demo proving behavioural parity.
+
+## Milestone 7 – Extended Compatibility & Conformance
+- [ ] Deliver MEGA65 personality with extended sprite attributes and banking.
+- [ ] Introduce conditional layouts and selector front-ends for mode/bank switching.
+- [ ] Build conformance suites covering coordinates, colours, enable masks, scatter/gather accuracy, and read-to-clear semantics.
+- [ ] Benchmark and document decoder performance remaining O(1) with new mapping features.

@@ -6,12 +6,18 @@
 //! wasm build (via [`web::start_web_app`]), so as much logic as possible lives
 //! in platform-neutral modules.
 
+use std::cmp::Ordering;
+use std::convert::TryFrom;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::input::gamepad::GamepadEvent;
-use bevy::input::keyboard::KeyboardInput;
+use bevy::ecs::system::NonSend;
+use bevy::input::gamepad::{
+    Gamepad, GamepadAxisChangedEvent, GamepadAxisType, GamepadButtonChangedEvent,
+    GamepadButtonType, GamepadConnection, GamepadConnectionEvent, GamepadEvent,
+};
+use bevy::input::keyboard::{KeyCode, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
@@ -25,14 +31,27 @@ use bevy::window::WindowResolution;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
+use bus::input_mmio::{
+    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
+    ModernControllerPadSnapshot, CONTROLLER_PAD_COUNT,
+};
 use bus::interrupts::{InterruptController, InterruptSnapshot};
-use bus::personality::{self, Personality};
+use bus::mmio::SystemReg;
+use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
+use bus::personality_v2::{self, MapDecode};
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
-use bus::{unicode_to_screen, Bus};
+use bus::{
+    adapters::input::InputBackend, unicode_to_screen, Bus, RasterIrqState, VideoState,
+    RASTER_IRQ_MASK,
+};
 use core6502::{Cpu, RunLimit, RunOutcome};
+use video_backend::VideoOverlaySignals;
 
 mod cpu_worker;
-use cpu_worker::{CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs};
+mod video_backend;
+use cpu_worker::{
+    CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs, PersonalitySelection,
+};
 
 #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
@@ -40,10 +59,12 @@ use rfd::FileDialog;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 #[cfg(feature = "native-service")]
-use clap::Parser;
+use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "native-service")]
+use std::fs;
 #[cfg(feature = "native-service")]
 use std::io::{BufRead, BufReader, BufWriter, Write};
 #[cfg(feature = "native-service")]
@@ -53,6 +74,389 @@ use std::thread;
 
 pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
+const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
+    ("modern-retro-range", "Modern Retro (Range)"),
+    ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
+];
+
+#[cfg(feature = "native-service")]
+fn builtin_personality_entry(id: &str) -> Option<(PathBuf, Option<&'static Personality>)> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cross465/personality_defs");
+    match id {
+        "modern-retro-range" => Some((
+            base.join("modern-retro-range.toml"),
+            Some(personality::default()),
+        )),
+        "c64-compat-sparse" => Some((base.join("c64-compat-sparse.toml"), Some(&C64_COMPAT))),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "native-service")]
+fn print_personality_list() {
+    println!("Legacy personalities:");
+    for persona in personality::all() {
+        println!("  {:<20} {}", persona.name, persona.description);
+    }
+    println!("\nTOML personalities:");
+    for (id, desc) in BUILTIN_TOML_PERSONALITIES {
+        println!("  {:<20} {}", id, desc);
+    }
+    println!("  <path>               Load personality from TOML file");
+}
+
+#[cfg(feature = "native-service")]
+fn print_module_list() {
+    println!("Registered module implementations:");
+    for factory in bus::builtin_module_registry().all() {
+        println!("  {:<20} kind={}", factory.id(), factory.kind().as_str());
+    }
+}
+
+#[cfg(feature = "native-service")]
+fn dump_personality_maps(name: &str) -> Result<(), String> {
+    if let Some(persona) = personality::find(name) {
+        println!(
+            "Legacy personality: {} — {}",
+            persona.name, persona.description
+        );
+        for mmio in persona.mmio {
+            println!(
+                "  {}..={} -> {}",
+                format_addr(*mmio.range.start()),
+                format_addr(*mmio.range.end()),
+                describe_mmio_kind(mmio.kind)
+            );
+        }
+        return Ok(());
+    }
+
+    let (path, maybe_legacy) =
+        builtin_personality_entry(name).unwrap_or((PathBuf::from(name), None));
+
+    let toml = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let registry = bus::builtin_module_registry();
+    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+        .map_err(|err| err.to_string())?;
+
+    println!("Personality: {} — {}", def.metadata.id, def.metadata.title);
+    println!("Modules:");
+    for (kind, module) in &def.modules {
+        println!("  {:<10} -> {}", kind.as_str(), module.impl_id);
+    }
+    if let Some(legacy) = maybe_legacy {
+        println!("Legacy fallback: {}", legacy.name);
+    }
+
+    println!("Maps:");
+    for map in &def.maps {
+        println!("- priority {}", map.priority);
+        if !map.active_when.is_empty() {
+            println!("  active_when = {:?}", map.active_when);
+        }
+        match &map.decode {
+            MapDecode::Range(range) => {
+                println!(
+                    "  range {}..={} kind={} stride={}",
+                    format_addr(range.range.start),
+                    format_addr(range.range.end),
+                    range.module.as_str(),
+                    range.stride
+                );
+                for reg in &range.order {
+                    println!("    - {}", reg.desc.name);
+                }
+            }
+            MapDecode::Sparse(entries) => {
+                for entry in entries {
+                    println!(
+                        "  {} -> {}::{}",
+                        format_addr(entry.addr),
+                        entry.module.as_str(),
+                        entry.register.desc.name
+                    );
+                    if !entry.field_policies.is_empty() {
+                        for policy in &entry.field_policies {
+                            let span = if policy.lsb == policy.msb {
+                                format!("bit {}", policy.lsb)
+                            } else {
+                                format!("bits {}..{}", policy.lsb, policy.msb)
+                            };
+                            let mut details = format!("      - {}", span);
+                            if let Some(hook) = &policy.on_read {
+                                details.push_str(&format!(" on_read=\"{}\"", hook));
+                            }
+                            if let Some(hook) = &policy.on_write {
+                                details.push_str(&format!(" on_write=\"{}\"", hook));
+                            }
+                            if policy.ro {
+                                details.push_str(" ro");
+                            }
+                            if policy.wo {
+                                details.push_str(" wo");
+                            }
+                            println!("{details}");
+                        }
+                    }
+                }
+            }
+            MapDecode::Instances(instances) => {
+                let selector = instances
+                    .selector
+                    .as_ref()
+                    .map(|sel| sel.desc.name.to_string())
+                    .unwrap_or_else(|| "Select (implicit)".to_string());
+                println!(
+                    "  instances kind={} count={} index_var={} selector={}",
+                    instances.module.as_str(),
+                    instances.count,
+                    instances.index_var,
+                    selector
+                );
+                for entry in &instances.layout {
+                    let addr_expr = match &entry.addr {
+                        personality_v2::InstanceAddressExpr::Absolute(expr) => expr.source(),
+                    };
+                    let mut line = format!("    {} -> {}", addr_expr, entry.register.desc.name);
+                    if let Some(field) = &entry.field {
+                        line.push_str(&format!(
+                            " (target_bit={}, source_bit={})",
+                            field.target_bit.source(),
+                            field.source_bit.source()
+                        ));
+                    }
+                    if !entry.field_policies.is_empty() {
+                        line.push_str(" field_policies=[");
+                        let mut first = true;
+                        for policy in &entry.field_policies {
+                            if !first {
+                                line.push_str(", ");
+                            }
+                            first = false;
+                            if policy.lsb == policy.msb {
+                                line.push_str(&format!("bit {}", policy.lsb));
+                            } else {
+                                line.push_str(&format!("bits {}..{}", policy.lsb, policy.msb));
+                            }
+                            if let Some(hook) = &policy.on_read {
+                                line.push_str(&format!(" on_read={}", hook));
+                            }
+                            if let Some(hook) = &policy.on_write {
+                                line.push_str(&format!(" on_write={}", hook));
+                            }
+                            if policy.ro {
+                                line.push_str(" ro");
+                            }
+                            if policy.wo {
+                                line.push_str(" wo");
+                            }
+                        }
+                        line.push(']');
+                    }
+                    println!("{line}");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "native-service")]
+fn dump_personality_registers(name: &str) -> Result<(), String> {
+    if let Some(persona) = personality::find(name) {
+        println!(
+            "Register-level dump is not yet available for legacy personality `{}`",
+            persona.name
+        );
+        return Ok(());
+    }
+
+    let (path, maybe_legacy) =
+        builtin_personality_entry(name).unwrap_or((PathBuf::from(name), None));
+
+    let toml = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let registry = bus::builtin_module_registry();
+    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+        .map_err(|err| err.to_string())?;
+
+    println!("Personality: {} — {}", def.metadata.id, def.metadata.title);
+    println!("Modules:");
+    for (kind, module) in &def.modules {
+        println!("  {:<10} -> {}", kind.as_str(), module.impl_id);
+    }
+    if let Some(legacy) = maybe_legacy {
+        println!("Legacy fallback: {}", legacy.name);
+    }
+
+    let bus = bus::Bus::from_personality_def(def).map_err(|err| err.to_string())?;
+    let mut mappings = bus
+        .address_mappings()
+        .ok_or_else(|| "register dump requires a TOML personality".to_string())?;
+
+    if mappings.is_empty() {
+        println!("\nNo resolved mappings.");
+        return Ok(());
+    }
+
+    mappings.sort_by(|a, b| {
+        a.addr
+            .cmp(&b.addr)
+            .then(match (&a.mapping, &b.mapping) {
+                (
+                    bus::MappingDetail::Scatter { target_bit: ta, .. },
+                    bus::MappingDetail::Scatter { target_bit: tb, .. },
+                ) => ta.cmp(tb),
+                (bus::MappingDetail::Scatter { .. }, _) => Ordering::Greater,
+                (_, bus::MappingDetail::Scatter { .. }) => Ordering::Less,
+                _ => Ordering::Equal,
+            })
+            .then(a.module.as_str().cmp(b.module.as_str()))
+            .then(a.module_impl_id.cmp(&b.module_impl_id))
+            .then(a.register_name.cmp(&b.register_name))
+            .then(match (&a.mapping, &b.mapping) {
+                (
+                    bus::MappingDetail::DirectInstance { instance: ia },
+                    bus::MappingDetail::DirectInstance { instance: ib },
+                ) => ia.cmp(ib),
+                (bus::MappingDetail::DirectInstance { .. }, bus::MappingDetail::Direct) => {
+                    Ordering::Greater
+                }
+                (bus::MappingDetail::Direct, bus::MappingDetail::DirectInstance { .. }) => {
+                    Ordering::Less
+                }
+                (
+                    bus::MappingDetail::Scatter { instance: ia, .. },
+                    bus::MappingDetail::Scatter { instance: ib, .. },
+                ) => ia.cmp(ib),
+                _ => Ordering::Equal,
+            })
+    });
+
+    println!("\nResolved register mappings:");
+    for mapping in mappings {
+        let register_suffix = match &mapping.mapping {
+            bus::MappingDetail::Direct => String::new(),
+            bus::MappingDetail::DirectInstance { instance } => format!("[{}]", instance),
+            bus::MappingDetail::Scatter { instance, .. } => {
+                instance.map(|idx| format!("[{}]", idx)).unwrap_or_default()
+            }
+        };
+
+        let mut details: Vec<String> = Vec::new();
+        if let bus::MappingDetail::Scatter { source_bit, .. } = &mapping.mapping {
+            details.push(format!("source_bit={}", source_bit));
+        }
+
+        if mapping.value_builder {
+            details.push("value_builder".to_string());
+        }
+        if let Some(expr) = &mapping.compute {
+            details.push(format!("compute={}", expr));
+        }
+        if mapping.transform.shift != 0 {
+            details.push(format!("shift {}", mapping.transform.shift));
+        }
+        if mapping.transform.invert_mask != 0 {
+            details.push(format!(
+                "invert_mask=0x{:02X}",
+                mapping.transform.invert_mask
+            ));
+        }
+        if mapping.transform.ro_mask != 0 {
+            details.push(format!("ro_mask=0x{:02X}", mapping.transform.ro_mask));
+        }
+        if mapping.transform.wo_mask != 0 {
+            details.push(format!("wo_mask=0x{:02X}", mapping.transform.wo_mask));
+        }
+        if let Some(ref hook) = mapping.transform.on_read {
+            details.push(format!("on_read={}", hook));
+        }
+        if let Some(ref hook) = mapping.transform.on_write {
+            details.push(format!("on_write={}", hook));
+        }
+        for hook in &mapping.field_hooks {
+            let mut parts = vec![format!("mask=0x{:02X}", hook.mask)];
+            if let Some(ref name) = hook.on_read {
+                parts.push(format!("on_read={}", name));
+            }
+            if let Some(ref name) = hook.on_write {
+                parts.push(format!("on_write={}", name));
+            }
+            details.push(format!("field_policy({})", parts.join(" ")));
+        }
+        if mapping.suppress_primary {
+            details.push("suppress_primary".to_string());
+        }
+
+        let detail_str = if details.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", details.join("; "))
+        };
+
+        let mut addr_label = format_addr(mapping.addr);
+        if let bus::MappingDetail::Scatter { target_bit, .. } = mapping.mapping {
+            addr_label.push_str(&format!(".bit{}", target_bit));
+        }
+
+        let module_label = format!(
+            "{}::{}{}",
+            mapping.module.as_str(),
+            mapping.module_impl_id,
+            register_suffix
+        );
+
+        println!(
+            "  {} <= {}.{} (priority {}){}",
+            addr_label, module_label, mapping.register_name, mapping.priority, detail_str
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
+#[cfg(feature = "native-service")]
+fn format_addr(addr: u16) -> String {
+    format!("${:04X}", addr)
+}
+
+#[cfg(feature = "native-service")]
+fn describe_mmio_kind(kind: PersonalityMmioKind) -> &'static str {
+    match kind {
+        PersonalityMmioKind::Console => "console",
+        PersonalityMmioKind::Display => "display",
+        PersonalityMmioKind::Sprite => "sprite",
+        PersonalityMmioKind::System => "system",
+        PersonalityMmioKind::Input => "input",
+    }
+}
+
+#[cfg(feature = "native-service")]
+fn resolve_personality_selection(name: &str) -> Result<PersonalitySelection, String> {
+    if let Some(persona) = personality::find(name) {
+        return Ok(PersonalitySelection::Legacy(persona));
+    }
+
+    if let Some((path, maybe_legacy)) = builtin_personality_entry(name) {
+        return Ok(PersonalitySelection::Toml {
+            path,
+            legacy: maybe_legacy,
+        });
+    }
+
+    let path = PathBuf::from(name);
+    if path.exists() {
+        return Ok(PersonalitySelection::from_path(path));
+    }
+
+    Err(format!(
+        "unknown personality '{name}'. Use --list-personalities to inspect the available options.",
+    ))
+}
 const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
 const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
 const SPRITE_VIRTUAL_WIDTH: f32 = 40.0;
@@ -160,6 +564,10 @@ pub struct Args {
     #[arg(long, default_value_t = true)]
     pub resize_window: bool,
 
+    /// Enable the raster/collision overlay instrumentation.
+    #[arg(long, action = ArgAction::SetTrue)]
+    pub enable_video_overlay: bool,
+
     /// Optional positional PRG path (shorthand for `--prg`).
     #[arg(conflicts_with = "prg")]
     pub program: Option<PathBuf>,
@@ -171,6 +579,19 @@ pub struct Args {
     /// List available personalities and exit.
     #[arg(long, default_value_t = false)]
     pub list_personalities: bool,
+    /// List available module implementations and exit.
+    #[arg(long, default_value_t = false)]
+    pub list_modules: bool,
+    /// Dump map layout for a personality and exit.
+    #[arg(
+        long,
+        value_name = "PERSONALITY",
+        conflicts_with = "dump_map_registers"
+    )]
+    pub dump_maps: Option<String>,
+    /// Dump resolved register mappings for a personality and exit.
+    #[arg(long, value_name = "PERSONALITY", conflicts_with = "dump_maps")]
+    pub dump_map_registers: Option<String>,
 }
 
 /// Source for a PRG payload that should be executed by the emulator.
@@ -318,12 +739,16 @@ impl ServiceRequestPayload {
     }
 }
 
+/// Fully-specified viewer configuration used when bootstrapping the Bevy app.
 pub struct AppConfig {
     pub startup: Option<StartupConfig>,
     pub default_max_cycles: u64,
     pub virtual_resolution: VirtualResolution,
     pub display: DisplaySettings,
-    pub personality: &'static Personality,
+    pub personality: PersonalitySelection,
+    /// When `true`, spawn the raster/collision overlay helpers in addition to the
+    /// core emulator pipelines.
+    pub video_overlay: bool,
     #[cfg(feature = "native-service")]
     pub service: Option<ServiceConfig>,
 }
@@ -420,6 +845,25 @@ impl DisplayPalette {
     }
 }
 
+/// Runtime toggle describing whether the viewer should render the extra
+/// raster/collision overlay helpers.
+#[derive(Resource, Clone, Copy)]
+struct VideoOverlayConfig {
+    enabled: bool,
+}
+
+impl VideoOverlayConfig {
+    /// Create a new configuration with the supplied enable flag.
+    fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+
+    /// Returns `true` when the overlay helpers should be visible.
+    fn enabled(self) -> bool {
+        self.enabled
+    }
+}
+
 #[cfg_attr(not(feature = "native-service"), allow(dead_code))]
 fn parse_color(value: &str) -> Result<Color, String> {
     let value = value.trim();
@@ -458,20 +902,28 @@ fn mmio_color(value: u8, fallback: Color) -> Color {
 #[cfg(feature = "native-service")]
 pub fn run_native() -> Result<(), String> {
     let args = Args::parse();
-    if args.list_personalities {
-        println!("Available personalities:");
-        for personality in personality::all() {
-            println!("  {:<16} {}", personality.name, personality.description);
-        }
+
+    if args.list_modules {
+        print_module_list();
         return Ok(());
     }
 
-    let persona = personality::find(&args.personality).ok_or_else(|| {
-        format!(
-            "unknown personality '{}'. Use --list-personalities to inspect the available options.",
-            args.personality
-        )
-    })?;
+    if let Some(name) = args.dump_map_registers.as_deref() {
+        dump_personality_registers(name)?;
+        return Ok(());
+    }
+
+    if let Some(name) = args.dump_maps.as_deref() {
+        dump_personality_maps(name)?;
+        return Ok(());
+    }
+
+    if args.list_personalities {
+        print_personality_list();
+        return Ok(());
+    }
+
+    let personality_selection = resolve_personality_selection(&args.personality)?;
     let startup_path = args.prg.clone().or_else(|| args.program.clone());
     let startup = startup_path.map(|path| StartupConfig {
         source: ProgramSource::File(path),
@@ -514,7 +966,8 @@ pub fn run_native() -> Result<(), String> {
         default_max_cycles: args.max_cycles,
         virtual_resolution: VirtualResolution::new(args.virtual_width, args.virtual_height),
         display,
-        personality: persona,
+        personality: personality_selection,
+        video_overlay: args.enable_video_overlay,
         #[cfg(feature = "native-service")]
         service,
     });
@@ -522,6 +975,7 @@ pub fn run_native() -> Result<(), String> {
     Ok(())
 }
 
+/// Launches the Bevy runtime using the supplied configuration.
 pub fn run_app(config: AppConfig) {
     let AppConfig {
         startup,
@@ -529,14 +983,16 @@ pub fn run_app(config: AppConfig) {
         virtual_resolution,
         display,
         personality,
+        video_overlay,
         #[cfg(feature = "native-service")]
         service,
     } = config;
 
+    let legacy_persona = personality.legacy_personality();
     #[allow(unused_mut)]
-    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality);
-    let interrupt_bindings =
-        InterruptBindings::from_personality(emulator.interrupts(), personality);
+    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality.clone());
+    let interrupt_bindings = legacy_persona
+        .and_then(|legacy| InterruptBindings::from_personality(emulator.interrupts(), legacy));
 
     #[cfg(feature = "native-service")]
     let mut service_listener: Option<ServiceListener> = None;
@@ -558,8 +1014,27 @@ pub fn run_app(config: AppConfig) {
         }
     }
 
+    let controller_state =
+        ControllerState::new(emulator.input_backend(), emulator.input_snapshot());
+    // Only mirror the raster into the UI overlay when the flag is enabled.
+    let overlay_handle = if video_overlay {
+        Some(emulator.video_overlay())
+    } else {
+        None
+    };
+    let raster_driver = RasterDriver::new(
+        emulator.raster_state(),
+        overlay_handle,
+        emulator.interrupts(),
+    );
+    let keyboard_tracker = KeyboardTracker::default();
+
     let mut app = App::new();
+    app.insert_resource(controller_state);
+    app.insert_resource(raster_driver);
+    app.insert_resource(keyboard_tracker);
     app.insert_non_send_resource(emulator);
+    app.insert_resource(VideoOverlayConfig::new(video_overlay));
     if let Some(bindings) = interrupt_bindings {
         let has_timer = bindings.has_timer();
         if has_timer {
@@ -639,11 +1114,16 @@ pub fn run_app(config: AppConfig) {
     .add_systems(
         Update,
         (
+            update_keyboard_tracker,
+            sync_controller_backend,
+            controller_input_system,
             emit_frame_start_interrupt,
             timer_interrupt_system,
+            drive_raster_counter,
             keyboard_interrupt_system,
             gamepad_interrupt_system,
             update_sprite_viewport,
+            update_video_overlay_line,
             ui_system,
         ),
     )
@@ -659,13 +1139,14 @@ struct EmulatorState {
     status_message: Option<String>,
     last_outcome: Option<RunOutcome>,
     interrupts: Arc<InterruptController>,
+    raster_irq: Arc<RasterIrqState>,
 }
 
 impl EmulatorState {
     fn new(
         startup: Option<StartupConfig>,
         default_max_cycles: u64,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
     ) -> Self {
         let (
             cpu,
@@ -678,6 +1159,7 @@ impl EmulatorState {
             .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
 
         let interrupts = outputs.interrupts.clone();
+        let raster_irq = outputs.raster.clone();
 
         Self {
             cpu,
@@ -686,6 +1168,7 @@ impl EmulatorState {
             status_message: status,
             last_outcome: outcome,
             interrupts,
+            raster_irq,
         }
     }
 
@@ -710,6 +1193,10 @@ impl EmulatorState {
         self.interrupts.clone()
     }
 
+    fn raster_state(&self) -> Arc<RasterIrqState> {
+        self.raster_irq.clone()
+    }
+
     /// Ask the worker to load and execute a program, returning the status text.
     fn run_program(
         &mut self,
@@ -732,6 +1219,7 @@ impl EmulatorState {
             }) => {
                 self.outputs = outputs;
                 self.interrupts = self.outputs.interrupts.clone();
+                self.raster_irq = self.outputs.raster.clone();
                 self.status_message = Some(summary.clone());
                 self.last_outcome = outcome;
                 match status {
@@ -746,6 +1234,17 @@ impl EmulatorState {
                 Err(err)
             }
         }
+    }
+
+    fn input_backend(&self) -> Option<Arc<dyn InputBackend>> {
+        self.outputs.input_backend.clone()
+    }
+
+    fn input_snapshot(&self) -> Option<InputSnapshot> {
+        self.outputs
+            .input
+            .as_ref()
+            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
     }
 
     fn snapshot(&self) -> Option<ConsoleSnapshot> {
@@ -770,6 +1269,14 @@ impl EmulatorState {
             .lock()
             .map(|output| output.snapshot())
             .ok()
+    }
+
+    fn video_state(&self) -> Arc<Mutex<VideoState>> {
+        self.outputs.video.clone()
+    }
+
+    fn video_overlay(&self) -> Arc<VideoOverlaySignals> {
+        self.outputs.video_overlay.clone()
     }
 
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
@@ -896,6 +1403,198 @@ impl InterruptBindings {
     }
 }
 
+const CONTROLLER_PADS: usize = CONTROLLER_PAD_COUNT;
+const CONTROLLER_BUTTON_ORDER: [ControllerButton; 16] = [
+    ControllerButton::DPadUp,
+    ControllerButton::DPadDown,
+    ControllerButton::DPadLeft,
+    ControllerButton::DPadRight,
+    ControllerButton::South,
+    ControllerButton::East,
+    ControllerButton::West,
+    ControllerButton::North,
+    ControllerButton::Start,
+    ControllerButton::Select,
+    ControllerButton::LeftShoulder,
+    ControllerButton::RightShoulder,
+    ControllerButton::LeftTrigger,
+    ControllerButton::RightTrigger,
+    ControllerButton::LeftThumb,
+    ControllerButton::RightThumb,
+];
+
+#[derive(Clone, Copy, Default)]
+struct PadAssignment {
+    gamepad: Option<Gamepad>,
+}
+
+#[derive(Resource)]
+struct ControllerState {
+    backend: Option<Arc<dyn InputBackend>>,
+    pads: [PadAssignment; CONTROLLER_PADS],
+    previous_snapshot: Option<InputSnapshot>,
+}
+
+impl ControllerState {
+    fn new(backend: Option<Arc<dyn InputBackend>>, snapshot: Option<InputSnapshot>) -> Self {
+        let mut state = Self {
+            backend: None,
+            pads: [PadAssignment::default(); CONTROLLER_PADS],
+            previous_snapshot: snapshot.clone(),
+        };
+        state.sync_backend(backend, snapshot);
+        state
+    }
+
+    fn has_backend(&self) -> bool {
+        self.backend.is_some()
+    }
+
+    fn sync_backend(
+        &mut self,
+        backend: Option<Arc<dyn InputBackend>>,
+        snapshot: Option<InputSnapshot>,
+    ) {
+        let changed = match (&self.backend, &backend) {
+            (Some(current), Some(next)) => !Arc::ptr_eq(current, next),
+            (None, None) => false,
+            _ => true,
+        };
+
+        if changed {
+            if let Some(new_backend) = backend.as_ref() {
+                for (index, pad) in self.pads.iter().enumerate() {
+                    let id = pad.gamepad.and_then(gamepad_id_u32);
+                    new_backend.update_gamepad(index, id);
+                }
+            }
+            self.backend = backend;
+        }
+
+        if let Some(snapshot) = snapshot {
+            self.previous_snapshot = Some(snapshot);
+        } else if self.backend.is_none() {
+            self.previous_snapshot = None;
+        }
+    }
+
+    fn handle_connect(&mut self, gamepad: Gamepad) {
+        let _ = self.ensure_pad(gamepad);
+    }
+
+    fn handle_disconnect(&mut self, gamepad: Gamepad) {
+        if let Some(index) = self.pad_index(gamepad) {
+            self.pads[index].gamepad = None;
+            if let Some(backend) = &self.backend {
+                backend.update_gamepad(index, None);
+            }
+        }
+    }
+
+    fn handle_button(&mut self, gamepad: Gamepad, button: GamepadButtonType, value: f32) {
+        let Some(mapped) = map_button(button) else {
+            return;
+        };
+        let Some(index) = self.ensure_pad(gamepad) else {
+            return;
+        };
+        if let Some(backend) = &self.backend {
+            backend.update_button(index, mapped, value);
+        }
+    }
+
+    fn handle_axis(&mut self, gamepad: Gamepad, axis: GamepadAxisType, value: f32) {
+        let Some(mapped) = map_axis(axis) else {
+            return;
+        };
+        let Some(index) = self.ensure_pad(gamepad) else {
+            return;
+        };
+        if let Some(backend) = &self.backend {
+            backend.update_axis(index, mapped, value);
+        }
+    }
+
+    fn snapshot_pair(&mut self) -> Option<(InputSnapshot, Option<InputSnapshot>)> {
+        let backend = self.backend.clone()?;
+        let snapshot = backend.snapshot();
+        let previous = self.previous_snapshot.replace(snapshot.clone());
+        Some((snapshot, previous))
+    }
+
+    fn pad_index(&self, gamepad: Gamepad) -> Option<usize> {
+        self.pads.iter().position(|pad| {
+            pad.gamepad
+                .map(|candidate| candidate == gamepad)
+                .unwrap_or(false)
+        })
+    }
+
+    fn first_free_pad(&self) -> Option<usize> {
+        self.pads.iter().position(|pad| pad.gamepad.is_none())
+    }
+
+    fn ensure_pad(&mut self, gamepad: Gamepad) -> Option<usize> {
+        if let Some(index) = self.pad_index(gamepad) {
+            return Some(index);
+        }
+        let index = self.first_free_pad()?;
+        self.pads[index].gamepad = Some(gamepad);
+        if let Some(backend) = &self.backend {
+            backend.update_gamepad(index, gamepad_id_u32(gamepad));
+        }
+        Some(index)
+    }
+
+    fn pad_gamepad_label(&self, index: usize) -> String {
+        self.pads
+            .get(index)
+            .and_then(|pad| pad.gamepad)
+            .and_then(gamepad_id_u32)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "None".to_string())
+    }
+}
+
+fn gamepad_id_u32(gamepad: Gamepad) -> Option<u32> {
+    u32::try_from(gamepad.id).ok()
+}
+
+fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
+    match button {
+        GamepadButtonType::DPadUp => Some(ControllerButton::DPadUp),
+        GamepadButtonType::DPadDown => Some(ControllerButton::DPadDown),
+        GamepadButtonType::DPadLeft => Some(ControllerButton::DPadLeft),
+        GamepadButtonType::DPadRight => Some(ControllerButton::DPadRight),
+        GamepadButtonType::South => Some(ControllerButton::South),
+        GamepadButtonType::East => Some(ControllerButton::East),
+        GamepadButtonType::West => Some(ControllerButton::West),
+        GamepadButtonType::North => Some(ControllerButton::North),
+        GamepadButtonType::Start => Some(ControllerButton::Start),
+        GamepadButtonType::Select => Some(ControllerButton::Select),
+        GamepadButtonType::Mode => Some(ControllerButton::Select),
+        GamepadButtonType::LeftThumb => Some(ControllerButton::LeftThumb),
+        GamepadButtonType::RightThumb => Some(ControllerButton::RightThumb),
+        GamepadButtonType::LeftTrigger | GamepadButtonType::LeftTrigger2 => {
+            Some(ControllerButton::LeftTrigger)
+        }
+        GamepadButtonType::RightTrigger | GamepadButtonType::RightTrigger2 => {
+            Some(ControllerButton::RightTrigger)
+        }
+        GamepadButtonType::C => Some(ControllerButton::LeftShoulder),
+        GamepadButtonType::Z => Some(ControllerButton::RightShoulder),
+        _ => None,
+    }
+}
+
+fn map_axis(axis: GamepadAxisType) -> Option<ControllerAxis> {
+    match axis {
+        GamepadAxisType::LeftStickX => Some(ControllerAxis::LeftStickX),
+        GamepadAxisType::LeftStickY => Some(ControllerAxis::LeftStickY),
+        _ => None,
+    }
+}
+
 #[derive(Resource)]
 struct TimerInterruptState {
     timer: Timer,
@@ -921,6 +1620,56 @@ fn emit_frame_end_interrupt(bindings: Option<Res<InterruptBindings>>) {
     }
 }
 
+#[derive(Resource, Default)]
+struct KeyboardTracker {
+    current: Vec<String>,
+    last: Vec<String>,
+    previous: Vec<String>,
+}
+
+impl KeyboardTracker {
+    fn update_from_input(&mut self, input: &Input<KeyCode>) {
+        let mut pressed: Vec<String> = input.get_pressed().map(|key| format!("{key:?}")).collect();
+        pressed.sort();
+
+        if pressed.is_empty() {
+            self.last.clear();
+            self.current.clear();
+            return;
+        }
+
+        if pressed == self.current {
+            return;
+        }
+
+        // find newly pressed keys
+        let new_keys: Vec<_> = pressed
+            .iter()
+            .filter(|k| !self.current.contains(k))
+            .cloned()
+            .collect();
+
+        self.last = self.current.clone();
+        self.current = pressed;
+
+        // only append new ones
+        self.previous.extend(new_keys);
+
+        if self.previous.len() > 20 {
+            let len = self.previous.len();
+            self.previous = self.previous[len - 20..].to_vec();
+        }
+    }
+
+    fn current(&self) -> &[String] {
+        &self.current
+    }
+
+    fn previous(&self) -> String {
+        self.previous.concat()
+    }
+}
+
 fn timer_interrupt_system(
     time: Res<Time>,
     bindings: Option<Res<InterruptBindings>>,
@@ -933,6 +1682,97 @@ fn timer_interrupt_system(
     let Some(mut state) = state else { return };
     if state.timer.tick(time.delta()).just_finished() {
         bindings.raise_timer0();
+    }
+}
+
+/// Drives the shared raster counter each frame, raising IRQs and keeping the
+/// optional overlay in sync.
+#[derive(Resource)]
+struct RasterDriver {
+    state: Arc<RasterIrqState>,
+    overlay: Option<Arc<VideoOverlaySignals>>,
+    controller: Arc<InterruptController>,
+    phase: f32,
+}
+
+impl RasterDriver {
+    /// Builds the driver that advances the shared raster state each frame.
+    fn new(
+        state: Arc<RasterIrqState>,
+        overlay: Option<Arc<VideoOverlaySignals>>,
+        controller: Arc<InterruptController>,
+    ) -> Self {
+        Self {
+            state,
+            overlay,
+            controller,
+            phase: 0.0,
+        }
+    }
+
+    /// Advances the raster position based on elapsed time, updating the MMIO
+    /// snapshot and optionally mirroring it into the overlay helper.
+    fn advance(&mut self, delta: f32, total_lines: u16) {
+        const RASTER_REFRESH_HZ: f32 = 60.0;
+        let lines = total_lines.max(1);
+        let lines_per_second = lines as f32 * RASTER_REFRESH_HZ;
+        self.phase = (self.phase + delta * lines_per_second) % lines as f32;
+        let line = self.phase.floor() as u16;
+        self.state.set_current_low(line as u8);
+        self.state.set_current_high((line >> 8) as u8);
+        if let Some(overlay) = self.overlay.as_ref() {
+            overlay.record_raster(line);
+        }
+        if self.state.compare() == line {
+            self.controller.raise_irq(RASTER_IRQ_MASK);
+        }
+    }
+}
+
+fn drive_raster_counter(
+    time: Res<Time>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    mut driver: ResMut<RasterDriver>,
+) {
+    let lines = virtual_resolution.height().round().clamp(1.0, 1024.0) as u16;
+    driver.advance(time.delta_seconds(), lines);
+}
+
+fn update_keyboard_tracker(input: Res<Input<KeyCode>>, mut tracker: ResMut<KeyboardTracker>) {
+    tracker.update_from_input(&input);
+}
+
+fn sync_controller_backend(
+    emulator: Option<NonSend<EmulatorState>>,
+    mut controller: ResMut<ControllerState>,
+) {
+    let Some(emulator) = emulator else { return };
+    controller.sync_backend(emulator.input_backend(), emulator.input_snapshot());
+}
+
+fn controller_input_system(
+    mut controller: ResMut<ControllerState>,
+    mut connection_events: EventReader<GamepadConnectionEvent>,
+    mut button_events: EventReader<GamepadButtonChangedEvent>,
+    mut axis_events: EventReader<GamepadAxisChangedEvent>,
+) {
+    if !controller.has_backend() {
+        return;
+    }
+
+    for event in connection_events.iter() {
+        match &event.connection {
+            GamepadConnection::Connected(_) => controller.handle_connect(event.gamepad),
+            GamepadConnection::Disconnected => controller.handle_disconnect(event.gamepad),
+        }
+    }
+
+    for event in button_events.iter() {
+        controller.handle_button(event.gamepad, event.button_type, event.value);
+    }
+
+    for event in axis_events.iter() {
+        controller.handle_axis(event.gamepad, event.axis_type, event.value);
     }
 }
 
@@ -965,6 +1805,139 @@ fn gamepad_interrupt_system(
     if events.iter().next().is_some() {
         bindings.raise_gamepad();
     }
+}
+
+fn render_controller_pad(
+    ui: &mut egui::Ui,
+    index: usize,
+    gamepad_label: &str,
+    modern: Option<&ModernControllerPadSnapshot>,
+) {
+    ui.heading(format!("Controller {index}"));
+    ui.label(format!("Gamepad ID: {gamepad_label}"));
+
+    ui.add_space(6.0);
+    if let Some(modern) = modern {
+        ui.label("Buttons");
+        egui::Grid::new(format!("controller_{index}_buttons"))
+            .striped(true)
+            .show(ui, |grid| {
+                grid.label("Button");
+                grid.label("Value");
+                grid.end_row();
+                for (button, sample) in &modern.buttons {
+                    grid.label(controller_button_label(*button));
+                    grid.label(button_current_text(sample));
+                    grid.end_row();
+                }
+            });
+
+        ui.add_space(6.0);
+        ui.label("Axes");
+        egui::Grid::new(format!("controller_{index}_axes"))
+            .striped(true)
+            .show(ui, |grid| {
+                grid.label("Axis");
+                grid.label("Value");
+                grid.end_row();
+                for (axis, sample) in &modern.axes {
+                    grid.label(controller_axis_label(*axis));
+                    grid.label(axis_current_text(sample));
+                    grid.end_row();
+                }
+            });
+
+        ui.add_space(6.0);
+        ui.label(format!("Pot X (modern): 0x{:02X}", modern.pot_x));
+        ui.label(format!("Pot Y (modern): 0x{:02X}", modern.pot_y));
+    } else {
+        ui.label("Modern telemetry unavailable.");
+    }
+}
+
+fn controller_button_label(button: ControllerButton) -> &'static str {
+    match button {
+        ControllerButton::DPadUp => "D-Pad Up",
+        ControllerButton::DPadDown => "D-Pad Down",
+        ControllerButton::DPadLeft => "D-Pad Left",
+        ControllerButton::DPadRight => "D-Pad Right",
+        ControllerButton::South => "South",
+        ControllerButton::East => "East",
+        ControllerButton::West => "West",
+        ControllerButton::North => "North",
+        ControllerButton::Start => "Start",
+        ControllerButton::Select => "Select",
+        ControllerButton::LeftShoulder => "Left Shoulder",
+        ControllerButton::RightShoulder => "Right Shoulder",
+        ControllerButton::LeftThumb => "Left Thumb",
+        ControllerButton::RightThumb => "Right Thumb",
+        ControllerButton::LeftTrigger => "Left Trigger",
+        ControllerButton::RightTrigger => "Right Trigger",
+    }
+}
+
+fn button_list(mask: u16) -> String {
+    let mut labels: Vec<&'static str> = Vec::new();
+    for button in CONTROLLER_BUTTON_ORDER {
+        if mask & button_bit(button) != 0 {
+            labels.push(controller_button_label(button));
+        }
+    }
+    if labels.is_empty() {
+        "None".to_string()
+    } else {
+        labels.join(", ")
+    }
+}
+
+fn controller_axis_label(axis: ControllerAxis) -> &'static str {
+    match axis {
+        ControllerAxis::LeftStickX => "Left Stick X",
+        ControllerAxis::LeftStickY => "Left Stick Y",
+    }
+}
+
+fn button_current_text(sample: &ButtonSample) -> String {
+    let label = if sample.pressed {
+        "Pressed"
+    } else {
+        "Released"
+    };
+    if sample.value.abs() > f32::EPSILON {
+        format!("{label} ({:.2})", sample.value)
+    } else {
+        label.to_string()
+    }
+}
+
+fn axis_current_text(sample: &AxisSample) -> String {
+    format!("{:.2}", sample.value)
+}
+
+fn render_keyboard_section(ui: &mut egui::Ui, tracker: &KeyboardTracker) {
+    let current = tracker.current();
+    let last = tracker.previous();
+
+    let current_text = if current.is_empty() {
+        "None".to_string()
+    } else {
+        current.join(", ")
+    };
+
+    let last_text = if last.is_empty() {
+        "None".to_string()
+    } else {
+        last
+    };
+
+    ui.horizontal(|ui| {
+        ui.label("Current:");
+        ui.monospace(current_text.as_str());
+    });
+    ui.horizontal(|ui| {
+        ui.label("Last:");
+        ui.monospace(last_text.as_str());
+    });
 }
 
 fn interrupt_row(
@@ -1025,6 +1998,7 @@ impl UiState {
 enum ConsoleTab {
     Console,
     Interrupts,
+    Input,
 }
 
 #[derive(Component)]
@@ -1034,6 +2008,9 @@ struct SpriteSlot {
 
 #[derive(Component)]
 struct ContentBackground;
+
+#[derive(Component)]
+struct RasterLine;
 
 #[derive(Resource)]
 struct SpriteCatalog {
@@ -1157,10 +2134,12 @@ impl SpriteViewport {
     }
 }
 
+/// Sets up the 2D scene graph, including optional overlay helpers.
 fn setup_scene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     palette: Res<DisplayPalette>,
+    overlay_config: Res<VideoOverlayConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
@@ -1239,12 +2218,27 @@ fn setup_scene(
             BorderOverlay { side },
         ));
     }
+
+    if overlay_config.enabled() {
+        let raster_material = materials.add(ColorMaterial::from(Color::rgba(1.0, 0.0, 0.0, 0.6)));
+        commands.spawn((
+            MaterialMesh2dBundle {
+                mesh: overlay_mesh.clone(),
+                material: raster_material,
+                transform: Transform::from_xyz(0.0, 0.0, 4.5),
+                visibility: Visibility::Hidden,
+                ..Default::default()
+            },
+            RasterLine,
+        ));
+    }
 }
 
 fn ui_system(
     mut contexts: EguiContexts,
     #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
     mut ui_state: ResMut<UiState>,
+    mut controller_state: ResMut<ControllerState>,
     sprite_catalog: Res<SpriteCatalog>,
     sprite_viewport: Res<SpriteViewport>,
     sprite_virtual: Res<SpriteVirtualResolution>,
@@ -1257,6 +2251,7 @@ fn ui_system(
         &mut Sprite,
         &mut Handle<Image>,
     )>,
+    keyboard_tracker: Res<KeyboardTracker>,
     bindings: Option<Res<InterruptBindings>>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
     #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
@@ -1267,6 +2262,7 @@ fn ui_system(
             let response = emulator.handle_service_command(envelope.command);
             ui_state.status = Some(response.message.clone());
             let _ = envelope.respond_to.send(response);
+            controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
     }
 
@@ -1280,6 +2276,7 @@ fn ui_system(
             let response = emulator.handle_service_command(command);
             ui_state.status = Some(response.message.clone());
             service.send_response(response);
+            controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
     }
 
@@ -1291,6 +2288,7 @@ fn ui_system(
             Ok(msg) => msg,
             Err(err) => err,
         });
+        controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1329,6 +2327,8 @@ fn ui_system(
                                 Ok(msg) => msg,
                                 Err(err) => err,
                             });
+                            controller_state
+                                .sync_backend(emulator.input_backend(), emulator.input_snapshot());
                         }
                     }
                 }
@@ -1423,6 +2423,7 @@ fn ui_system(
                     ConsoleTab::Interrupts,
                     "Interrupts",
                 );
+                ui.selectable_value(&mut ui_state.active_tab, ConsoleTab::Input, "Input");
             });
 
             ui.separator();
@@ -1464,8 +2465,74 @@ fn ui_system(
                         interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
                         interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
                         interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
+                        if let Some(video_state) = emulator
+                            .video_state()
+                            .lock()
+                            .ok()
+                            .map(|guard| guard.clone())
+                        {
+                            if let Some(raster) = video_state.register_value(SystemReg::RasterLo) {
+                                ui.label(format!("Raster (lo): 0x{raster:02X}"));
+                            }
+                            if let Some(pending) = video_state.register_value(SystemReg::IrqPending)
+                            {
+                                ui.label(format!("IRQ Pending (VIC): 0x{pending:02X}"));
+                            }
+                            if let Some(enable) = video_state.register_value(SystemReg::IrqEnable) {
+                                ui.label(format!("IRQ Enable (VIC): 0x{enable:02X}"));
+                            }
+                        }
+                        let overlay_snapshot = emulator.video_overlay().snapshot();
+                        ui.separator();
+                        ui.label(format!("Raster line: {}", overlay_snapshot.raster));
+                        ui.label(format!(
+                            "Sprite collisions: 0x{:02X}",
+                            overlay_snapshot.sprite_collisions
+                        ));
+                        ui.label(format!(
+                            "Background collisions: 0x{:02X}",
+                            overlay_snapshot.background_collisions
+                        ));
                     } else {
                         ui.label("Interrupt bindings unavailable.");
+                    }
+                }
+                ConsoleTab::Input => {
+                    ui.heading("Keyboard");
+                    render_keyboard_section(ui, &keyboard_tracker);
+                    ui.separator();
+
+                    if controller_state.has_backend() {
+                        if let Some((snapshot, previous_snapshot)) =
+                            controller_state.snapshot_pair()
+                        {
+                            if snapshot.pads.is_empty() {
+                                ui.label("No controller data available.");
+                            } else {
+                                let labels: Vec<String> = (0..snapshot.pads.len())
+                                    .map(|pad| controller_state.pad_gamepad_label(pad))
+                                    .collect();
+                                let prev_ref = previous_snapshot.as_ref();
+                                if snapshot.pads.len().min(2) > 0 {
+                                    ui.columns(snapshot.pads.len(), |columns| {
+                                        for (offset, column) in columns.iter_mut().enumerate() {
+                                            let pad_index = offset;
+                                            let label = labels
+                                                .get(pad_index)
+                                                .map(|s| s.as_str())
+                                                .unwrap_or("None");
+                                            prev_ref.and_then(|prev| prev.pads.get(pad_index));
+                                            let modern = snapshot.modern.pads.get(pad_index);
+                                            render_controller_pad(column, pad_index, label, modern);
+                                        }
+                                    });
+                                }
+                            }
+                        } else {
+                            ui.label("Controller snapshot unavailable.");
+                        }
+                    } else {
+                        ui.label("Controller adapter not attached for this personality.");
                     }
                 }
             }
@@ -1665,6 +2732,7 @@ mod tests {
             y: clamped_y.round() as u16,
             scale_x: 0,
             scale_y: 0,
+            enabled: true,
         }
     }
 
@@ -1679,6 +2747,7 @@ mod tests {
             y: clamped_y.round() as u16,
             scale_x: shift_x & 0x0F,
             scale_y: shift_y & 0x0F,
+            enabled: true,
         }
     }
 
@@ -2050,6 +3119,46 @@ fn update_sprite_viewport(
             }
         }
     }
+}
+
+/// Positions the optional raster overlay element so it tracks the guest raster.
+fn update_video_overlay_line(
+    emulator: NonSend<EmulatorState>,
+    viewport: Res<SpriteViewport>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    overlay_config: Res<VideoOverlayConfig>,
+    mut query: Query<(&mut Transform, &mut Visibility), With<RasterLine>>,
+) {
+    let Ok((mut transform, mut visibility)) = query.get_single_mut() else {
+        return;
+    };
+
+    if !overlay_config.enabled() {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    let snapshot = emulator.video_overlay().snapshot();
+    let content_height = viewport.content_height();
+    let content_width = viewport.content_width();
+    if content_height <= 0.0 || content_width <= 0.0 {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    let virtual_height = virtual_resolution.height().max(1.0);
+    let raster = snapshot.raster.min(255) as f32;
+    let y_virtual = (raster / 255.0) * virtual_height;
+    let scale_y = viewport.scale_y();
+    let content_top = viewport.window_height() * 0.5 - viewport.border_y();
+    let host_y = content_top - y_virtual * scale_y;
+
+    transform.translation.x = 0.0;
+    transform.translation.y = host_y;
+    transform.translation.z = 4.5;
+    transform.scale.x = content_width.max(1.0);
+    transform.scale.y = 2.0;
+    *visibility = Visibility::Visible;
 }
 
 fn compute_viewport_geometry(

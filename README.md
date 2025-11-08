@@ -46,6 +46,14 @@ The desktop/wasm viewer in `crossdev/asm465` exposes several flags for tuning th
   live view of the IRQ/NMI controller. Pending/enabled masks and source-specific
   flags update in real time so you can confirm host events are reaching the
   guest.
+- Input inspector: the developer tools panel shows controllers 0/1 side-by-side
+  (additional pads are listed below) with live 16-bit button masks, active-low
+  MMIO snapshots, and the last meaningful change. Analog-only pads synthesize
+  D-pad bits when POT values saturate so both the modern mask and the legacy
+  port view remain usable.
+- Raster guide: pass `--enable-video-overlay` to display the host-driven raster
+  line/collision overlay when you need visual instrumentation; it stays disabled
+  otherwise to keep the viewer lightweight.
 
 These flags apply to both the native binary and the wasm wrapper so games/tools can match the behaviour of their target hardware.
 

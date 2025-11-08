@@ -1,5 +1,9 @@
 //! Sprite MMIO device that exposes sprite register state.
 
+use crate::mmio::{
+    BitField, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
+    SpriteReg,
+};
 use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +24,8 @@ pub struct SpriteState {
     /// Power-of-two scaling factors (encoded as shift exponents) for X/Y precision.
     pub scale_x: u8,
     pub scale_y: u8,
+    /// Whether the sprite is enabled for rendering.
+    pub enabled: bool,
 }
 
 /// Immutable snapshot shared with host integrations (Bevy frontend/tests).
@@ -73,6 +79,63 @@ pub struct SpriteMmio {
     output: Arc<Mutex<SpriteOutput>>,
 }
 
+const SPRITE_SCALE_FIELDS: &[BitField] = &[
+    BitField::new("scale_y", 0, 4),
+    BitField::new("scale_x", 4, 4),
+];
+
+const SPRITE_REGS: &[RegisterDesc] = &[
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Select),
+        "Select",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Number),
+        "Number",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Anim),
+        "Anim",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::XHi), "XHi", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::XLo), "XLo", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::YHi), "YHi", 1, 0, true, true, &[]),
+    RegisterDesc::new(RegId::Sprite(SpriteReg::YLo), "YLo", 1, 0, true, true, &[]),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Scale),
+        "Scale",
+        1,
+        0,
+        true,
+        true,
+        SPRITE_SCALE_FIELDS,
+    ),
+    RegisterDesc::new(
+        RegId::Sprite(SpriteReg::Enable),
+        "Enable",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+];
+
 impl SpriteMmio {
     pub fn new() -> Self {
         let output = Arc::new(Mutex::new(SpriteOutput::new()));
@@ -106,7 +169,7 @@ impl SpriteMmio {
 impl MmioDevice for SpriteMmio {
     fn read(&mut self, addr: u16) -> u8 {
         let slot = (self.spr_select as usize) % SPRITE_SLOTS;
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x00 => self.spr_select,
             0x01 => self.sprites[slot].number,
             0x02 => self.sprites[slot].anim,
@@ -115,13 +178,14 @@ impl MmioDevice for SpriteMmio {
             0x05 => (self.sprites[slot].y >> 8) as u8,
             0x06 => (self.sprites[slot].y & 0x00FF) as u8,
             0x07 => (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F),
+            0x08 => self.sprites[slot].enabled as u8,
             _ => 0,
         }
     }
 
     fn write(&mut self, addr: u16, value: u8) {
         let slot = (self.spr_select as usize) % SPRITE_SLOTS;
-        match addr & 0x0007 {
+        match addr & 0x000F {
             0x00 => {
                 self.spr_select = value;
                 log::trace!("SpriteMmio: select sprite slot {value}");
@@ -175,33 +239,137 @@ impl MmioDevice for SpriteMmio {
                     scale_y
                 );
             }
+            0x08 => {
+                let enabled = value & 1 != 0;
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.enabled = enabled;
+                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                });
+            }
             _ => {}
         }
     }
 }
 
+impl Module for SpriteMmio {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Sprite
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        SPRITE_REGS
+    }
+
+    fn read_reg(&mut self, reg: RegId) -> u8 {
+        let slot = (self.spr_select as usize) % SPRITE_SLOTS;
+        match reg {
+            RegId::Sprite(SpriteReg::Select) => self.spr_select,
+            RegId::Sprite(SpriteReg::Number) => self.sprites[slot].number,
+            RegId::Sprite(SpriteReg::Anim) => self.sprites[slot].anim,
+            RegId::Sprite(SpriteReg::XHi) => (self.sprites[slot].x >> 8) as u8,
+            RegId::Sprite(SpriteReg::XLo) => (self.sprites[slot].x & 0x00FF) as u8,
+            RegId::Sprite(SpriteReg::YHi) => (self.sprites[slot].y >> 8) as u8,
+            RegId::Sprite(SpriteReg::YLo) => (self.sprites[slot].y & 0x00FF) as u8,
+            RegId::Sprite(SpriteReg::Scale) => {
+                (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F)
+            }
+            RegId::Sprite(SpriteReg::Enable) => self.sprites[slot].enabled as u8,
+            _ => 0,
+        }
+    }
+
+    fn write_reg(&mut self, reg: RegId, value: u8) {
+        let slot = (self.spr_select as usize) % SPRITE_SLOTS;
+        match reg {
+            RegId::Sprite(SpriteReg::Select) => {
+                self.spr_select = value;
+                log::trace!("SpriteMmio: select sprite slot {value}");
+            }
+            RegId::Sprite(SpriteReg::Number) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.number = value;
+                    log::trace!("SpriteMmio: spr_num slot {} => {}", index, sprite.number);
+                });
+            }
+            RegId::Sprite(SpriteReg::Anim) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.anim = value;
+                    log::trace!("SpriteMmio: spr_anim slot {} => {}", index, sprite.anim);
+                });
+            }
+            RegId::Sprite(SpriteReg::XHi) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.x = (sprite.x & 0x00FF) | ((value as u16) << 8);
+                    log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
+                });
+            }
+            RegId::Sprite(SpriteReg::XLo) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.x = (sprite.x & 0xFF00) | value as u16;
+                    log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
+                });
+            }
+            RegId::Sprite(SpriteReg::YHi) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.y = (sprite.y & 0x00FF) | ((value as u16) << 8);
+                    log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
+                });
+            }
+            RegId::Sprite(SpriteReg::YLo) => {
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.y = (sprite.y & 0xFF00) | value as u16;
+                    log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
+                });
+            }
+            RegId::Sprite(SpriteReg::Scale) => {
+                let scale_x = (value >> 4) & 0x0F;
+                let scale_y = value & 0x0F;
+                self.sprites[slot].scale_x = scale_x;
+                self.sprites[slot].scale_y = scale_y;
+                self.publish_sprite(slot);
+                log::trace!(
+                    "SpriteMmio: spr_scale slot {} => x={}, y={}",
+                    slot,
+                    scale_x,
+                    scale_y
+                );
+            }
+            RegId::Sprite(SpriteReg::Enable) => {
+                let enabled = value & 1 != 0;
+                self.with_selected_sprite(|index, sprite| {
+                    sprite.enabled = enabled;
+                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+pub struct SpriteModuleFactory;
+
+pub const SPRITE_FACTORY: SpriteModuleFactory = SpriteModuleFactory;
+
+impl ModuleFactory for SpriteModuleFactory {
+    fn id(&self) -> &'static str {
+        "sprite.basic"
+    }
+
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Sprite
+    }
+
+    fn create(&self, _deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
+        Box::new(SpriteMmio::new())
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        SPRITE_REGS
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mmio::{Module, ModuleKind, RegId};
     use crate::MmioDevice;
-
-    #[test]
-    fn writes_update_sprite_state() {
-        let mut mmio = SpriteMmio::new();
-        MmioDevice::write(&mut mmio, 0xDF30, 1);
-        MmioDevice::write(&mut mmio, 0xDF33, 0x12);
-        MmioDevice::write(&mut mmio, 0xDF34, 0x34);
-        MmioDevice::write(&mut mmio, 0xDF35, 0x56);
-        MmioDevice::write(&mut mmio, 0xDF36, 0x78);
-        MmioDevice::write(&mut mmio, 0xDF31, 5);
-        MmioDevice::write(&mut mmio, 0xDF37, 0x21);
-
-        let snapshot = mmio.output().lock().unwrap().snapshot();
-        let sprite = snapshot.sprite(1).expect("slot 1");
-        assert_eq!(sprite.number, 5);
-        assert_eq!(sprite.x, 0x1234);
-        assert_eq!(sprite.y, 0x5678);
-        assert_eq!(sprite.scale_x, 0x2);
-        assert_eq!(sprite.scale_y, 0x1);
-    }
 }

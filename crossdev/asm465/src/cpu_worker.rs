@@ -7,18 +7,112 @@
 //! runner (threads are not available) but keep the same API surface so the rest
 //! of the app does not need conditional code.
 
+use crate::video_backend::{ModernVideoBackend, VideoOverlaySignals};
 use crate::{
     run_program_with_config, write_console_line, ProgramRunReport, StartupConfig, WELCOME_MESSAGE,
 };
 use bus::console_mmio::ConsoleOutput;
 use bus::display_mmio::DisplayOutput;
+use bus::input_mmio::InputOutput;
 use bus::interrupts::InterruptController;
-use bus::personality::Personality;
+use bus::mmio::ModuleKind;
+use bus::personality::{self, Personality};
+use bus::personality_v2;
 use bus::sprite_mmio::SpriteOutput;
-use bus::Bus;
+use bus::{
+    AdapterError, Bus, DisplayAdapter, DisplayBackend, DisplayOutputBackend, InputAdapter,
+    InputBackend, InputBackendHandle, RasterIrqState, SpriteAdapter, SpriteBackend,
+    SpriteOutputBackend, VideoAdapter, VideoBackend, VideoState,
+};
 use core6502::RunOutcome;
+use log::warn;
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+#[derive(Clone)]
+struct AdapterHandles {
+    video_state: Arc<Mutex<VideoState>>,
+    video_overlay: Arc<VideoOverlaySignals>,
+    input_backend: Option<Arc<dyn InputBackend>>,
+    raster_irq: Arc<RasterIrqState>,
+}
+
+fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
+    if let Some(display_handle) = bus.display_output_handle() {
+        let backend: Arc<dyn DisplayBackend> =
+            Arc::new(DisplayOutputBackend::new(display_handle.clone()));
+        if let Err(err) =
+            bus.attach_adapter(ModuleKind::Display, Box::new(DisplayAdapter::new(backend)))
+        {
+            match err {
+                AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                _ => warn!("failed to attach display adapter: {err}"),
+            }
+        }
+    }
+
+    if let Some(sprite_handle) = bus.sprite_output_handle() {
+        let backend: Arc<dyn SpriteBackend> =
+            Arc::new(SpriteOutputBackend::new(sprite_handle.clone()));
+        if let Err(err) =
+            bus.attach_adapter(ModuleKind::Sprite, Box::new(SpriteAdapter::new(backend)))
+        {
+            match err {
+                AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                _ => warn!("failed to attach sprite adapter: {err}"),
+            }
+        }
+    }
+
+    let input_backend: Option<Arc<dyn InputBackend>> = match bus.input_output_handle() {
+        Some(handle) => {
+            let backend: Arc<dyn InputBackend> = Arc::new(InputBackendHandle::new(handle.clone()));
+            if let Err(err) = bus.attach_adapter(
+                ModuleKind::Input,
+                Box::new(InputAdapter::new(backend.clone())),
+            ) {
+                match err {
+                    AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+                    _ => warn!("failed to attach input adapter: {err}"),
+                }
+            }
+            Some(backend)
+        }
+        None => None,
+    };
+
+    let video_state = Arc::new(Mutex::new(VideoState::default()));
+    let video_overlay = Arc::new(VideoOverlaySignals::new());
+    let raster_irq = Arc::new(RasterIrqState::new());
+    bus.attach_raster_irq_state(raster_irq.clone());
+    let video_backend: Arc<dyn VideoBackend> = Arc::new(ModernVideoBackend::new(
+        video_state.clone(),
+        video_overlay.clone(),
+    ));
+    if let Err(err) = bus.attach_adapter(
+        ModuleKind::System,
+        Box::new(VideoAdapter::new(
+            video_backend,
+            bus.interrupt_controller(),
+            Some(raster_irq.clone()),
+        )),
+    ) {
+        match err {
+            AdapterError::ModuleNotMapped(_) | AdapterError::LegacyPersonality => {}
+            _ => warn!("failed to attach video adapter: {err}"),
+        }
+    }
+
+    AdapterHandles {
+        video_state,
+        video_overlay,
+        input_backend,
+        raster_irq,
+    }
+}
 
 /// Handles to the shared MMIO output buffers that the viewer reads from.
 #[derive(Clone)]
@@ -26,12 +120,17 @@ pub struct CpuWorkerOutputs {
     pub console: Arc<Mutex<ConsoleOutput>>,
     pub display: Arc<Mutex<DisplayOutput>>,
     pub sprite: Arc<Mutex<SpriteOutput>>,
+    pub input: Option<Arc<Mutex<InputOutput>>>,
+    pub input_backend: Option<Arc<dyn InputBackend>>,
     pub interrupts: Arc<InterruptController>,
+    pub video: Arc<Mutex<VideoState>>,
+    pub video_overlay: Arc<VideoOverlaySignals>,
+    pub raster: Arc<RasterIrqState>,
 }
 
 impl CpuWorkerOutputs {
     /// Snapshot the console/display/sprite handles from the supplied bus.
-    fn new(bus: &Bus) -> Self {
+    fn new(bus: &Bus, adapters: &AdapterHandles) -> Self {
         let console = bus
             .console_output_handle()
             .expect("console MMIO output handle");
@@ -41,12 +140,18 @@ impl CpuWorkerOutputs {
         let sprite = bus
             .sprite_output_handle()
             .expect("sprite MMIO output handle");
+        let input = bus.input_output_handle();
         let interrupts = bus.interrupt_controller();
         Self {
             console,
             display,
             sprite,
+            input,
+            input_backend: adapters.input_backend.clone(),
             interrupts,
+            video: adapters.video_state.clone(),
+            video_overlay: adapters.video_overlay.clone(),
+            raster: adapters.raster_irq.clone(),
         }
     }
 }
@@ -140,19 +245,22 @@ mod native {
         throttle: CpuThrottle,
         running: bool,
         paused: bool,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
+        video_state: Arc<Mutex<VideoState>>,
+        video_overlay: Arc<VideoOverlaySignals>,
+        raster_irq: Arc<RasterIrqState>,
         status: Arc<CpuWorkerStatus>,
     }
 
     impl WorkerInner {
         /// Build the worker state and gather initial MMIO handles.
         fn new(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
             status: Arc<CpuWorkerStatus>,
-        ) -> (Self, CpuWorkerInit) {
+        ) -> Result<(Self, CpuWorkerInit), String> {
             let (cpu, outputs, initial_status, initial_outcome) =
-                initialize_cpu(personality, startup);
+                initialize_cpu(&personality, startup)?;
             status.running.store(true, Ordering::SeqCst);
             status.paused.store(false, Ordering::SeqCst);
             let inner = Self {
@@ -161,6 +269,9 @@ mod native {
                 running: true,
                 paused: false,
                 personality,
+                video_state: outputs.video.clone(),
+                video_overlay: outputs.video_overlay.clone(),
+                raster_irq: outputs.raster.clone(),
                 status: status.clone(),
             };
             let init = CpuWorkerInit {
@@ -168,7 +279,7 @@ mod native {
                 status: initial_status,
                 outcome: initial_outcome,
             };
-            (inner, init)
+            Ok((inner, init))
         }
 
         /// Main worker loop: polls commands, runs the CPU, and respects throttle settings.
@@ -251,9 +362,14 @@ mod native {
 
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            match run_program_with_config(Bus::with_personality(self.personality), &config) {
-                Ok((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Success)),
-                Err((bus, report)) => Ok(self.finish_program(bus, report, CpuRunStatus::Failure)),
+            let (bus, adapters) = self.personality.build_bus()?;
+            match run_program_with_config(bus, &config) {
+                Ok((bus, report)) => {
+                    Ok(self.finish_program(bus, report, CpuRunStatus::Success, adapters.clone()))
+                }
+                Err((bus, report)) => {
+                    Ok(self.finish_program(bus, report, CpuRunStatus::Failure, adapters))
+                }
             }
         }
 
@@ -263,15 +379,19 @@ mod native {
             bus: Bus,
             report: ProgramRunReport,
             status: CpuRunStatus,
+            adapters: AdapterHandles,
         ) -> CpuRunReply {
             let ProgramRunReport { outcome, message } = report;
             let mut bus = bus;
             if status == CpuRunStatus::Failure {
                 write_console_line(&mut bus, &message);
             }
-            let outputs = CpuWorkerOutputs::new(&bus);
+            let outputs = CpuWorkerOutputs::new(&bus, &adapters);
             self.cpu = Cpu::new(bus);
             self.cpu.reset();
+            self.video_state = adapters.video_state.clone();
+            self.video_overlay = adapters.video_overlay.clone();
+            self.raster_irq = adapters.raster_irq.clone();
             CpuRunReply {
                 summary: message,
                 status,
@@ -283,36 +403,37 @@ mod native {
 
     /// Helper that prepares the initial CPU/bus state for the worker thread.
     fn initialize_cpu(
-        personality: &'static Personality,
+        personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
-    ) -> (Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
+    ) -> Result<(Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                match run_program_with_config(Bus::with_personality(personality), &config) {
+                let (bus, adapters) = personality.build_bus()?;
+                match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus);
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
-                        (cpu, outputs, Some(message), outcome)
+                        Ok((cpu, outputs, Some(message), outcome))
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus);
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                         let mut cpu = Cpu::new(bus);
                         cpu.reset();
-                        (cpu, outputs, Some(message), outcome)
+                        Ok((cpu, outputs, Some(message), outcome))
                     }
                 }
             }
             None => {
-                let mut bus = Bus::with_personality(personality);
+                let (mut bus, adapters) = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus);
+                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                 let mut cpu = Cpu::new(bus);
                 cpu.reset();
-                (cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None)
+                Ok((cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None))
             }
         }
     }
@@ -320,12 +441,12 @@ mod native {
     impl CpuWorker {
         /// Spawn the worker thread and return the handles the UI needs for rendering.
         pub fn spawn(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
             let (command_tx, command_rx) = mpsc::channel();
             let status = Arc::new(CpuWorkerStatus::default());
-            let (inner, init) = WorkerInner::new(personality, startup, status.clone());
+            let (inner, init) = WorkerInner::new(personality, startup, status.clone())?;
             let handle = thread::Builder::new()
                 .name("cpu-worker".into())
                 .spawn(move || inner.run(command_rx))
@@ -406,18 +527,31 @@ mod wasm {
     /// Synchronous worker used in wasm builds (threads are unavailable).
     pub struct CpuWorker {
         bus: Bus,
-        personality: &'static Personality,
+        personality: PersonalitySelection,
+        #[allow(dead_code)]
+        video_state: Arc<Mutex<VideoState>>,
+        video_overlay: Arc<VideoOverlaySignals>,
+        raster_irq: Arc<RasterIrqState>,
     }
 
     impl CpuWorker {
         /// Create the worker and return the initial MMIO handles.
         pub fn spawn(
-            personality: &'static Personality,
+            personality: PersonalitySelection,
             startup: Option<StartupConfig>,
         ) -> Result<(Self, CpuWorkerInit), String> {
-            let (bus, outputs, status, outcome) = initialize_bus(personality, startup);
+            let (bus, outputs, status, outcome) = initialize_bus(&personality, startup)?;
+            let video_state = outputs.video.clone();
+            let video_overlay = outputs.video_overlay.clone();
+            let raster_irq = outputs.raster.clone();
             Ok((
-                Self { bus, personality },
+                Self {
+                    bus,
+                    personality,
+                    video_state,
+                    video_overlay,
+                    raster_irq,
+                },
                 CpuWorkerInit {
                     outputs,
                     status,
@@ -428,11 +562,15 @@ mod wasm {
 
         /// Run the supplied program immediately on the single-threaded executor.
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            match run_program_with_config(Bus::with_personality(self.personality), &config) {
+            let (bus, adapters) = self.personality.build_bus()?;
+            match run_program_with_config(bus, &config) {
                 Ok((bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
-                    let outputs = CpuWorkerOutputs::new(&bus);
+                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                     self.bus = bus;
+                    self.video_state = adapters.video_state.clone();
+                    self.video_overlay = adapters.video_overlay.clone();
+                    self.raster_irq = adapters.raster_irq.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Success,
@@ -443,8 +581,11 @@ mod wasm {
                 Err((mut bus, report)) => {
                     let ProgramRunReport { outcome, message } = report;
                     write_console_line(&mut bus, &message);
-                    let outputs = CpuWorkerOutputs::new(&bus);
+                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
                     self.bus = bus;
+                    self.video_state = adapters.video_state.clone();
+                    self.video_overlay = adapters.video_overlay.clone();
+                    self.raster_irq = adapters.raster_irq.clone();
                     Ok(CpuRunReply {
                         summary: message,
                         status: CpuRunStatus::Failure,
@@ -486,30 +627,31 @@ mod wasm {
 
     /// Helper mirroring [`initialize_cpu`] for the single-threaded wasm runner.
     fn initialize_bus(
-        personality: &'static Personality,
+        personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
-    ) -> (Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>) {
+    ) -> Result<(Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
         match startup {
             Some(config) => {
-                match run_program_with_config(Bus::with_personality(personality), &config) {
+                let (bus, adapters) = personality.build_bus()?;
+                match run_program_with_config(bus, &config) {
                     Ok((bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus);
-                        (bus, outputs, Some(message), outcome)
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+                        Ok((bus, outputs, Some(message), outcome))
                     }
                     Err((mut bus, report)) => {
                         let ProgramRunReport { outcome, message } = report;
                         write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus);
-                        (bus, outputs, Some(message), outcome)
+                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+                        Ok((bus, outputs, Some(message), outcome))
                     }
                 }
             }
             None => {
-                let mut bus = Bus::with_personality(personality);
+                let (mut bus, adapters) = personality.build_bus()?;
                 write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus);
-                (bus, outputs, Some(WELCOME_MESSAGE.to_string()), None)
+                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+                Ok((bus, outputs, Some(WELCOME_MESSAGE.to_string()), None))
             }
         }
     }
@@ -519,3 +661,62 @@ mod wasm {
 pub use native::CpuWorker;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::CpuWorker;
+#[derive(Clone)]
+pub enum PersonalitySelection {
+    Legacy(&'static Personality),
+    Toml {
+        path: PathBuf,
+        legacy: Option<&'static Personality>,
+    },
+}
+
+impl PersonalitySelection {
+    pub fn legacy_default() -> Self {
+        PersonalitySelection::Legacy(personality::default())
+    }
+
+    pub fn from_path(path: PathBuf) -> Self {
+        PersonalitySelection::Toml { path, legacy: None }
+    }
+
+    pub fn with_legacy(path: PathBuf, legacy: &'static Personality) -> Self {
+        PersonalitySelection::Toml {
+            path,
+            legacy: Some(legacy),
+        }
+    }
+
+    pub fn legacy_personality(&self) -> Option<&'static Personality> {
+        match self {
+            PersonalitySelection::Legacy(p) => Some(*p),
+            PersonalitySelection::Toml { legacy, .. } => *legacy,
+        }
+    }
+
+    fn build_bus(&self) -> Result<(Bus, AdapterHandles), String> {
+        match self {
+            PersonalitySelection::Legacy(p) => {
+                let mut bus = Bus::with_personality(p);
+                let adapters = attach_default_adapters(&mut bus);
+                Ok((bus, adapters))
+            }
+            PersonalitySelection::Toml { path, .. } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    return Err("TOML personalities are not supported on wasm builds".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let toml = fs::read_to_string(path)
+                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+                    let registry = bus::builtin_module_registry();
+                    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+                        .map_err(|err| err.to_string())?;
+                    let mut bus = Bus::from_personality_def(def).map_err(|err| err.to_string())?;
+                    let adapters = attach_default_adapters(&mut bus);
+                    Ok((bus, adapters))
+                }
+            }
+        }
+    }
+}

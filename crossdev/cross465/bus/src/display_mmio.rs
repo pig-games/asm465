@@ -4,6 +4,9 @@
 //! content background colours.  The sprite device exposes the remaining sprite
 //! state so display concerns can evolve independently.
 
+use crate::mmio::{
+    DisplayReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
+};
 use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
 
@@ -57,7 +60,29 @@ pub struct DisplayMmio {
     output: Arc<Mutex<DisplayOutput>>,
 }
 
+const DISPLAY_REGS: &[RegisterDesc] = &[
+    RegisterDesc::new(
+        RegId::Display(DisplayReg::BorderColor),
+        "BorderColor",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+    RegisterDesc::new(
+        RegId::Display(DisplayReg::BackgroundColor),
+        "BackgroundColor",
+        1,
+        0,
+        true,
+        true,
+        &[],
+    ),
+];
+
 impl DisplayMmio {
+    /// Construct the display MMIO device with fresh output state.
     pub fn new() -> Self {
         let output = Arc::new(Mutex::new(DisplayOutput::new()));
         Self {
@@ -67,6 +92,7 @@ impl DisplayMmio {
         }
     }
 
+    /// Access the shared output buffer for adapters and viewers.
     pub fn output(&self) -> Arc<Mutex<DisplayOutput>> {
         Arc::clone(&self.output)
     }
@@ -105,9 +131,64 @@ impl MmioDevice for DisplayMmio {
     }
 }
 
+impl Module for DisplayMmio {
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Display
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        DISPLAY_REGS
+    }
+
+    fn read_reg(&mut self, reg: RegId) -> u8 {
+        match reg {
+            RegId::Display(DisplayReg::BorderColor) => self.border_color,
+            RegId::Display(DisplayReg::BackgroundColor) => self.background_color,
+            _ => 0,
+        }
+    }
+
+    fn write_reg(&mut self, reg: RegId, value: u8) {
+        match reg {
+            RegId::Display(DisplayReg::BorderColor) => {
+                self.border_color = value;
+                self.publish();
+            }
+            RegId::Display(DisplayReg::BackgroundColor) => {
+                self.background_color = value;
+                self.publish();
+            }
+            _ => {}
+        }
+    }
+}
+
+pub struct DisplayModuleFactory;
+
+pub const DISPLAY_FACTORY: DisplayModuleFactory = DisplayModuleFactory;
+
+impl ModuleFactory for DisplayModuleFactory {
+    fn id(&self) -> &'static str {
+        "display.basic2d"
+    }
+
+    fn kind(&self) -> ModuleKind {
+        ModuleKind::Display
+    }
+
+    fn create(&self, _deps: &ModuleDeps, _options: &ModuleOptions) -> Box<dyn Module> {
+        Box::new(DisplayMmio::new())
+    }
+
+    fn regs(&self) -> &'static [RegisterDesc] {
+        DISPLAY_REGS
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mmio::{Module, ModuleKind, RegId};
     use crate::MmioDevice;
 
     #[test]
@@ -119,5 +200,9 @@ mod tests {
         let snapshot = mmio.output().lock().unwrap().snapshot();
         assert_eq!(snapshot.border_color, 0x0E);
         assert_eq!(snapshot.background_color, 0x05);
+
+        mmio.write_reg(RegId::Display(DisplayReg::BorderColor), 0x02);
+        assert_eq!(mmio.read_reg(RegId::Display(DisplayReg::BorderColor)), 0x02);
+        assert_eq!(mmio.kind(), ModuleKind::Display);
     }
 }

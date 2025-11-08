@@ -21,6 +21,7 @@ use console::Color;
 ///   historical screen codes so host text mirrors terminal output.
 /// - Unsupported characters fall back to a plain space to keep the console
 ///   legible.
+/// Translate a Unicode codepoint into the crossdev screen encoding (PETSCII-ish).
 pub fn unicode_to_screen(ch: char) -> u8 {
     match ch {
         '\n' | '\r' => b'\n',
@@ -44,6 +45,7 @@ pub fn unicode_to_screen(ch: char) -> u8 {
 ///
 /// This is intentionally conservative; it keeps unit tests and debug output
 /// legible across platforms without dragging in large mapping tables.
+/// Translate a PETSCII-ish byte into a Unicode scalar value.
 pub fn petscii_to_unicode(b: u8) -> char {
     match b {
         0x0D => '\n',
@@ -57,6 +59,7 @@ pub fn petscii_to_unicode(b: u8) -> char {
     }
 }
 
+/// Translate a screen byte (viewer encoding) into PETSCII.
 pub fn screen_to_petscii(b: u8) -> u8 {
     match b {
         b'\n' => 0x0D,
@@ -69,6 +72,7 @@ pub fn screen_to_petscii(b: u8) -> u8 {
     }
 }
 
+/// Convert a C64 colour index into an ANSI colour for terminal output.
 pub fn cmb_color_to_ansi(c: u8) -> Color {
     match c & 0x0F {
         0 => Color::Black,

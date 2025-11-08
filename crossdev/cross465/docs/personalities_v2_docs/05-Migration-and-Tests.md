@@ -1,5 +1,5 @@
 # Migration Plan & Conformance Tests
-[← Value Builders](04-Value-Builders.md)
+[← Value Builders](04-Value-Builders.md) • [→ Flexibility Goals and Requirements](06_Flexibility_Goals_and_Requirements.md)
 
 ## Migration (Incremental)
 
