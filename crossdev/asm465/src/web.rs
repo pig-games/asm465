@@ -205,6 +205,7 @@ pub fn start_web_app() -> Result<(), JsValue> {
         virtual_resolution: VirtualResolution::default(),
         display: DisplaySettings::default(),
         personality: PersonalitySelection::legacy_default(),
+        video_overlay: false,
         #[cfg(feature = "native-service")]
         service: None,
     });
