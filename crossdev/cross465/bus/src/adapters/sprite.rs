@@ -7,7 +7,7 @@ use crate::mmio::{
     FanoutWriteEvent, ModuleAdapter, ModuleAdapterEvent, PrimaryWriteEvent, ScatterWriteEvent,
     SpriteReg,
 };
-use crate::sprite_mmio::{SpriteOutput, SpriteState};
+use crate::sprite_mmio::{SpriteOutput, SpriteState, SPRITE_SLOTS};
 
 /// Snapshot of a single sprite slot consumed by sprite backends.
 #[derive(Clone, Copy, Debug, Default)]
@@ -65,22 +65,28 @@ pub struct SpriteAdapter {
 
 impl SpriteAdapter {
     pub fn new(backend: Arc<dyn SpriteBackend>) -> Self {
-        Self {
+        let mut adapter = Self {
             backend,
             sprites: Vec::new(),
             current_select: 0,
-        }
+        };
+        adapter.ensure_len(SPRITE_SLOTS);
+        adapter
     }
 
     fn resolve_index(&self, instance: Option<u8>) -> Option<u8> {
         instance.or(Some(self.current_select))
     }
 
+    fn ensure_len(&mut self, count: usize) {
+        if self.sprites.len() < count {
+            self.sprites.resize(count, SpriteRenderState::default());
+        }
+    }
+
     fn ensure_state(&mut self, index: u8) -> &mut SpriteRenderState {
         let idx = index as usize;
-        if idx >= self.sprites.len() {
-            self.sprites.resize(idx + 1, SpriteRenderState::default());
-        }
+        self.ensure_len(idx + 1);
         &mut self.sprites[idx]
     }
 
@@ -200,6 +206,7 @@ impl SpriteAdapter {
                 self.flush(index);
             }
             None => {
+                self.ensure_len(SPRITE_SLOTS);
                 for idx in 0..self.sprites.len() {
                     let state = &mut self.sprites[idx];
                     apply(state);
@@ -328,6 +335,31 @@ mod tests {
                 .iter()
                 .any(|(idx, state)| *idx == 0 && state.enabled),
             "expected fanout to enable sprite 0"
+        );
+    }
+
+    #[test]
+    fn fanout_broadcast_initializes_missing_states() {
+        let backend = Arc::new(RecordingBackend::new());
+        let mut adapter = SpriteAdapter::new(backend.clone());
+        adapter.sprites.clear();
+
+        adapter.handle_event(ModuleAdapterEvent::FanoutWrite(FanoutWriteEvent {
+            reg: RegId::Sprite(SpriteReg::Enable),
+            value: 1,
+            source_value: 0xFF,
+            source_instance: None,
+            target_instance: None,
+        }));
+
+        let updates = backend.updates();
+        assert!(
+            !updates.is_empty(),
+            "fanout broadcast should update sprites even before direct writes"
+        );
+        assert!(
+            updates.iter().any(|(_, state)| state.enabled),
+            "expected at least one sprite to be enabled via broadcast"
         );
     }
 }

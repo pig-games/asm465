@@ -24,9 +24,10 @@ plumbing.
 ## 3. Sprite MMIO parity
 - [x] Validate the sprite adapter/backend path mirrors instance writes,
       scatter bits (`$D010`), and fanout (`Enable`) into both the viewer snapshot
-      and the underlying MMIO registers (covered by existing adapter unit tests).
+      and the underlying MMIO registers (including the new broadcast regression
+      test in `adapters/sprite.rs`).
 - [x] Extend/refresh unit tests in `adapters/sprite.rs` and/or `sprite_mmio.rs`
-      to prove scatter/fanout code paths remain functional.
+      to prove scatter/fanout code paths remain functional (`fanout_broadcast_initializes_missing_states`).
 
 ## 4. System/MMIO documentation for test authors
 - [x] Add a documentation snippet covering:
