@@ -39,22 +39,19 @@ RTST_RECORD_ACT_REGS   := $13
 RTST_RECORD_ACT_TIME   := $14
 RTST_RECORD_END        := $FF
 
-.namespace rtst
+RTST_ZP_BASE :?= $40
+RTST_WRITE_PTR      := RTST_ZP_BASE
+RTST_WPOS           := RTST_WRITE_PTR + 2
+RTST_PAYLOAD_START  := RTST_WPOS + 2
+RTST_LENGTH_PTR     := RTST_PAYLOAD_START + 2
+RTST_ARG_KEY_PTR    := RTST_LENGTH_PTR + 2
+RTST_ARG_BLOCK_PTR  := RTST_ARG_KEY_PTR + 2
+RTST_ARG_BLOCK_LEN  := RTST_ARG_BLOCK_PTR + 2
+RTST_VALUE32        := RTST_ARG_BLOCK_LEN + 2
+RTST_TMP32          := RTST_VALUE32 + 4
+RTST_TMPBYTE        := RTST_TMP32 + 4
 
-.section zeropage
-WritePtr:       .word 0
-Wpos:           .word 0
-PayloadStart:   .word 0
-LengthPtr:      .word 0
-ArgKeyPtr:      .word 0
-ArgBlockPtr:    .word 0
-ArgBlockLen:    .word 0
-Value32:        .dword 0
-Tmp32:          .dword 0
-TmpByte:        .byte 0
-.endsection
-
-.section runtime_rtst
+rtst .namespace
 
 begin .proc
     lda #'R'
@@ -81,26 +78,26 @@ begin .proc
     sta RTST_BASE + RTST_HEADER_SIZE - 2
     sta RTST_BASE + RTST_HEADER_SIZE - 1
     lda #<(RTST_BASE + RTST_HEADER_SIZE)
-    sta rtst.WritePtr
+    sta RTST_WRITE_PTR
     lda #>(RTST_BASE + RTST_HEADER_SIZE)
-    sta rtst.WritePtr + 1
+    sta RTST_WRITE_PTR + 1
     lda #0
-    sta rtst.Wpos
-    sta rtst.Wpos + 1
+    sta RTST_WPOS
+    sta RTST_WPOS + 1
     rts
 .endproc
 
 emit_byte .proc
     ldy #0
-    sta (rtst.WritePtr), y
-    inc rtst.WritePtr
-    bne :+ 
-    inc rtst.WritePtr + 1
-:
-    inc rtst.Wpos
-    bne :+
-    inc rtst.Wpos + 1
-:
+    sta (RTST_WRITE_PTR), y
+    inc RTST_WRITE_PTR
+    bne rtst_write_ptr_ok
+    inc RTST_WRITE_PTR + 1
+rtst_write_ptr_ok:
+    inc RTST_WPOS
+    bne rtst_wpos_ok
+    inc RTST_WPOS + 1
+rtst_wpos_ok:
     rts
 .endproc
 
@@ -109,177 +106,177 @@ start_record .proc
     lda #0
     jsr emit_byte
     jsr emit_byte
-    lda rtst.WritePtr
-    sta rtst.PayloadStart
-    lda rtst.WritePtr + 1
-    sta rtst.PayloadStart + 1
-    lda rtst.WritePtr
+    lda RTST_WRITE_PTR
+    sta RTST_PAYLOAD_START
+    lda RTST_WRITE_PTR + 1
+    sta RTST_PAYLOAD_START + 1
+    lda RTST_WRITE_PTR
     sec
     sbc #2
-    sta rtst.LengthPtr
-    lda rtst.WritePtr + 1
+    sta RTST_LENGTH_PTR
+    lda RTST_WRITE_PTR + 1
     sbc #0
-    sta rtst.LengthPtr + 1
+    sta RTST_LENGTH_PTR + 1
     rts
 .endproc
 
 finish_record .proc
-    lda rtst.WritePtr
+    lda RTST_WRITE_PTR
     sec
-    sbc rtst.PayloadStart
-    sta rtst.ArgBlockLen
-    lda rtst.WritePtr + 1
-    sbc rtst.PayloadStart + 1
-    sta rtst.ArgBlockLen + 1
+    sbc RTST_PAYLOAD_START
+    sta RTST_ARG_BLOCK_LEN
+    lda RTST_WRITE_PTR + 1
+    sbc RTST_PAYLOAD_START + 1
+    sta RTST_ARG_BLOCK_LEN + 1
     ldy #0
-    lda rtst.ArgBlockLen
-    sta (rtst.LengthPtr), y
+    lda RTST_ARG_BLOCK_LEN
+    sta (RTST_LENGTH_PTR), y
     iny
-    lda rtst.ArgBlockLen + 1
-    sta (rtst.LengthPtr), y
+    lda RTST_ARG_BLOCK_LEN + 1
+    sta (RTST_LENGTH_PTR), y
     jsr store_wpos
     rts
 .endproc
 
 store_wpos .proc
-    lda rtst.Wpos
+    lda RTST_WPOS
     sta RTST_BASE + RTST_HEADER_WPOS
-    lda rtst.Wpos + 1
+    lda RTST_WPOS + 1
     sta RTST_BASE + RTST_HEADER_WPOS + 1
     rts
 .endproc
 
 copy_cstr .proc
     ldy #0
-:loop
-    lda (rtst.ArgKeyPtr), y
+copy_cstr_loop:
+    lda (RTST_ARG_KEY_PTR), y
     jsr emit_byte
-    beq :done
+    beq copy_cstr_done
     iny
-    bne :loop
-    inc rtst.ArgKeyPtr + 1
-    bne :loop
-:done
+    bne copy_cstr_loop
+    inc RTST_ARG_KEY_PTR + 1
+    bne copy_cstr_loop
+copy_cstr_done:
     rts
 .endproc
 
 emit_arg_len .proc
-    lda rtst.ArgBlockLen
+    lda RTST_ARG_BLOCK_LEN
     jsr emit_byte
-    lda rtst.ArgBlockLen + 1
+    lda RTST_ARG_BLOCK_LEN + 1
     jsr emit_byte
     rts
 .endproc
 
 copy_block .proc
     ldy #0
-:loop
-    lda rtst.ArgBlockLen
-    ora rtst.ArgBlockLen + 1
-    beq :done
-    lda (rtst.ArgBlockPtr), y
+copy_block_loop:
+    lda RTST_ARG_BLOCK_LEN
+    ora RTST_ARG_BLOCK_LEN + 1
+    beq copy_block_done
+    lda (RTST_ARG_BLOCK_PTR), y
     jsr emit_byte
-    inc rtst.ArgBlockPtr
-    bne :+
-    inc rtst.ArgBlockPtr + 1
-:
-    lda rtst.ArgBlockLen
-    bne :dec_only
-    dec rtst.ArgBlockLen + 1
+    inc RTST_ARG_BLOCK_PTR
+    bne copy_block_ptr_ok
+    inc RTST_ARG_BLOCK_PTR + 1
+copy_block_ptr_ok:
+    lda RTST_ARG_BLOCK_LEN
+    bne copy_block_dec_only
+    dec RTST_ARG_BLOCK_LEN + 1
     lda #$FF
-    sta rtst.ArgBlockLen
-    jmp :loop
-:dec_only
-    dec rtst.ArgBlockLen
-    jmp :loop
-:done
+    sta RTST_ARG_BLOCK_LEN
+    jmp copy_block_loop
+copy_block_dec_only:
+    dec RTST_ARG_BLOCK_LEN
+    jmp copy_block_loop
+copy_block_done:
     rts
 .endproc
 
 emit_value32 .proc
     ldx #0
-:loop
-    lda rtst.Value32, x
+emit_value32_loop:
+    lda RTST_VALUE32, x
     jsr emit_byte
     inx
     cpx #4
-    bne :loop
+    bne emit_value32_loop
     rts
 .endproc
 
 compute_hash .proc
     lda #$05
-    sta rtst.Value32
+    sta RTST_VALUE32
     lda #$15
-    sta rtst.Value32 + 1
+    sta RTST_VALUE32 + 1
     lda #0
-    sta rtst.Value32 + 2
-    sta rtst.Value32 + 3
+    sta RTST_VALUE32 + 2
+    sta RTST_VALUE32 + 3
     ldy #0
-:loop
-    lda rtst.ArgBlockLen
-    ora rtst.ArgBlockLen + 1
-    beq :done
-    lda (rtst.ArgBlockPtr), y
-    sta rtst.TmpByte
-    inc rtst.ArgBlockPtr
-    bne :+
-    inc rtst.ArgBlockPtr + 1
-:
-    lda rtst.ArgBlockLen
-    bne :dec_only
-    dec rtst.ArgBlockLen + 1
+compute_hash_loop:
+    lda RTST_ARG_BLOCK_LEN
+    ora RTST_ARG_BLOCK_LEN + 1
+    beq compute_hash_done
+    lda (RTST_ARG_BLOCK_PTR), y
+    sta RTST_TMPBYTE
+    inc RTST_ARG_BLOCK_PTR
+    bne compute_hash_ptr_ok
+    inc RTST_ARG_BLOCK_PTR + 1
+compute_hash_ptr_ok:
+    lda RTST_ARG_BLOCK_LEN
+    bne compute_hash_dec_only
+    dec RTST_ARG_BLOCK_LEN + 1
     lda #$FF
-    sta rtst.ArgBlockLen
+    sta RTST_ARG_BLOCK_LEN
     jsr hash_step
-    jmp :loop
-:dec_only
-    dec rtst.ArgBlockLen
+    jmp compute_hash_loop
+compute_hash_dec_only:
+    dec RTST_ARG_BLOCK_LEN
     jsr hash_step
-    jmp :loop
-:done
+    jmp compute_hash_loop
+compute_hash_done:
     rts
 .endproc
 
 hash_step .proc
-    lda rtst.Value32
-    sta rtst.Tmp32
-    lda rtst.Value32 + 1
-    sta rtst.Tmp32 + 1
-    lda rtst.Value32 + 2
-    sta rtst.Tmp32 + 2
-    lda rtst.Value32 + 3
-    sta rtst.Tmp32 + 3
+    lda RTST_VALUE32
+    sta RTST_TMP32
+    lda RTST_VALUE32 + 1
+    sta RTST_TMP32 + 1
+    lda RTST_VALUE32 + 2
+    sta RTST_TMP32 + 2
+    lda RTST_VALUE32 + 3
+    sta RTST_TMP32 + 3
     ldx #5
-:shift
-    asl rtst.Tmp32
-    rol rtst.Tmp32 + 1
-    rol rtst.Tmp32 + 2
-    rol rtst.Tmp32 + 3
+hash_step_shift:
+    asl RTST_TMP32
+    rol RTST_TMP32 + 1
+    rol RTST_TMP32 + 2
+    rol RTST_TMP32 + 3
     dex
-    bne :shift
+    bne hash_step_shift
     clc
-    lda rtst.Tmp32
-    adc rtst.Value32
-    sta rtst.Tmp32
-    lda rtst.Tmp32 + 1
-    adc rtst.Value32 + 1
-    sta rtst.Tmp32 + 1
-    lda rtst.Tmp32 + 2
-    adc rtst.Value32 + 2
-    sta rtst.Tmp32 + 2
-    lda rtst.Tmp32 + 3
-    adc rtst.Value32 + 3
-    sta rtst.Tmp32 + 3
-    lda rtst.Tmp32
-    eor rtst.TmpByte
-    sta rtst.Value32
-    lda rtst.Tmp32 + 1
-    sta rtst.Value32 + 1
-    lda rtst.Tmp32 + 2
-    sta rtst.Value32 + 2
-    lda rtst.Tmp32 + 3
-    sta rtst.Value32 + 3
+    lda RTST_TMP32
+    adc RTST_VALUE32
+    sta RTST_TMP32
+    lda RTST_TMP32 + 1
+    adc RTST_VALUE32 + 1
+    sta RTST_TMP32 + 1
+    lda RTST_TMP32 + 2
+    adc RTST_VALUE32 + 2
+    sta RTST_TMP32 + 2
+    lda RTST_TMP32 + 3
+    adc RTST_VALUE32 + 3
+    sta RTST_TMP32 + 3
+    lda RTST_TMP32
+    eor RTST_TMPBYTE
+    sta RTST_VALUE32
+    lda RTST_TMP32 + 1
+    sta RTST_VALUE32 + 1
+    lda RTST_TMP32 + 2
+    sta RTST_VALUE32 + 2
+    lda RTST_TMP32 + 3
+    sta RTST_VALUE32 + 3
     rts
 .endproc
 
@@ -291,164 +288,162 @@ emit_end_record .proc
     sta RTST_BASE + RTST_HEADER_STATE
     rts
 .endproc
-
-.endsection ; runtime_rtst
 .endnamespace ; rtst
 
-.macro __RTST_LOAD_PTR slot, ptr
+RTST_LOAD_PTR .macro slot, ptr
     .if \ptr = 0
         lda #0
-        sta rtst.\slot
-        sta rtst.\slot + 1
+        sta \slot
+        sta \slot + 1
     .else
         lda #<\ptr
-        sta rtst.\slot
+        sta \slot
         lda #>\ptr
-        sta rtst.\slot + 1
+        sta \slot + 1
     .endif
 .endmacro
 
-.macro __RTST_STORE_LEN value
+RTST_STORE_LEN .macro value
     lda #((\value) & $FF)
-    sta rtst.ArgBlockLen
+    sta RTST_ARG_BLOCK_LEN
     lda #((\value >> 8) & $FF)
-    sta rtst.ArgBlockLen + 1
+    sta RTST_ARG_BLOCK_LEN + 1
 .endmacro
 
-.macro __RTST_STORE_VALUE32 value
+RTST_STORE_VALUE32 .macro value
     lda #((\value) & $FF)
-    sta rtst.Value32
+    sta RTST_VALUE32
     lda #((\value >> 8) & $FF)
-    sta rtst.Value32 + 1
+    sta RTST_VALUE32 + 1
     lda #((\value >> 16) & $FF)
-    sta rtst.Value32 + 2
+    sta RTST_VALUE32 + 2
     lda #((\value >> 24) & $FF)
-    sta rtst.Value32 + 3
+    sta RTST_VALUE32 + 3
 .endmacro
 
-.macro __RTST_INC_FIELD offset
+RTST_INC_FIELD .macro offset
     inc RTST_BASE + \offset
-    bne :+
+    bne rtst_inc_field_ok
     inc RTST_BASE + \offset + 1
-:+
+rtst_inc_field_ok:
 .endmacro
 
-.macro __RTST_COPY_STRING_OR_ZERO ptr
+RTST_COPY_STRING_OR_ZERO .macro ptr
     .if \ptr = 0
         lda #0
         jsr rtst.emit_byte
     .else
-        __RTST_LOAD_PTR ArgKeyPtr, \ptr
+        RTST_LOAD_PTR RTST_ARG_KEY_PTR, \ptr
         jsr rtst.copy_cstr
     .endif
 .endmacro
 
-.macro RTST_BEGIN
+RTST_BEGIN .macro
     jsr rtst.begin
 .endmacro
 
-.macro RTST_END
+RTST_END .macro
     jsr rtst.emit_end_record
 \@wait:
     jmp \@wait
 .endmacro
 
-.macro TEST_CASE_BEGIN name_ptr
+TEST_CASE_BEGIN .macro name_ptr
     lda #RTST_RECORD_CASE_BEGIN
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \name_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \name_ptr
     jsr rtst.copy_cstr
     jsr rtst.finish_record
-    __RTST_INC_FIELD RTST_HEADER_TOTAL
+    RTST_INC_FIELD RTST_HEADER_TOTAL
 .endmacro
 
-.macro TEST_CASE_OK code, message_ptr
+TEST_CASE_OK .macro code, message_ptr
     lda #RTST_RECORD_CASE_OK
     jsr rtst.start_record
     lda #((\code) & $FF)
     jsr rtst.emit_byte
-    __RTST_COPY_STRING_OR_ZERO \message_ptr
+    RTST_COPY_STRING_OR_ZERO \message_ptr
     jsr rtst.finish_record
-    __RTST_INC_FIELD RTST_HEADER_PASS
+    RTST_INC_FIELD RTST_HEADER_PASS
 .endmacro
 
-.macro TEST_CASE_FAIL code, message_ptr
+TEST_CASE_FAIL .macro code, message_ptr
     lda #RTST_RECORD_CASE_FAIL
     jsr rtst.start_record
     lda #((\code) & $FF)
     jsr rtst.emit_byte
-    __RTST_COPY_STRING_OR_ZERO \message_ptr
+    RTST_COPY_STRING_OR_ZERO \message_ptr
     jsr rtst.finish_record
-    __RTST_INC_FIELD RTST_HEADER_FAIL
+    RTST_INC_FIELD RTST_HEADER_FAIL
 .endmacro
 
-.macro LOG_MSG message_ptr
+LOG_MSG .macro message_ptr
     lda #RTST_RECORD_MSG
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \message_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \message_ptr
     jsr rtst.copy_cstr
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_ASSERT message_ptr
+LOG_ASSERT .macro message_ptr
     lda #RTST_RECORD_ASSERT
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \message_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \message_ptr
     jsr rtst.copy_cstr
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_KV key_ptr, value
+LOG_KV .macro key_ptr, value
     lda #RTST_RECORD_ACT_KV
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \key_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \key_ptr
     jsr rtst.copy_cstr
-    __RTST_STORE_VALUE32 \value
+    RTST_STORE_VALUE32 \value
     jsr rtst.emit_value32
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_TIME key_ptr, value
+LOG_TIME .macro key_ptr, value
     lda #RTST_RECORD_ACT_TIME
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \key_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \key_ptr
     jsr rtst.copy_cstr
-    __RTST_STORE_VALUE32 \value
+    RTST_STORE_VALUE32 \value
     jsr rtst.emit_value32
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_MEM key_ptr, data_ptr, length
+LOG_MEM .macro key_ptr, data_ptr, length
     lda #RTST_RECORD_ACT_MEM
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \key_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \key_ptr
     jsr rtst.copy_cstr
-    __RTST_STORE_LEN \length
+    RTST_STORE_LEN \length
     jsr rtst.emit_arg_len
-    __RTST_LOAD_PTR ArgBlockPtr, \data_ptr
+    RTST_LOAD_PTR RTST_ARG_BLOCK_PTR, \data_ptr
     jsr rtst.copy_block
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_HASH key_ptr, data_ptr, length
+LOG_HASH .macro key_ptr, data_ptr, length
     lda #RTST_RECORD_ACT_HASH
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \key_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \key_ptr
     jsr rtst.copy_cstr
-    __RTST_STORE_LEN \length
-    __RTST_LOAD_PTR ArgBlockPtr, \data_ptr
+    RTST_STORE_LEN \length
+    RTST_LOAD_PTR RTST_ARG_BLOCK_PTR, \data_ptr
     jsr rtst.compute_hash
     jsr rtst.emit_value32
     jsr rtst.finish_record
 .endmacro
 
-.macro LOG_REGS key_ptr, regs_ptr
+LOG_REGS .macro key_ptr, regs_ptr
     lda #RTST_RECORD_ACT_REGS
     jsr rtst.start_record
-    __RTST_LOAD_PTR ArgKeyPtr, \key_ptr
+    RTST_LOAD_PTR RTST_ARG_KEY_PTR, \key_ptr
     jsr rtst.copy_cstr
-    __RTST_STORE_LEN 7
-    __RTST_LOAD_PTR ArgBlockPtr, \regs_ptr
+    RTST_STORE_LEN 7
+    RTST_LOAD_PTR RTST_ARG_BLOCK_PTR, \regs_ptr
     jsr rtst.copy_block
     jsr rtst.finish_record
 .endmacro

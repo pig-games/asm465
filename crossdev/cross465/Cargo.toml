@@ -1,3 +1,3 @@
 [workspace]
-members = ["bus","core6502","runtime_sdk"]
+members = ["bus","core6502", "cross465-runner","runtime_sdk"]
 resolver = "2"

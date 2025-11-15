@@ -31,7 +31,11 @@ pub struct BaseAddress {
 impl BaseAddress {
     /// Construct a new base definition.
     pub const fn new(name: &'static str, address: u32, span: usize) -> Self {
-        Self { name, address, span }
+        Self {
+            name,
+            address,
+            span,
+        }
     }
 
     /// Range covering the 16-byte header.
@@ -47,8 +51,7 @@ impl BaseAddress {
 }
 
 /// Canonical layout used by Cross465, C64, and Ultimate64 targets.
-pub const BASE_LAYOUT_C64: BaseAddress =
-    BaseAddress::new("c64", BASE_C64, REGION_SIZE_C64);
+pub const BASE_LAYOUT_C64: BaseAddress = BaseAddress::new("c64", BASE_C64, REGION_SIZE_C64);
 /// Canonical layout for Cross465 emulator targets.
 pub const BASE_LAYOUT_CROSS465: BaseAddress =
     BaseAddress::new("cross465", BASE_C64, REGION_SIZE_C64);
@@ -284,9 +287,17 @@ pub enum RtstError {
     /// Not enough bytes left to read the record prefix (id + len).
     RecordHeaderTooShort { offset: usize, remaining: usize },
     /// Payload length exceeds the captured record buffer.
-    RecordOverruns { offset: usize, len: usize, remaining: usize },
+    RecordOverruns {
+        offset: usize,
+        len: usize,
+        remaining: usize,
+    },
     /// Payload shorter than required for a typed view.
-    RecordPayloadTooShort { offset: usize, needed: usize, actual: usize },
+    RecordPayloadTooShort {
+        offset: usize,
+        needed: usize,
+        actual: usize,
+    },
     /// A C-style string did not contain a trailing `0x00` byte.
     MissingCStringTerminator { offset: usize },
     /// String payload was not valid UTF‑8.
@@ -324,18 +335,25 @@ impl fmt::Display for RtstError {
                 f,
                 "record at offset {offset} truncated (only {remaining} bytes left)"
             ),
-            RtstError::RecordOverruns { offset, len, remaining } => write!(
+            RtstError::RecordOverruns {
+                offset,
+                len,
+                remaining,
+            } => write!(
                 f,
                 "record at offset {offset} (len {len}) exceeds remaining {remaining} bytes"
             ),
-            RtstError::RecordPayloadTooShort { offset, needed, actual } => write!(
+            RtstError::RecordPayloadTooShort {
+                offset,
+                needed,
+                actual,
+            } => write!(
                 f,
                 "record payload at offset {offset} requires {needed} bytes (got {actual})"
             ),
-            RtstError::MissingCStringTerminator { offset } => write!(
-                f,
-                "missing string terminator near offset {offset}"
-            ),
+            RtstError::MissingCStringTerminator { offset } => {
+                write!(f, "missing string terminator near offset {offset}")
+            }
             RtstError::Utf8Error { offset } => {
                 write!(f, "string payload near offset {offset} is not UTF-8")
             }
@@ -425,8 +443,7 @@ impl<'a> Record<'a> {
     /// Parse an ACT_KV record payload.
     pub fn actual_kv(&self) -> Result<ActualKeyValue<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualKeyValue)?;
-        let (key, rest, rest_offset) =
-            split_cstring(self.payload, self.payload_offset)?;
+        let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
         require_payload(rest, 4, rest_offset)?;
         let value = u32::from_le_bytes(rest[..4].try_into().unwrap());
         Ok(ActualKeyValue { key, value })
@@ -435,8 +452,7 @@ impl<'a> Record<'a> {
     /// Parse an ACT_TIME record payload.
     pub fn actual_time(&self) -> Result<ActualTime<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualTime)?;
-        let (key, rest, rest_offset) =
-            split_cstring(self.payload, self.payload_offset)?;
+        let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
         require_payload(rest, 4, rest_offset)?;
         let cycles = u32::from_le_bytes(rest[..4].try_into().unwrap());
         Ok(ActualTime { key, cycles })
@@ -445,8 +461,7 @@ impl<'a> Record<'a> {
     /// Parse an ACT_HASH record payload.
     pub fn actual_hash(&self) -> Result<ActualHash<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualHash)?;
-        let (key, rest, rest_offset) =
-            split_cstring(self.payload, self.payload_offset)?;
+        let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
         require_payload(rest, 4, rest_offset)?;
         let hash = u32::from_le_bytes(rest[..4].try_into().unwrap());
         Ok(ActualHash { key, hash })
@@ -455,26 +470,22 @@ impl<'a> Record<'a> {
     /// Parse an ACT_MEM record payload.
     pub fn actual_mem(&self) -> Result<ActualMem<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualMem)?;
-        let (key, rest, rest_offset) =
-            split_cstring(self.payload, self.payload_offset)?;
+        let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
         require_payload(rest, 2, rest_offset)?;
         let len = u16::from_le_bytes(rest[..2].try_into().unwrap()) as usize;
         let data = &rest[2..];
-        let body = data
-            .get(..len)
-            .ok_or_else(|| RtstError::RecordOverruns {
-                offset: rest_offset + 2,
-                len,
-                remaining: data.len(),
-            })?;
+        let body = data.get(..len).ok_or_else(|| RtstError::RecordOverruns {
+            offset: rest_offset + 2,
+            len,
+            remaining: data.len(),
+        })?;
         Ok(ActualMem { key, bytes: body })
     }
 
     /// Parse an ACT_REGS record payload.
     pub fn actual_regs(&self) -> Result<ActualRegs<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualRegs)?;
-        let (key, rest, rest_offset) =
-            split_cstring(self.payload, self.payload_offset)?;
+        let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
         require_payload(rest, 7, rest_offset)?;
         let regs = &rest[..7];
         Ok(ActualRegs {
@@ -617,7 +628,10 @@ impl<'a> Stream<'a> {
                 available: records.len(),
             });
         }
-        Ok(Self { header, records: &records[..header.write_pos as usize] })
+        Ok(Self {
+            header,
+            records: &records[..header.write_pos as usize],
+        })
     }
 
     /// Parsed header reference.
@@ -656,10 +670,8 @@ impl<'a> Iterator for RecordIter<'a> {
             return Some(Err(err));
         }
         let kind = self.buf[self.offset];
-        let len = u16::from_le_bytes([
-            self.buf[self.offset + 1],
-            self.buf[self.offset + 2],
-        ]) as usize;
+        let len =
+            u16::from_le_bytes([self.buf[self.offset + 1], self.buf[self.offset + 2]]) as usize;
         let payload_start = self.offset + 3;
         if self.buf.len() - payload_start < len {
             let err = RtstError::RecordOverruns {
@@ -716,12 +728,7 @@ impl StreamEncoder {
     }
 
     /// Update header counters after writing cases.
-    pub fn set_counts(
-        &mut self,
-        total: u16,
-        passed: u16,
-        failed: u16,
-    ) -> &mut Self {
+    pub fn set_counts(&mut self, total: u16, passed: u16, failed: u16) -> &mut Self {
         self.header.total_cases = total;
         self.header.passed_cases = passed;
         self.header.failed_cases = failed;
@@ -751,8 +758,7 @@ fn split_cstring<'a>(
         return Err(RtstError::MissingCStringTerminator { offset });
     };
     let (head, rest) = bytes.split_at(pos + 1);
-    let value = std::str::from_utf8(&head[..pos])
-        .map_err(|_| RtstError::Utf8Error { offset })?;
+    let value = std::str::from_utf8(&head[..pos]).map_err(|_| RtstError::Utf8Error { offset })?;
     Ok((value, rest, offset + pos + 1))
 }
 

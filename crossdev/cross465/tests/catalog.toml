@@ -1,0 +1,11 @@
+[[case]]
+name = "math::add_basic"
+path = "cases/math_add_basic.s"
+timeout_ms = 1500
+
+tags = ["demo", "rtst"]
+
+[[case]]
+name = "display::parallax_scroll"
+path = "cases/display_parallax_scroll.s"
+timeout_ms = 2000
