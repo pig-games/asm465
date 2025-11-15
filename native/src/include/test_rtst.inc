@@ -1,3 +1,6 @@
+.enc "ascii"
+.cdef " ~", 32
+
 TEST_RTST_INC :?= false
 .if !TEST_RTST_INC
 TEST_RTST_INC := true
@@ -21,6 +24,10 @@ RTST_HEADER_WPOS    := $06
 RTST_HEADER_TOTAL   := $08
 RTST_HEADER_PASS    := $0A
 RTST_HEADER_FAIL    := $0C
+
+RTST_MAGIC_R := $52
+RTST_MAGIC_T := $54
+RTST_MAGIC_S := $53
 
 RTST_STATE_PENDING  := $00
 RTST_STATE_RUNNING  := $01
@@ -56,11 +63,11 @@ rtst .namespace
 begin .proc
     lda #'R'
     sta RTST_BASE + RTST_HEADER_MAGIC0
-    lda #'T'
+    lda #RTST_MAGIC_T
     sta RTST_BASE + RTST_HEADER_MAGIC1
-    lda #'S'
+    lda #RTST_MAGIC_S
     sta RTST_BASE + RTST_HEADER_MAGIC2
-    lda #'T'
+    lda #RTST_MAGIC_T
     sta RTST_BASE + RTST_HEADER_MAGIC3
     lda #RTST_VERSION
     sta RTST_BASE + RTST_HEADER_VERSION
@@ -150,9 +157,11 @@ copy_cstr .proc
     ldy #0
 copy_cstr_loop:
     lda (RTST_ARG_KEY_PTR), y
+    sta RTST_TMPBYTE
     jsr emit_byte
+    lda RTST_TMPBYTE
     beq copy_cstr_done
-    iny
+    inc RTST_ARG_KEY_PTR
     bne copy_cstr_loop
     inc RTST_ARG_KEY_PTR + 1
     bne copy_cstr_loop

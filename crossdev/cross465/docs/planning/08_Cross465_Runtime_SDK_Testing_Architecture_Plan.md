@@ -6,9 +6,9 @@
 - [x] Add host-side parsers/writers with unit tests covering record sequencing, bounds validation, and unknown ID handling.
 
 ## 2. Cargo-Compatible RTST Runner CLI
-- [ ] Add a `bin/cross465-test-runner` target that accepts mode, case, target, personality, format, timeout, and seed flags.
-- [ ] Integrate 64tass invocation with configurable include paths, inline snippet handling, and surfaced diagnostics.
-- [ ] Implement discovery (`list`) and execution (`run`) flows translating RTST streams into cargo-compatible output and optional JSON summaries with correct exit codes.
+- [x] Add a `bin/cross465-test-runner` target that accepts mode, case, target, personality, format, timeout, and seed flags.
+- [x] Integrate 64tass invocation with configurable include paths, inline snippet handling, and surfaced diagnostics.
+- [x] Implement discovery (`list`) and execution (`run`) flows translating RTST streams into cargo-compatible output and optional JSON summaries with correct exit codes.
 
 ## 3. Target Backend Trait and Implementations
 - [ ] Define a `TargetBackend` trait encapsulating assemble/deploy/read/reset operations plus timeout behavior.

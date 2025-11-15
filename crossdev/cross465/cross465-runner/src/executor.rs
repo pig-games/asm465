@@ -61,6 +61,7 @@ impl CpuBackend {
                     cycles,
                     state,
                     wpos: last_wpos,
+                    pc: cpu.pc,
                 });
             }
             if cycles % poll_interval != 0 {

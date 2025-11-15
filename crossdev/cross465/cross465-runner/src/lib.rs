@@ -131,11 +131,14 @@ pub enum RunnerError {
     Spawn(#[from] std::io::Error),
     #[error("no cases matched the provided filters")]
     NoMatchingCases,
-    #[error("execution timeout after {cycles} cycles (state={state:?}, wpos={wpos})")]
+    #[error(
+        "execution timeout after {cycles} cycles (state={state:?}, wpos={wpos}, pc={pc:#06x})"
+    )]
     Timeout {
         cycles: u64,
         state: Option<runtime_sdk::rtst::State>,
         wpos: u16,
+        pc: u16,
     },
     #[error("RTST buffer parse error: {0}")]
     RtstParse(#[from] runtime_sdk::rtst::RtstError),

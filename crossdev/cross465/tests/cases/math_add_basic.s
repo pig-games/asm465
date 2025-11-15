@@ -1,4 +1,4 @@
-RTST_BASE = $4000
+RTST_BASE = $C000
 * = $2000
     jmp start
 .include "test_rtst.inc"
@@ -21,6 +21,6 @@ fail:
 done:
     RTST_END
 
-case_name: .byte $6d,$61,$74,$68,$3a,$3a,$61,$64,$64,$5f,$62,$61,$73,$69,$63,0
-ok_msg: .byte $6d,$61,$74,$68,$20,$69,$73,$20,$63,$6f,$72,$72,$65,$63,$74,0
-fail_msg: .byte $6d,$61,$74,$68,$20,$6d,$69,$73,$6d,$61,$74,$63,$68,0
+case_name: .null "math::add_basic"
+ok_msg: .null "math is correct"
+fail_msg: .null "math mismatch"
