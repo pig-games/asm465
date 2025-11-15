@@ -1,0 +1,45 @@
+# Cross465 Runtime SDK Testing Architecture Implementation Plan
+
+## 1. Shared RTST Protocol Support
+- [ ] Build the shared `rtst` module in a new `crossdev/cross465/runtime_sdk` crate capturing headers, state lifecycle, record IDs, base addresses, and termination semantics.
+- [ ] Publish matching 6502 include macros (e.g., `test_rtst.inc`) with `RTST_BEGIN`, `TEST_CASE_*`, `LOG_*`, and END loop helpers wired into the 64tass build setup.
+- [ ] Add host-side parsers/writers with unit tests covering record sequencing, bounds validation, and unknown ID handling.
+
+## 2. Cargo-Compatible RTST Runner CLI
+- [ ] Add a `bin/cross465-test-runner` target that accepts mode, case, target, personality, format, timeout, and seed flags.
+- [ ] Integrate 64tass invocation with configurable include paths, inline snippet handling, and surfaced diagnostics.
+- [ ] Implement discovery (`list`) and execution (`run`) flows translating RTST streams into cargo-compatible output and optional JSON summaries with correct exit codes.
+
+## 3. Target Backend Trait and Implementations
+- [ ] Define a `TargetBackend` trait encapsulating assemble/deploy/read/reset operations plus timeout behavior.
+- [ ] Implement the Cross465 backend leveraging existing emulator APIs for PRG loading and RTST polling.
+- [ ] Implement the Ultimate64 backend using Telnet/UCI commands with configurable host/port and retry logic.
+- [ ] Implement the MEGA65 backend using `m65` CLI or `libmega65` bindings for upload, execution, and memory reads.
+- [ ] Add integration tests or mocks verifying each backend can complete a sample RTST session.
+
+## 4. Host-Expect Aggregation and Helpers
+- [ ] Extend RTST parsing to collect ACT_* payloads into a typed map covering KV, MEM, HASH, REGS, and TIME variants.
+- [ ] Provide helper APIs (`expect_eq`, `expect_in`, `expect_hash_eq`, diff utilities) returning rich diagnostics.
+- [ ] Implement fixture storage under `tests/fixtures/<target>/<suite>.*` with load/save (`--update`) support and hashing utilities.
+- [ ] Surface detailed mismatch diagnostics for cargo output and JSON traces.
+
+## 5. 6502 Test Authoring Ergonomics
+- [ ] Implement an `asm6502_test!` macro (or procedural macro) that routes to a `run_asm6502_case` helper supporting inline snippets and file-based assembly.
+- [ ] Handle temporary files, pass runtime parameters (personality, target, timeout, seed), and parse RTST output into a `TestRun` struct.
+- [ ] Provide assertion helpers (`assert_case_ok`, `expect_*`) that layer atop the Host-Expect APIs, with documentation examples.
+
+## 6. Robust Error, Timeout, and Artifact Handling
+- [ ] Detect protocol initialization failures (missing MAGIC/VERSION) and abort with captured RTST buffer artifacts.
+- [ ] Monitor WPOS progress with configurable timeouts and automatic retries for transient transport failures.
+- [ ] Validate record lengths, fail tests on malformed streams, and persist raw dumps/PRGs for debugging.
+- [ ] Reset targets between cases and emit optional metrics/logs suitable for CI dashboards.
+
+## 7. CI Matrix and Codex Export
+- [ ] Define CI workflows spanning target (`cross465`, `ultimate64`, `mega65`) and personality (`modern-retro`, `c64-compat`) combinations.
+- [ ] Configure jobs to run `cargo test` via the runner in JSON mode, upload RTST dumps/PRGs on failure, and schedule optional nightly hardware runs.
+- [ ] Generate Codex-compatible JSON outputs and publish as artifacts, including controlled fixture refresh jobs.
+
+## 8. Documentation and Onboarding
+- [ ] Update `docs/cross465_runtime_sdk` with authoring guides covering RTST macros, Host-Expect usage, fixture updates, and backend configuration.
+- [ ] Provide troubleshooting FAQs for assembler errors, backend connectivity issues, and expectation diffs.
+- [ ] Highlight isolation practices (IRQ masking, setup/teardown) and pointers to CI outputs for diagnostics.
