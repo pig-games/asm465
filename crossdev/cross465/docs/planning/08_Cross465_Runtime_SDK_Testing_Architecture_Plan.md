@@ -1,9 +1,9 @@
 # Cross465 Runtime SDK Testing Architecture Implementation Plan
 
 ## 1. Shared RTST Protocol Support
-- [ ] Build the shared `rtst` module in a new `crossdev/cross465/runtime_sdk` crate capturing headers, state lifecycle, record IDs, base addresses, and termination semantics.
-- [ ] Publish matching 6502 include macros (e.g., `test_rtst.inc`) with `RTST_BEGIN`, `TEST_CASE_*`, `LOG_*`, and END loop helpers wired into the 64tass build setup.
-- [ ] Add host-side parsers/writers with unit tests covering record sequencing, bounds validation, and unknown ID handling.
+- [x] Build the shared `rtst` module in a new `crossdev/cross465/runtime_sdk` crate capturing headers, state lifecycle, record IDs, base addresses, and termination semantics.
+- [x] Publish matching 6502 include macros (e.g., `test_rtst.inc`) with `RTST_BEGIN`, `TEST_CASE_*`, `LOG_*`, and END loop helpers wired into the 64tass build setup.
+- [x] Add host-side parsers/writers with unit tests covering record sequencing, bounds validation, and unknown ID handling.
 
 ## 2. Cargo-Compatible RTST Runner CLI
 - [ ] Add a `bin/cross465-test-runner` target that accepts mode, case, target, personality, format, timeout, and seed flags.
