@@ -41,7 +41,7 @@ cross465 .namespace
         NMI_PENDING  = $DF44  ; R   | Bitmask of pending NMI sources. |
         NMI_ACK      = $DF45  ; W   | Writing a bit clears the corresponding pending NMI source and drops the NMI line. Reads return `NMI_PENDING`. |
         CTRL_STATUS  = $DF46  ; R   | Debug/status bitfield (e.g., latched line state, overflow counters); reserved bits read as zero. 
-    .endnamespace ; sytem
+    .endnamespace ; system
     gcontroller .namespace
         JOYBASE1         = $DF50   ; Joystick Port 1 directions + fire. Bits 0–4 active low: Up, Down, Left, Right, Fire.
         JOYBASE2         = $DF51   ; Joystick Port 2 directions + fire  bits 0–4 active low: Up, Down, Left, Right, Fire.

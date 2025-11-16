@@ -455,6 +455,6 @@ logRegs .macro keyPtr, regsPtr
     jsr rtst.finishRecord
 .endmacro
 
-.endnamespace ;ctest
+.endnamespace ; ctest
 
 .endif ; include guard

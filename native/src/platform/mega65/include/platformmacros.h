@@ -20,7 +20,7 @@ plq .function
 
 BasicUpstart .macro addr
 		.byte $09,$20 ; End of command marker (first byte after the 00 terminator)
-		.byte $0a,$00 ; 10
+		.byte $0A,$00 ; 10
 		.byte $fe,$02,$30,$00 ; BANK 0
 		.byte <end, >end  ; End of command marker (first byte after the 00 terminator)
 		.byte $14,$00 ; 20
@@ -147,113 +147,113 @@ SetScreenLocation .macro addr
 	lda #(((\addr & $ff0000)>>24) & $0f)
 	sta $d063
 .endmacro
-.endnamespace
+.endnamespace ; vic4
 
 .namespace dma
-RunJob .macro JobPointer
-		lda #(\JobPointer >> 16)
+runJob .macro jobPointer
+		lda #(\jobPointer >> 16)
 		sta $d702
 		sta $d704
-		lda #>\JobPointer
+		lda #>\jobPointer
 		sta $d701
-		lda #<\JobPointer
+		lda #<\jobPointer
 		sta $d705
 .endmacro
 
-Header .macro SourceBank, DestBank
+header .macro sourceBank, destBank
 		.byte $0A ; Request format is F018A
-		.byte $80, \SourceBank
-		.byte $81, \DestBank
+		.byte $80, \sourceBank
+		.byte $81, \destBank
 .endmacro
 
-Step .macro SourceStep, SourceStepFractional, DestStep, DestStepFractional
-		.if \SourceStepFractional != 0
-			.byte $82, \SourceStepFractional
+step .macro sourceStep, sourceStepFractional, destStep, destStepFractional
+		.if \sourceStepFractional != 0
+			.byte $82, \sourceStepFractional
 		.endif
-		.if \SourceStep != 1
-			.byte $83, \SourceStep
+		.if \sourceStep != 1
+			.byte $83, \sourceStep
 		.endif
-		.if \DestStepFractional != 0
-			.byte $84, \DestStepFractional
+		.if \destStepFractional != 0
+			.byte $84, \destStepFractional
 		.endif
-		.if \DestStep != 1
-			.byte $85, \DestStep
+		.if \destStep != 1
+			.byte $85, \destStep
 		.endif
 .endmacro
 
-DisableTransparency .macro
+disableTransparency .macro
 		.byte $06
 .endmacro
 
-EnableTransparency .macro TransparentByte
+enableTransparency .macro transparentByte
 		.byte $07 
-		.byte $86, \TransparentByte
+		.byte $86, \transparentByte
 .endmacro
 
-CopyJob .macro Source, Destination, Length, Chain, Backwards
+copyJob .macro source, destination, length, chain, backwards
 	.byte $00 ; No more options
-	.if \Chain
+	.if \chain
 		.byte $04 ; Copy and chain
 	.else
 		.byte $00 ; Copy and last request
 	.endif
 	
 	backByte .var 0
-	.if \Backwards
+	.if \backwards
 		.eval backByte = $40
-		.eval \Source = \Source + \Length - 1
-		.eval \Destination = \Destination + \Length - 1
+		.eval \source = \source + \length - 1
+		.eval \destination = \destination + \length - 1
 	.endif
-	.word \Length ; Size of Copy
+	.word \length ; Size of Copy
 
-	.word \Source & $ff
-	.byte (\Source >> 16) + backByte
+	.word \source & $ff
+	.byte (\source >> 16) + backByte
 
-	.word \Destination & $ffff
-	.byte ((\Destination >> 16) & $0f) + backByte
-	.if \Chain
+	.word \destination & $ffff
+	.byte ((\destination >> 16) & $0f) + backByte
+	.if \chain
 		.word $0000
 	.endif
 .endmacro
 
-FillJob .macro SourceByte, Destination, Length, Chain
-	.byte $0a ; 11 byte mode
-	.byte $81, (\Destination>>20) & $ff ; dest bank
+fillJob .macro sourceByte, destination, length, chain
+	.byte $0A ; 11 byte mode
+	.byte $81, (\destination>>20) & $ff ; dest bank
 	.byte $00 ; EOL
-	.if \Chain
+	.if \chain
         .byte dma.FILL|dma.CHAIN        ; fill, chain next job
 	.else
 		.byte dma.FILL ; Fill and last request
 	.endif
-	.word \Length ; Size of Copy
-	.word \SourceByte & $ff
+	.word \length ; Size of Copy
+	.word \sourceByte & $ff
 	.byte $00
-	.word \Destination & $ffff
-	.byte (\Destination >> 16) & $f
+	.word \destination & $ffff
+	.byte (\destination >> 16) & $f
 	.word $0000
 .endmacro
 
 
-MixJob .macro Source, Destination, Length, Chain, Backwards
+mixJob .macro source, destination, length, chain, backwards
 	.byte $00 ; No more options
-	.if \Chain
+	.if \chain
 		.byte $04 ; Mix and chain
 	.else
 		.byte $00 ; Mix and last request
 	.endif	
 	
 	backByte .var 0
-	.if \Backwards
+	.if \backwards
 		.eval backByte = $40
-		.eval \Source = \Source + \Length - 1
-		.eval \Destination = \Destination + \Length - 1
+		.eval \source = \source + \length - 1
+		.eval \destination = \destination + \length - 1
 	.endif
-	.word \Length ; Size of Copy
-	.word \Source & $ffff
-	.byte (\Source >> 16) + backByte
-	.word \Destination & $ffff
-	.byte ((\Destination >> 16) & $0f) + backByte
-	.if \Chain
+	.word \length ; Size of Copy
+	.word \source & $ffff
+	.byte (\source >> 16) + backByte
+	.word \destination & $ffff
+	.byte ((\destination >> 16) & $0f) + backByte
+	.if \chain
 		.word $0000
 	.endif
 .endmacro

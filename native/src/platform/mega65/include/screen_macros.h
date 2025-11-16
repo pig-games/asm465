@@ -9,8 +9,8 @@ SCREENMACROS := true
 ClearScreen .macro colour
     .SetColour \colour
     sta dma.ETRIGINLINE
-    .dma.FillJob $0020,   $000800, 4000, true
-    .dma.FillJob \colour, $ff80000, 4000, false
+    .dma.fillJob $0020,   $000800, 4000, true
+    .dma.fillJob \colour, $ff80000, 4000, false
     .SetLocation 0,0
 .endmacro
 

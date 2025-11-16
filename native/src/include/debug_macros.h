@@ -13,7 +13,7 @@ setupDebugStats .macro datasection=data
             NumWarnings .byte 0
             NumErrors   .byte 0
         .endsection ; \datasection
-    .endnamespace
+    .endnamespace ; dbg
     .endif
 .endmacro
 
@@ -299,6 +299,6 @@ Stats .macro
     .dbg.numErrors
 .endmacro
 
-.endnamespace ; def debug
+.endnamespace ; dbg
 
 .endif

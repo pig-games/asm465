@@ -879,4 +879,4 @@ addrmsize   .word tok_to_mnem-addrm_groups
 
 .endsection ; data
 
-.endnamespace ; def parser
+.endnamespace ; parser
