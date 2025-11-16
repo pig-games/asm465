@@ -1,3 +1,9 @@
+//! Target execution helpers for the Cross465 RTST runner.
+//!
+//! Bridges assembled PRGs into the in-process emulator (`bus` + `core6502`),
+//! polls RTST headers until completion, and surfaces the captured region and
+//! cycle count back to the runner.
+
 use bus::Bus;
 use runtime_sdk::rtst::{
     Header, BASE_LAYOUT_CROSS465, BASE_LAYOUT_MEGA65, BASE_LAYOUT_ULTIMATE64, HEADER_LEN,
@@ -6,25 +12,30 @@ use runtime_sdk::rtst::{
 use crate::RunnerError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Targets supported by the runner backend.
 pub enum TargetKind {
     Cross465,
     Ultimate64,
     Mega65,
 }
 
+/// Configuration for a single execution attempt.
 pub struct ExecutionConfig {
     pub target: TargetKind,
     pub timeout_ms: u64,
 }
 
+/// Results captured from executing a PRG.
 pub struct ExecutionOutput {
     pub rtst_region: Vec<u8>,
     pub cycles: u64,
 }
 
+/// Simple CPU backend that runs assembled PRGs against `bus + core6502`.
 pub struct CpuBackend;
 
 impl CpuBackend {
+    /// Assemble-neutral execution routine returning RTST bytes and cycle counts.
     pub fn execute(prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
         let base = match cfg.target {
             TargetKind::Cross465 => BASE_LAYOUT_CROSS465,

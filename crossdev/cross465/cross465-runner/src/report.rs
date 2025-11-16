@@ -1,9 +1,15 @@
+//! Reporting structures for the Cross465 RTST runner.
+//!
+//! Provides the `CaseReport`/`RunReport` data returned by `run_cases` as well as
+//! the serde-friendly enums so callers can emit JSON summaries.
+
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// Per-case status emitted by the runner reports.
 pub enum CaseStatus {
     Pending,
     Passed,
@@ -18,6 +24,7 @@ impl CaseStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// Host-observable values produced by RTST (used for JSON output).
 pub enum ActualValue {
     KeyValue {
         value: u32,
@@ -42,6 +49,7 @@ pub enum ActualValue {
 }
 
 #[derive(Clone, Debug, Serialize)]
+/// Summary of a single RTST case (status + logs + actuals).
 pub struct CaseReport {
     pub name: String,
     pub status: CaseStatus,
@@ -53,6 +61,7 @@ pub struct CaseReport {
 }
 
 #[derive(Clone, Debug, Serialize)]
+/// Aggregate pass/fail counts for a run.
 pub struct RunSummary {
     pub total: usize,
     pub passed: usize,
@@ -60,12 +69,14 @@ pub struct RunSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
+/// Full report returned by `run_cases`.
 pub struct RunReport {
     pub cases: Vec<CaseReport>,
     pub summary: RunSummary,
 }
 
 impl RunReport {
+    /// Build a report + summary from the provided cases.
     pub fn from_cases(cases: Vec<CaseReport>) -> Self {
         let passed = cases
             .iter()

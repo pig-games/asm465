@@ -1,3 +1,9 @@
+//! Assembly front-end for the Cross465 RTST runner.
+//!
+//! This module knows how to map catalog entries to 64tass invocations, wiring up
+//! the include paths needed for shared headers (`test_rtst.h`, platform maps,
+//! etc.) and returning the compiled PRG bytes ready for execution.
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -8,16 +14,19 @@ use tempfile::NamedTempFile;
 use crate::catalog::{CaseSource, CatalogCase};
 use crate::{RunnerError, TargetKind};
 
+/// Configuration for invoking 64tass when assembling a case.
 pub struct AssemblerConfig {
     pub workspace_root: PathBuf,
     pub tass_path: PathBuf,
     pub include_paths: Vec<PathBuf>,
 }
 
+/// Resulting PRG bytes from assembling a case.
 pub struct AssemblyOutput {
     pub prg: Vec<u8>,
 }
 
+/// Default include paths (shared + platform-specific) for the given target.
 pub fn default_include_paths(root: &Path, target: TargetKind) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let common = root.join("native/src/include");
@@ -36,6 +45,7 @@ pub fn default_include_paths(root: &Path, target: TargetKind) -> Vec<PathBuf> {
     paths
 }
 
+/// Assemble a catalog case into a PRG using the provided config.
 pub fn assemble_case(
     case: &CatalogCase,
     cfg: &AssemblerConfig,

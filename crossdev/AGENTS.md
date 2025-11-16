@@ -16,6 +16,11 @@
 - Follow standard Rust defaults: 4-space indentation, snake_case for modules/functions, UpperCamelCase for types, and SCREAMING_SNAKE_CASE for constants.  
 - Prefer helper modules in `asm465/src/` over large functions in `main.rs`.  
 - Use `rustfmt` before committing; add `#[allow]` only when accompanied by a brief inline rationale.
+- Follow the guidelines in asm465/native/AGENTS.md when writing 6502 assembler code.
+
+## Documentation
+- Add module, struct, enum and function level documentation.
+- For complex logic add functional documentation where the code itself may not be clear enough.
 
 ## Testing Guidelines
 - Run `cargo test --manifest-path cross465/Cargo.toml --workspace` before opening a PR; this exercises the CPU and bus crates.  

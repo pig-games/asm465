@@ -16,6 +16,7 @@ use thiserror::Error;
 
 /// Mode requested by the CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// CLI mode requested by the user (`list` vs `run`).
 pub enum Mode {
     List,
     Run,
@@ -23,6 +24,7 @@ pub enum Mode {
 
 /// Output format for CLI commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Available output formats for list/run modes.
 pub enum OutputFormat {
     Text,
     Json,
@@ -36,6 +38,7 @@ pub struct RunnerConfig {
 }
 
 impl RunnerConfig {
+    /// Construct a config rooted at `workspace_root` with an optional catalog override.
     pub fn new(workspace_root: PathBuf, catalog_path: Option<PathBuf>) -> Self {
         Self {
             workspace_root,
@@ -43,6 +46,7 @@ impl RunnerConfig {
         }
     }
 
+    /// Load the manifest catalog from the explicit override or default search locations.
     pub fn catalog(&self) -> Result<Catalog, RunnerError> {
         let mut candidates = Vec::new();
         if let Some(path) = &self.catalog_path {
@@ -69,6 +73,7 @@ impl RunnerConfig {
 
 /// Filtering options used for list/run commands.
 #[derive(Clone, Debug, Default)]
+/// Case filtering options (names passed via CLI).
 pub struct CaseFilter {
     pub names: Vec<String>,
 }
@@ -88,6 +93,7 @@ impl CaseFilter {
 
 /// Runtime options for `run` mode.
 #[derive(Clone, Debug)]
+/// Runtime options for running assemblable RTST cases.
 pub struct RunOptions {
     pub target: TargetKind,
     pub personality: String,
@@ -114,6 +120,7 @@ impl Default for RunOptions {
 
 /// Errors produced by the runner pipeline.
 #[derive(Debug, Error)]
+/// Errors surfaced by the runner pipeline.
 pub enum RunnerError {
     #[error("catalog not found at {path}")]
     CatalogMissing { path: PathBuf },

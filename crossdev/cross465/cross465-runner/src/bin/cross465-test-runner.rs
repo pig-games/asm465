@@ -7,6 +7,10 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
+/// Cross465 RTST CLI entry point.
+///
+/// Supports `--mode list` and `--mode run` flows so the RTST stream can be
+/// exercised outside of cargo tests.
 use cross465_runner::{
     list_cases, run_cases, CaseFilter, CaseReport, CaseSource, CaseStatus, CatalogCase, RunOptions,
     RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,

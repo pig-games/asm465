@@ -1,3 +1,8 @@
+//! Catalog parsing utilities for the Cross465 test runner.
+//!
+//! Turns TOML manifests into strongly typed case definitions, with optional
+//! deduplication and adhoc (inline) sources.
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,12 +11,14 @@ use serde::Deserialize;
 
 use crate::RunnerError;
 
+/// Where a catalog case gets its assembly source.
 #[derive(Clone, Debug)]
 pub enum CaseSource {
     File(PathBuf),
     Inline(String),
 }
 
+/// A single catalog entry describing how to assemble/run a case.
 #[derive(Clone, Debug)]
 pub struct CatalogCase {
     pub name: String,
@@ -22,6 +29,7 @@ pub struct CatalogCase {
 }
 
 impl CatalogCase {
+    /// Construct an adhoc case (inline snippet) for development overrides.
     pub fn adhoc(name: String, source: CaseSource, timeout_ms: Option<u64>) -> Self {
         Self {
             name,
@@ -37,12 +45,14 @@ impl CatalogCase {
     }
 }
 
+/// Parsed catalog consisting of deduplicated cases.
 #[derive(Clone, Debug)]
 pub struct Catalog {
     cases: Vec<CatalogCase>,
 }
 
 impl Catalog {
+    /// Load and validate a catalog from TOML.
     pub fn load(manifest_path: &Path) -> Result<Self, RunnerError> {
         if !manifest_path.exists() {
             return Err(RunnerError::CatalogMissing {
@@ -82,6 +92,7 @@ impl Catalog {
         Ok(Self { cases })
     }
 
+    /// Read-only view of catalog cases in load order.
     pub fn cases(&self) -> &[CatalogCase] {
         &self.cases
     }
