@@ -1,18 +1,18 @@
-RTST_BASE = $C000
+rtst.BASE = $C000
 * = $2200
     jmp start
-.include "test_rtst.inc"
+.include "test_rtst.h"
 
 start:
     sei
     cld
-    RTST_BEGIN
-    TEST_CASE_BEGIN case_name
-    LOG_KV scroll_x_key, $12
-    LOG_KV scroll_y_key, $03
-    LOG_HASH fb_hash_key, framebuffer, 32
-    TEST_CASE_OK 0, ok_msg
-    RTST_END
+    .rtst.begin
+    .ctest.begin case_name
+    .ctest.logKV scroll_x_key, $12
+    .ctest.logKV scroll_y_key, $03
+    .ctest.logHash fb_hash_key, framebuffer, 32
+    .ctest.OK 0, ok_msg
+    .rtst.end
 
 scroll_x_key: .null "scroll_x"
 scroll_y_key: .null "scroll_y"
