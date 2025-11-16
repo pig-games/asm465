@@ -260,30 +260,41 @@ fn kind_label(value: &ActualValue) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::{ActualValue, CaseStatus};
+    use crate::report::{ActualCollections, ActualValue, CaseStatus};
 
     fn build_report() -> CaseReport {
         let mut actuals = BTreeMap::new();
-        actuals.insert("score".into(), ActualValue::KeyValue { value: 0x1234 });
-        actuals.insert("fb_hash".into(), ActualValue::Hash { hash: 0xDEADBEEF });
-        actuals.insert(
-            "dump".into(),
-            ActualValue::Memory {
-                bytes: vec![0x00, 0x01, 0xFF],
-            },
-        );
-        actuals.insert(
-            "regs".into(),
-            ActualValue::Regs {
-                a: 1,
-                x: 2,
-                y: 3,
-                sp: 4,
-                status: 0x24,
-                pc: 0x1234,
-            },
-        );
-        actuals.insert("elapsed".into(), ActualValue::Time { cycles: 42 });
+        let mut groups = ActualCollections::default();
+
+        let scalar = ActualValue::KeyValue { value: 0x1234 };
+        groups.insert("score".into(), &scalar);
+        actuals.insert("score".into(), scalar);
+
+        let hash = ActualValue::Hash { hash: 0xDEADBEEF };
+        groups.insert("fb_hash".into(), &hash);
+        actuals.insert("fb_hash".into(), hash);
+
+        let mem = ActualValue::Memory {
+            bytes: vec![0x00, 0x01, 0xFF],
+        };
+        groups.insert("dump".into(), &mem);
+        actuals.insert("dump".into(), mem);
+
+        let regs = ActualValue::Regs {
+            a: 1,
+            x: 2,
+            y: 3,
+            sp: 4,
+            status: 0x24,
+            pc: 0x1234,
+        };
+        groups.insert("regs".into(), &regs);
+        actuals.insert("regs".into(), regs);
+
+        let time = ActualValue::Time { cycles: 42 };
+        groups.insert("elapsed".into(), &time);
+        actuals.insert("elapsed".into(), time);
+
         CaseReport {
             name: "demo".into(),
             status: CaseStatus::Passed,
@@ -292,6 +303,7 @@ mod tests {
             logs: Vec::new(),
             asserts: Vec::new(),
             actuals,
+            actual_groups: groups,
         }
     }
 

@@ -11,7 +11,9 @@ pub use executor::{
     TargetBackend, TargetKind, Ultimate64Backend,
 };
 pub use expect::{CaseActuals, ExpectError, ExpectResult};
-pub use report::{ActualValue, CaseReport, CaseStatus, RunReport, RunSummary};
+pub use report::{
+    ActualCollections, ActualValue, CaseReport, CaseStatus, Registers, RunReport, RunSummary,
+};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -241,6 +243,7 @@ pub fn run_cases(
                 logs: Vec::new(),
                 asserts: Vec::new(),
                 actuals: BTreeMap::new(),
+                actual_groups: ActualCollections::default(),
             });
         }
         reports.extend(parsed);
@@ -272,6 +275,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                         logs: Vec::new(),
                         asserts: Vec::new(),
                         actuals: BTreeMap::new(),
+                        actual_groups: ActualCollections::default(),
                     });
             }
             Some(RecordId::CaseOk) => {
@@ -312,8 +316,13 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                 if let Some(name) = current.clone() {
                     if let Some(entry) = cases.get_mut(&name) {
                         let actual = record.actual_kv()?;
+                        let key = actual.key.to_string();
+                        entry
+                            .actual_groups
+                            .scalars
+                            .insert(key.clone(), actual.value);
                         entry.actuals.insert(
-                            actual.key.to_string(),
+                            key,
                             ActualValue::KeyValue {
                                 value: actual.value,
                             },
@@ -325,9 +334,11 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                 if let Some(name) = current.clone() {
                     if let Some(entry) = cases.get_mut(&name) {
                         let hash = record.actual_hash()?;
+                        let key = hash.key.to_string();
+                        entry.actual_groups.hashes.insert(key.clone(), hash.hash);
                         entry
                             .actuals
-                            .insert(hash.key.to_string(), ActualValue::Hash { hash: hash.hash });
+                            .insert(key, ActualValue::Hash { hash: hash.hash });
                     }
                 }
             }
@@ -335,8 +346,13 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                 if let Some(name) = current.clone() {
                     if let Some(entry) = cases.get_mut(&name) {
                         let mem = record.actual_mem()?;
+                        let key = mem.key.to_string();
+                        entry
+                            .actual_groups
+                            .memories
+                            .insert(key.clone(), mem.bytes.to_vec());
                         entry.actuals.insert(
-                            mem.key.to_string(),
+                            key,
                             ActualValue::Memory {
                                 bytes: mem.bytes.to_vec(),
                             },
@@ -348,8 +364,20 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                 if let Some(name) = current.clone() {
                     if let Some(entry) = cases.get_mut(&name) {
                         let regs = record.actual_regs()?;
+                        let key = regs.key.to_string();
+                        entry.actual_groups.registers.insert(
+                            key.clone(),
+                            Registers {
+                                a: regs.a,
+                                x: regs.x,
+                                y: regs.y,
+                                sp: regs.sp,
+                                status: regs.status,
+                                pc: regs.pc,
+                            },
+                        );
                         entry.actuals.insert(
-                            regs.key.to_string(),
+                            key,
                             ActualValue::Regs {
                                 a: regs.a,
                                 x: regs.x,
@@ -366,8 +394,10 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                 if let Some(name) = current.clone() {
                     if let Some(entry) = cases.get_mut(&name) {
                         let time = record.actual_time()?;
+                        let key = time.key.to_string();
+                        entry.actual_groups.timings.insert(key.clone(), time.cycles);
                         entry.actuals.insert(
-                            time.key.to_string(),
+                            key,
                             ActualValue::Time {
                                 cycles: time.cycles,
                             },

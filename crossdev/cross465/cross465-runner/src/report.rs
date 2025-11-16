@@ -58,6 +58,66 @@ pub struct CaseReport {
     pub logs: Vec<String>,
     pub asserts: Vec<String>,
     pub actuals: BTreeMap<String, ActualValue>,
+    pub actual_groups: ActualCollections,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+/// Bucketed view of ACT_* payloads keyed by record type.
+pub struct ActualCollections {
+    pub scalars: BTreeMap<String, u32>,
+    pub hashes: BTreeMap<String, u32>,
+    pub memories: BTreeMap<String, Vec<u8>>,
+    pub registers: BTreeMap<String, Registers>,
+    pub timings: BTreeMap<String, u32>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Registers {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub status: u8,
+    pub pc: u16,
+}
+
+impl ActualCollections {
+    pub fn insert(&mut self, key: String, value: &ActualValue) {
+        match value {
+            ActualValue::KeyValue { value } => {
+                self.scalars.insert(key, *value);
+            }
+            ActualValue::Hash { hash } => {
+                self.hashes.insert(key, *hash);
+            }
+            ActualValue::Memory { bytes } => {
+                self.memories.insert(key, bytes.clone());
+            }
+            ActualValue::Regs {
+                a,
+                x,
+                y,
+                sp,
+                status,
+                pc,
+            } => {
+                self.registers.insert(
+                    key,
+                    Registers {
+                        a: *a,
+                        x: *x,
+                        y: *y,
+                        sp: *sp,
+                        status: *status,
+                        pc: *pc,
+                    },
+                );
+            }
+            ActualValue::Time { cycles } => {
+                self.timings.insert(key, *cycles);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
