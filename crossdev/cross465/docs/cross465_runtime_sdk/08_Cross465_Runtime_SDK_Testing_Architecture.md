@@ -81,7 +81,8 @@ Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.
 All implement: `assemble()`, `push_and_run()`, `read_mem()`, `reset()`.
 
 Ultimate64 runs talk to the hardware REST API. Configure host/port/polling via
-`CROSS465_ULTIMATE64_HOST`, `CROSS465_ULTIMATE64_PORT`,
+`--ultimate64-host/--ultimate64-port` (runner CLI) or the env vars
+`CROSS465_ULTIMATE64_HOST` / `CROSS465_ULTIMATE64_PORT`,
 `CROSS465_ULTIMATE64_POLL_DELAY_MS`, `CROSS465_ULTIMATE64_CONNECT_TIMEOUT_MS`,
 `CROSS465_ULTIMATE64_READ_TIMEOUT_MS`, and `CROSS465_ULTIMATE64_RETRIES`.
 

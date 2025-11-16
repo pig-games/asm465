@@ -48,6 +48,12 @@ fn main() -> Result<()> {
                 extra_includes.push(path);
             }
             let asm_override = build_override_source(&cli, &workspace)?;
+            if let Some(host) = &cli.ultimate64_host {
+                std::env::set_var("CROSS465_ULTIMATE64_HOST", host);
+            }
+            if let Some(port) = cli.ultimate64_port {
+                std::env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
+            }
             let opts = RunOptions {
                 target,
                 personality: cli.personality.clone(),
@@ -100,6 +106,10 @@ struct Cli {
     asm_path: Option<PathBuf>,
     #[arg(long = "asm-inline")]
     asm_inline: Option<String>,
+    #[arg(long = "ultimate64-host", value_name = "HOST")]
+    ultimate64_host: Option<String>,
+    #[arg(long = "ultimate64-port", value_name = "PORT")]
+    ultimate64_port: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
