@@ -5,7 +5,10 @@ mod report;
 
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
 pub use catalog::{CaseSource, Catalog, CatalogCase};
-pub use executor::{CpuBackend, ExecutionConfig, ExecutionOutput, TargetKind};
+pub use executor::{
+    backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
+    TargetBackend, TargetKind, Ultimate64Backend,
+};
 pub use report::{ActualValue, CaseReport, CaseStatus, RunReport, RunSummary};
 
 use std::collections::BTreeMap;
@@ -210,10 +213,11 @@ pub fn run_cases(
         include_paths,
     };
 
+    let backend = executor::backend_for_target(opts.target);
     let mut reports = Vec::new();
     for case in &cases {
         let assembly = assemble_case(case, &assembler_cfg)?;
-        let exec = CpuBackend::execute(
+        let exec = backend.run(
             &assembly.prg,
             ExecutionConfig {
                 target: opts.target,

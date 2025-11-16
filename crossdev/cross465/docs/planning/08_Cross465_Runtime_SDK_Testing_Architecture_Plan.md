@@ -11,11 +11,11 @@
 - [x] Implement discovery (`list`) and execution (`run`) flows translating RTST streams into cargo-compatible output and optional JSON summaries with correct exit codes.
 
 ## 3. Target Backend Trait and Implementations
-- [ ] Define a `TargetBackend` trait encapsulating assemble/deploy/read/reset operations plus timeout behavior.
-- [ ] Implement the Cross465 backend leveraging existing emulator APIs for PRG loading and RTST polling.
+- [x] Define a `TargetBackend` trait encapsulating assemble/deploy/read/reset operations plus timeout behavior.
+- [x] Implement the Cross465 backend leveraging existing emulator APIs for PRG loading and RTST polling.
 - [ ] Implement the Ultimate64 backend using Telnet/UCI commands with configurable host/port and retry logic.
 - [ ] Implement the MEGA65 backend using `m65` CLI or `libmega65` bindings for upload, execution, and memory reads.
-- [ ] Add integration tests or mocks verifying each backend can complete a sample RTST session.
+- [x] Add integration tests or mocks verifying each backend can complete a sample RTST session.
 
 ## 4. Host-Expect Aggregation and Helpers
 - [ ] Extend RTST parsing to collect ACT_* payloads into a typed map covering KV, MEM, HASH, REGS, and TIME variants.
