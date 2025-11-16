@@ -86,6 +86,11 @@ Ultimate64 runs talk to the hardware REST API. Configure host/port/polling via
 `CROSS465_ULTIMATE64_POLL_DELAY_MS`, `CROSS465_ULTIMATE64_CONNECT_TIMEOUT_MS`,
 `CROSS465_ULTIMATE64_READ_TIMEOUT_MS`, and `CROSS465_ULTIMATE64_RETRIES`.
 
+MEGA65 runs shell out to the `m65` CLI. Point the runner at the correct binary
+and serial port via `CROSS465_MEGA65_M65_PATH`, `CROSS465_MEGA65_SERIAL`,
+`CROSS465_MEGA65_BAUD`, `CROSS465_MEGA65_POLL_DELAY_MS`, and
+`CROSS465_MEGA65_RETRIES`.
+
 ---
 
 ## 5. 6502 Test Authoring Model

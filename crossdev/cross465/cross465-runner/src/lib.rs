@@ -158,6 +158,8 @@ pub enum RunnerError {
     MalformedPrg,
     #[error("ultimate64 backend error: {message}")]
     Ultimate64Error { message: String },
+    #[error("mega65 backend error: {message}")]
+    Mega65Error { message: String },
 }
 
 /// Discover cases according to the provided filters.

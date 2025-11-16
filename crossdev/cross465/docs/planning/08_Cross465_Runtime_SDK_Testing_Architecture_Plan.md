@@ -14,7 +14,7 @@
 - [x] Define a `TargetBackend` trait encapsulating assemble/deploy/read/reset operations plus timeout behavior.
 - [x] Implement the Cross465 backend leveraging existing emulator APIs for PRG loading and RTST polling.
 - [x] Implement the Ultimate64 backend using the REST API (`run_prg` + `machine:readmem`) with configurable host/port and retry logic.
-- [ ] Implement the MEGA65 backend using `m65` CLI or `libmega65` bindings for upload, execution, and memory reads.
+- [x] Implement the MEGA65 backend using the `m65` CLI for upload/execution/memory reads with configurable serial port, binary path, and retry logic.
 - [x] Add integration tests or mocks verifying each backend can complete a sample RTST session.
 
 ## 4. Host-Expect Aggregation and Helpers

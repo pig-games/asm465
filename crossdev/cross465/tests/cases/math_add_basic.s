@@ -11,7 +11,7 @@ TARGET_ULTIMATE64 :?= 0
     jmp start
 .include "test_rtst.h"
 
-start:
+start
     sei
     cld
     .rtst.begin
@@ -23,12 +23,12 @@ start:
     bne fail
     .ctest.OK 0, OK_MSG
     jmp done
-fail:
+fail
     .ctest.FAIL 1, FAIL_MSG
     jmp done
-done:
+done
     .rtst.end
 
-CASE_NAME: .null "math::add_basic"
-OK_MSG: .null "math is correct"
-FAIL_MSG: .null "math mismatch"
+CASE_NAME .null "math::add_basic"
+OK_MSG    .null "math is correct"
+FAIL_MSG  .null "math mismatch"

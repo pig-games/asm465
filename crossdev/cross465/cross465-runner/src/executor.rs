@@ -9,11 +9,14 @@ use runtime_sdk::rtst::{
     Header, BASE_LAYOUT_CROSS465, BASE_LAYOUT_MEGA65, BASE_LAYOUT_ULTIMATE64, HEADER_LEN,
 };
 use std::{
-    env,
-    io::Read,
+    env, fs,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
+use tempfile::{NamedTempFile, TempPath};
 use ureq::{Agent, AgentBuilder, Error as UreqError, Response};
 
 use crate::RunnerError;
@@ -148,7 +151,7 @@ impl Default for Ultimate64BackendConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 80,
+            port: 8080,
             connect_timeout: Duration::from_secs(2),
             read_timeout: Duration::from_secs(5),
             poll_delay: Duration::from_millis(200),
@@ -284,12 +287,137 @@ impl TargetBackend for Ultimate64Backend {
     }
 }
 
-/// Placeholder backend for MEGA65 hardware (TODO: m65 CLI integration).
-pub struct Mega65Backend;
+/// MEGA65 backend configuration (m65 CLI path, serial options).
+#[derive(Clone, Debug)]
+pub struct Mega65BackendConfig {
+    pub m65_path: PathBuf,
+    pub serial_port: Option<String>,
+    pub baud_rate: Option<u32>,
+    pub poll_delay: Duration,
+    pub retries: usize,
+}
+
+impl Default for Mega65BackendConfig {
+    fn default() -> Self {
+        Self {
+            m65_path: PathBuf::from("m65"),
+            serial_port: None,
+            baud_rate: None,
+            poll_delay: Duration::from_millis(200),
+            retries: 3,
+        }
+    }
+}
+
+impl Mega65BackendConfig {
+    pub fn from_env() -> Self {
+        let mut cfg = Self::default();
+        if let Ok(path) = env::var("CROSS465_MEGA65_M65_PATH") {
+            if !path.trim().is_empty() {
+                cfg.m65_path = PathBuf::from(path);
+            }
+        }
+        if let Ok(port) = env::var("CROSS465_MEGA65_SERIAL") {
+            if !port.trim().is_empty() {
+                cfg.serial_port = Some(port);
+            }
+        }
+        if let Ok(baud_raw) = env::var("CROSS465_MEGA65_BAUD") {
+            if let Ok(baud) = baud_raw.parse::<u32>() {
+                cfg.baud_rate = Some(baud);
+            }
+        }
+        if let Ok(ms_raw) = env::var("CROSS465_MEGA65_POLL_DELAY_MS") {
+            if let Ok(ms) = ms_raw.parse::<u64>() {
+                cfg.poll_delay = Duration::from_millis(ms);
+            }
+        }
+        if let Ok(retries_raw) = env::var("CROSS465_MEGA65_RETRIES") {
+            if let Ok(retries) = retries_raw.parse::<usize>() {
+                cfg.retries = retries.max(1);
+            }
+        }
+        cfg
+    }
+}
+
+/// Backend implementation that shells out to the `m65` CLI.
+pub struct Mega65Backend {
+    config: Mega65BackendConfig,
+}
 
 impl Mega65Backend {
-    pub fn new() -> Self {
-        Self
+    pub fn new(config: Mega65BackendConfig) -> Self {
+        Self { config }
+    }
+
+    fn execute(&self, prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
+        let layout = match cfg.target {
+            TargetKind::Cross465 => BASE_LAYOUT_CROSS465,
+            TargetKind::Ultimate64 => BASE_LAYOUT_ULTIMATE64,
+            TargetKind::Mega65 => BASE_LAYOUT_MEGA65,
+        };
+        let _ = parse_prg(prg)?;
+        let mut temp_prg = NamedTempFile::new().map_err(|e| RunnerError::Mega65Error {
+            message: format!("failed to create temp program: {e}"),
+        })?;
+        temp_prg
+            .write_all(prg)
+            .map_err(|e| RunnerError::Mega65Error {
+                message: format!("failed to write temp program: {e}"),
+            })?;
+        let temp_path = temp_prg.into_temp_path();
+        let client = Mega65Client::new(&self.config);
+        let run_result = client.run_program(temp_path.as_ref());
+        let _ = temp_path.close();
+        run_result?;
+
+        let timeout = if cfg.timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(cfg.timeout_ms))
+        };
+        let start = Instant::now();
+        loop {
+            let header_bytes = client.read_memory(layout.address, HEADER_LEN)?;
+            let header = match Header::parse(&header_bytes) {
+                Ok(header) => header,
+                Err(err) => {
+                    if let Some(limit) = timeout {
+                        if start.elapsed() >= limit {
+                            return Err(RunnerError::RtstParse(err));
+                        }
+                    }
+                    thread::sleep(self.config.poll_delay);
+                    continue;
+                }
+            };
+            if header.state().is_terminal() {
+                break;
+            }
+            if let Some(limit) = timeout {
+                if start.elapsed() >= limit {
+                    return Err(RunnerError::Timeout {
+                        cycles: 0,
+                        state: Some(header.state()),
+                        wpos: header.write_pos(),
+                        pc: 0,
+                    });
+                }
+            }
+            thread::sleep(self.config.poll_delay);
+        }
+        let rtst = client.read_memory(layout.address, layout.span)?;
+        Ok(ExecutionOutput {
+            rtst_region: rtst,
+            cycles: 0,
+        })
+    }
+}
+
+impl Default for Mega65Backend {
+    fn default() -> Self {
+        Self::new(Mega65BackendConfig::from_env())
     }
 }
 
@@ -298,10 +426,22 @@ impl TargetBackend for Mega65Backend {
         TargetKind::Mega65
     }
 
-    fn run(&self, _prg: &[u8], _cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
-        Err(RunnerError::UnsupportedTarget(
-            "mega65 backend not implemented yet".to_string(),
-        ))
+    fn run(&self, prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
+        let mut last_err = None;
+        for attempt in 0..self.config.retries {
+            match self.execute(prg, cfg) {
+                Ok(output) => return Ok(output),
+                Err(err) => {
+                    last_err = Some(err);
+                    if attempt + 1 < self.config.retries {
+                        thread::sleep(self.config.poll_delay);
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| RunnerError::Mega65Error {
+            message: "unable to execute program on MEGA65".to_string(),
+        }))
     }
 }
 
@@ -310,7 +450,7 @@ pub fn backend_for_target(target: TargetKind) -> Box<dyn TargetBackend> {
     match target {
         TargetKind::Cross465 => Box::new(Cross465Backend::new()),
         TargetKind::Ultimate64 => Box::new(Ultimate64Backend::default()),
-        TargetKind::Mega65 => Box::new(Mega65Backend::new()),
+        TargetKind::Mega65 => Box::new(Mega65Backend::default()),
     }
 }
 
@@ -413,6 +553,89 @@ impl Ultimate64Client {
                 message: format!("{action} transport error: {err}"),
             }),
         }
+    }
+}
+
+struct Mega65Client {
+    config: Mega65BackendConfig,
+}
+
+impl Mega65Client {
+    fn new(config: &Mega65BackendConfig) -> Self {
+        Self {
+            config: config.clone(),
+        }
+    }
+
+    fn run_program(&self, prg_path: &Path) -> Result<(), RunnerError> {
+        let mut cmd = self.base_command();
+        cmd.arg("--binary").arg("--run").arg(prg_path);
+        self.run_command(cmd, "run program")
+    }
+
+    fn read_memory(&self, addr: u32, len: usize) -> Result<Vec<u8>, RunnerError> {
+        let temp_file = NamedTempFile::new().map_err(|e| RunnerError::Mega65Error {
+            message: format!("failed to create memsave temp file: {e}"),
+        })?;
+        let temp_path = temp_file.into_temp_path();
+        let end = addr.saturating_add(len as u32);
+        let range = format!("{:X}:{:X}={}", addr, end, temp_path.display());
+        let mut cmd = self.base_command();
+        cmd.arg("--memsave").arg(&range);
+        self.run_command(cmd, "read memory")?;
+        let path = <TempPath as AsRef<Path>>::as_ref(&temp_path).to_path_buf();
+        let data = fs::read(&path).map_err(|e| RunnerError::Mega65Error {
+            message: format!("failed to read memsave output: {e}"),
+        })?;
+        match temp_path.close() {
+            Ok(()) => {}
+            Err(err) => {
+                return Err(RunnerError::Mega65Error {
+                    message: format!("failed to delete memsave temp file: {err}"),
+                })
+            }
+        }
+        if data.len() < len {
+            return Err(RunnerError::Mega65Error {
+                message: format!(
+                    "memsave returned {} bytes but {} were requested",
+                    data.len(),
+                    len
+                ),
+            });
+        }
+        Ok(data)
+    }
+
+    fn base_command(&self) -> Command {
+        let mut cmd = Command::new(&self.config.m65_path);
+        cmd.arg("--quiet");
+        if let Some(port) = &self.config.serial_port {
+            cmd.arg("--device").arg(port);
+        }
+        if let Some(baud) = self.config.baud_rate {
+            cmd.arg("--speed").arg(baud.to_string());
+        }
+        cmd
+    }
+
+    fn run_command(&self, mut cmd: Command, action: &str) -> Result<(), RunnerError> {
+        let output = cmd.output().map_err(RunnerError::Spawn)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut message = format!("m65 {action} failed");
+        if !stdout.trim().is_empty() {
+            message.push_str("\nstdout:\n");
+            message.push_str(stdout.trim_end());
+        }
+        if !stderr.trim().is_empty() {
+            message.push_str("\nstderr:\n");
+            message.push_str(stderr.trim_end());
+        }
+        Err(RunnerError::Mega65Error { message })
     }
 }
 
