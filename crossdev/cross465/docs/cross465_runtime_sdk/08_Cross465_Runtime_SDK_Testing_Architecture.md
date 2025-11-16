@@ -75,10 +75,15 @@ Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.
 | Backend | Transport | Notes |
 |----------|------------|-------|
 | **Cross465** | local CLI/API | fast, default |
-| **Ultimate64** | Telnet monitor / UCI | `load/run/d <addr>` |
+| **Ultimate64** | REST API (`run_prg`, `machine:readmem`) | Upload PRG + DMA read |
 | **MEGA65** | `m65` CLI / libmegal65 | upload + memory read |
 
 All implement: `assemble()`, `push_and_run()`, `read_mem()`, `reset()`.
+
+Ultimate64 runs talk to the hardware REST API. Configure host/port/polling via
+`CROSS465_ULTIMATE64_HOST`, `CROSS465_ULTIMATE64_PORT`,
+`CROSS465_ULTIMATE64_POLL_DELAY_MS`, `CROSS465_ULTIMATE64_CONNECT_TIMEOUT_MS`,
+`CROSS465_ULTIMATE64_READ_TIMEOUT_MS`, and `CROSS465_ULTIMATE64_RETRIES`.
 
 ---
 

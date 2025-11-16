@@ -92,7 +92,7 @@ struct Cli {
     workspace: Option<PathBuf>,
     #[arg(long)]
     tass: Option<PathBuf>,
-    #[arg(long = "include")]
+    #[arg(long = "include", num_args = 1.., value_name = "PATH")]
     include: Vec<PathBuf>,
     #[arg(long = "case")]
     case: Vec<String>,

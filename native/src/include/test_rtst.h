@@ -412,10 +412,9 @@ begin .macro
 .endmacro
 
 ; Public macro: emit END record and spin forever to keep memory stable.
-; Public macro: emit END record and spin forever to keep memory stable.
 end .macro
     jsr rtst.emitEndRecord
-\@wait:
+\@wait
     jmp \@wait
 .endmacro
 

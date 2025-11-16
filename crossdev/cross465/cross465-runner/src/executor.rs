@@ -8,6 +8,13 @@ use bus::Bus;
 use runtime_sdk::rtst::{
     Header, BASE_LAYOUT_CROSS465, BASE_LAYOUT_MEGA65, BASE_LAYOUT_ULTIMATE64, HEADER_LEN,
 };
+use std::{
+    env,
+    io::Read,
+    thread,
+    time::{Duration, Instant},
+};
+use ureq::{Agent, AgentBuilder, Error as UreqError, Response};
 
 use crate::RunnerError;
 
@@ -20,6 +27,7 @@ pub enum TargetKind {
 }
 
 /// Configuration for a single execution attempt.
+#[derive(Clone, Copy, Debug)]
 pub struct ExecutionConfig {
     pub target: TargetKind,
     pub timeout_ms: u64,
@@ -125,12 +133,130 @@ impl TargetBackend for Cross465Backend {
     }
 }
 
-/// Placeholder backend for Ultimate64 hardware (TODO: Telnet/UCI wiring).
-pub struct Ultimate64Backend;
+/// Ultimate64 backend configuration (HTTP host/port/polling).
+#[derive(Clone, Debug)]
+pub struct Ultimate64BackendConfig {
+    pub host: String,
+    pub port: u16,
+    pub connect_timeout: Duration,
+    pub read_timeout: Duration,
+    pub poll_delay: Duration,
+    pub retries: usize,
+}
+
+impl Default for Ultimate64BackendConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 80,
+            connect_timeout: Duration::from_secs(2),
+            read_timeout: Duration::from_secs(5),
+            poll_delay: Duration::from_millis(200),
+            retries: 3,
+        }
+    }
+}
+
+impl Ultimate64BackendConfig {
+    pub fn from_env() -> Self {
+        let mut cfg = Self::default();
+        if let Ok(host) = env::var("CROSS465_ULTIMATE64_HOST") {
+            cfg.host = host;
+        }
+        if let Ok(port_raw) = env::var("CROSS465_ULTIMATE64_PORT") {
+            if let Ok(port) = port_raw.parse::<u16>() {
+                cfg.port = port;
+            }
+        }
+        if let Ok(ms_raw) = env::var("CROSS465_ULTIMATE64_POLL_DELAY_MS") {
+            if let Ok(ms) = ms_raw.parse::<u64>() {
+                cfg.poll_delay = Duration::from_millis(ms);
+            }
+        }
+        if let Ok(ms_raw) = env::var("CROSS465_ULTIMATE64_CONNECT_TIMEOUT_MS") {
+            if let Ok(ms) = ms_raw.parse::<u64>() {
+                cfg.connect_timeout = Duration::from_millis(ms);
+            }
+        }
+        if let Ok(ms_raw) = env::var("CROSS465_ULTIMATE64_READ_TIMEOUT_MS") {
+            if let Ok(ms) = ms_raw.parse::<u64>() {
+                cfg.read_timeout = Duration::from_millis(ms);
+            }
+        }
+        if let Ok(retries_raw) = env::var("CROSS465_ULTIMATE64_RETRIES") {
+            if let Ok(retries) = retries_raw.parse::<usize>() {
+                cfg.retries = retries.max(1);
+            }
+        }
+        cfg
+    }
+}
+
+/// REST backend for Ultimate64 hardware.
+pub struct Ultimate64Backend {
+    config: Ultimate64BackendConfig,
+}
 
 impl Ultimate64Backend {
-    pub fn new() -> Self {
-        Self
+    pub fn new(config: Ultimate64BackendConfig) -> Self {
+        Self { config }
+    }
+
+    fn execute(&self, prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
+        let layout = match cfg.target {
+            TargetKind::Cross465 => BASE_LAYOUT_CROSS465,
+            TargetKind::Ultimate64 => BASE_LAYOUT_ULTIMATE64,
+            TargetKind::Mega65 => BASE_LAYOUT_MEGA65,
+        };
+        let _ = parse_prg(prg)?;
+        let timeout = if cfg.timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(cfg.timeout_ms))
+        };
+        let start = Instant::now();
+        let client = Ultimate64Client::connect(&self.config)?;
+        client.run_program(prg)?;
+        loop {
+            let header_bytes = client.read_memory(layout.address, HEADER_LEN)?;
+            let header = match Header::parse(&header_bytes) {
+                Ok(header) => header,
+                Err(err) => {
+                    if let Some(limit) = timeout {
+                        if start.elapsed() >= limit {
+                            return Err(RunnerError::RtstParse(err));
+                        }
+                    }
+                    thread::sleep(self.config.poll_delay);
+                    continue;
+                }
+            };
+            if header.state().is_terminal() {
+                break;
+            }
+            if let Some(limit) = timeout {
+                if start.elapsed() >= limit {
+                    return Err(RunnerError::Timeout {
+                        cycles: 0,
+                        state: Some(header.state()),
+                        wpos: header.write_pos(),
+                        pc: 0,
+                    });
+                }
+            }
+            thread::sleep(self.config.poll_delay);
+        }
+        let rtst = client.read_memory(layout.address, layout.span)?;
+        Ok(ExecutionOutput {
+            rtst_region: rtst,
+            cycles: 0,
+        })
+    }
+}
+
+impl Default for Ultimate64Backend {
+    fn default() -> Self {
+        Self::new(Ultimate64BackendConfig::from_env())
     }
 }
 
@@ -139,10 +265,22 @@ impl TargetBackend for Ultimate64Backend {
         TargetKind::Ultimate64
     }
 
-    fn run(&self, _prg: &[u8], _cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
-        Err(RunnerError::UnsupportedTarget(
-            "ultimate64 backend not implemented yet".to_string(),
-        ))
+    fn run(&self, prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
+        let mut last_err = None;
+        for attempt in 0..self.config.retries {
+            match self.execute(prg, cfg) {
+                Ok(output) => return Ok(output),
+                Err(err) => {
+                    last_err = Some(err);
+                    if attempt + 1 < self.config.retries {
+                        thread::sleep(Duration::from_millis(250));
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| RunnerError::Ultimate64Error {
+            message: "unable to execute program on Ultimate64".to_string(),
+        }))
     }
 }
 
@@ -171,7 +309,7 @@ impl TargetBackend for Mega65Backend {
 pub fn backend_for_target(target: TargetKind) -> Box<dyn TargetBackend> {
     match target {
         TargetKind::Cross465 => Box::new(Cross465Backend::new()),
-        TargetKind::Ultimate64 => Box::new(Ultimate64Backend::new()),
+        TargetKind::Ultimate64 => Box::new(Ultimate64Backend::default()),
         TargetKind::Mega65 => Box::new(Mega65Backend::new()),
     }
 }
@@ -198,6 +336,82 @@ impl TargetKind {
             TargetKind::Cross465 => "cross465",
             TargetKind::Ultimate64 => "ultimate64",
             TargetKind::Mega65 => "mega65",
+        }
+    }
+
+    pub fn as_define_suffix(self) -> &'static str {
+        match self {
+            TargetKind::Cross465 => "CROSS465",
+            TargetKind::Ultimate64 => "ULTIMATE64",
+            TargetKind::Mega65 => "MEGA65",
+        }
+    }
+}
+
+struct Ultimate64Client {
+    agent: Agent,
+    base_url: String,
+}
+
+impl Ultimate64Client {
+    fn connect(cfg: &Ultimate64BackendConfig) -> Result<Self, RunnerError> {
+        let agent = AgentBuilder::new()
+            .timeout_connect(cfg.connect_timeout)
+            .timeout_read(cfg.read_timeout)
+            .timeout_write(cfg.read_timeout)
+            .build();
+        let base_url = if cfg.port == 80 {
+            format!("http://{}", cfg.host)
+        } else {
+            format!("http://{}:{}", cfg.host, cfg.port)
+        };
+        Ok(Self { agent, base_url })
+    }
+
+    fn run_program(&self, prg: &[u8]) -> Result<(), RunnerError> {
+        let url = format!("{}/v1/runners:run_prg", self.base_url);
+        Self::map_response(
+            self.agent
+                .post(&url)
+                .set("Content-Type", "application/octet-stream")
+                .set("Expect", "")
+                .send_bytes(prg),
+            "POST /v1/runners:run_prg",
+        )?;
+        Ok(())
+    }
+
+    fn read_memory(&self, addr: u32, len: usize) -> Result<Vec<u8>, RunnerError> {
+        let url = format!(
+            "{}/v1/machine:readmem?address={:04X}&length={}",
+            self.base_url, addr, len
+        );
+        let response = Self::map_response(self.agent.get(&url).call(), "GET /v1/machine:readmem")?;
+        let mut reader = response.into_reader();
+        let mut bytes = vec![0u8; len];
+        reader
+            .read_exact(&mut bytes)
+            .map_err(|e| RunnerError::Ultimate64Error {
+                message: format!("failed to read memory payload: {e}"),
+            })?;
+        Ok(bytes)
+    }
+
+    fn map_response(
+        result: Result<Response, UreqError>,
+        action: &str,
+    ) -> Result<Response, RunnerError> {
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(UreqError::Status(code, response)) => {
+                let body = response.into_string().unwrap_or_default();
+                Err(RunnerError::Ultimate64Error {
+                    message: format!("{action} returned HTTP {code}: {body}"),
+                })
+            }
+            Err(UreqError::Transport(err)) => Err(RunnerError::Ultimate64Error {
+                message: format!("{action} transport error: {err}"),
+            }),
         }
     }
 }

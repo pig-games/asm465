@@ -1,4 +1,12 @@
 rtst.BASE = $C000
+TARGET_ULTIMATE64 :?= 0
+
+.if TARGET_ULTIMATE64
+.include "platformmacros.h"
+* = $0801
+    BasicUpstart(start)
+.endif
+
 * = $2200
     jmp start
 .include "test_rtst.h"

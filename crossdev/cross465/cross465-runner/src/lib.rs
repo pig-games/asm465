@@ -156,6 +156,8 @@ pub enum RunnerError {
     UnsupportedTarget(String),
     #[error("malformed PRG image")]
     MalformedPrg,
+    #[error("ultimate64 backend error: {message}")]
+    Ultimate64Error { message: String },
 }
 
 /// Discover cases according to the provided filters.
@@ -211,6 +213,7 @@ pub fn run_cases(
         workspace_root: config.workspace_root.clone(),
         tass_path: opts.tass_path.clone(),
         include_paths,
+        target: opts.target,
     };
 
     let backend = executor::backend_for_target(opts.target);
