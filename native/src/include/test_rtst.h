@@ -355,102 +355,102 @@ end .macro
 
 ctest .namespace
 
-begin .macro name_ptr
+begin .macro namePtr
     lda #rtst.RECORD_CASE_BEGIN
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \name_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \namePtr
     jsr rtst.copyCStr
     jsr rtst.finishRecord
     .rtst.incField rtst.HEADER_TOTAL
 .endmacro
 
-OK .macro code, message_ptr
+OK .macro code, messagePtr
     lda #rtst.RECORD_CASE_OK
     jsr rtst.startRecord
     lda #((\code) & $FF)
     jsr rtst.emitByte
-    .rtst.copyStringOrZero \message_ptr
+    .rtst.copyStringOrZero \messagePtr
     jsr rtst.finishRecord
     .rtst.incField rtst.HEADER_PASS
 .endmacro
 
-FAIL .macro code, message_ptr
+FAIL .macro code, messagePtr
     lda #rtst.RECORD_CASE_FAIL
     jsr rtst.startRecord
     lda #((\code) & $FF)
     jsr rtst.emitByte
-    .rtst.copyStringOrZero \message_ptr
+    .rtst.copyStringOrZero \messagePtr
     jsr rtst.finishRecord
     .rtst.incField rtst.HEADER_FAIL
 .endmacro
 
-logMsg .macro message_ptr
+logMsg .macro messagePtr
     lda #rtst.RECORD_MSG
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \message_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \messagePtr
     jsr rtst.copyCStr
     jsr rtst.finishRecord
 .endmacro
 
-logAssert .macro message_ptr
+logAssert .macro messagePtr
     lda #rtst.RECORD_ASSERT
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \message_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \messagePtr
     jsr rtst.copyCStr
     jsr rtst.finishRecord
 .endmacro
 
-logKV .macro key_ptr, value
+logKV .macro keyPtr, value
     lda #rtst.RECORD_ACT_KV
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \key_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \keyPtr
     jsr rtst.copyCStr
     .rtst.storeValue32 \value
     jsr rtst.emitValue32
     jsr rtst.finishRecord
 .endmacro
 
-logTime .macro key_ptr, value
+logTime .macro keyPtr, value
     lda #rtst.RECORD_ACT_TIME
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \key_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \keyPtr
     jsr rtst.copyCStr
     .rtst.storeValue32 \value
     jsr rtst.emitValue32
     jsr rtst.finishRecord
 .endmacro
 
-logMem .macro key_ptr, data_ptr, length
+logMem .macro keyPtr, dataPtr, length
     lda #rtst.RECORD_ACT_MEM
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \key_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \keyPtr
     jsr rtst.copyCStr
     .rtst.storeLen \length
     jsr rtst.emitArgLen
-    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \data_ptr
+    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \dataPtr
     jsr rtst.copyBlock
     jsr rtst.finishRecord
 .endmacro
 
-logHash .macro key_ptr, data_ptr, length
+logHash .macro keyPtr, dataPtr, length
     lda #rtst.RECORD_ACT_HASH
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \key_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \keyPtr
     jsr rtst.copyCStr
     .rtst.storeLen \length
-    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \data_ptr
+    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \dataPtr
     jsr rtst.computeHash
     jsr rtst.emitValue32
     jsr rtst.finishRecord
 .endmacro
 
-logRegs .macro key_ptr, regs_ptr
+logRegs .macro keyPtr, regsPtr
     lda #rtst.RECORD_ACT_REGS
     jsr rtst.startRecord
-    .rtst.loadPtr rtst.ARG_KEY_PTR, \key_ptr
+    .rtst.loadPtr rtst.ARG_KEY_PTR, \keyPtr
     jsr rtst.copyCStr
     .rtst.storeLen 7
-    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \regs_ptr
+    .rtst.loadPtr rtst.ARG_BLOCK_PTR, \regsPtr
     jsr rtst.copyBlock
     jsr rtst.finishRecord
 .endmacro

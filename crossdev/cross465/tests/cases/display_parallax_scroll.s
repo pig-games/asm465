@@ -7,19 +7,19 @@ start:
     sei
     cld
     .rtst.begin
-    .ctest.begin case_name
-    .ctest.logKV scroll_x_key, $12
-    .ctest.logKV scroll_y_key, $03
-    .ctest.logHash fb_hash_key, framebuffer, 32
-    .ctest.OK 0, ok_msg
+    .ctest.begin CASE_NAME
+    .ctest.logKV SCROLL_X_KEY, $12
+    .ctest.logKV SCROLL_Y_KEY, $03
+    .ctest.logHash FB_HASH_KEY, FRAMEBUFFER, 32
+    .ctest.OK 0, OK_MSG
     .rtst.end
 
-scroll_x_key: .null "scroll_x"
-scroll_y_key: .null "scroll_y"
-fb_hash_key: .null "fb_hash"
-case_name: .null "display::parallax_scroll"
-ok_msg: .null "display metrics captured"
-framebuffer:
+SCROLL_X_KEY: .null "scroll_x"
+SCROLL_Y_KEY: .null "scroll_y"
+FB_HASH_KEY: .null "fb_hash"
+CASE_NAME: .null "display::parallax_scroll"
+OK_MSG: .null "display metrics captured"
+FRAMEBUFFER:
     .byte $00,$01,$02,$03,$04,$05,$06,$07
     .byte $08,$09,$0A,$0B,$0C,$0D,$0E,$0F
     .byte $10,$11,$12,$13,$14,$15,$16,$17

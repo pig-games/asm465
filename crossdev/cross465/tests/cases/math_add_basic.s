@@ -7,20 +7,20 @@ start:
     sei
     cld
     .rtst.begin
-    .ctest.begin case_name
+    .ctest.begin CASE_NAME
     lda #2
     clc
     adc #3
     cmp #5
     bne fail
-    .ctest.OK 0, ok_msg
+    .ctest.OK 0, OK_MSG
     jmp done
 fail:
-    .ctest.FAIL 1, fail_msg
+    .ctest.FAIL 1, FAIL_MSG
     jmp done
 done:
     .rtst.end
 
-case_name: .null "math::add_basic"
-ok_msg: .null "math is correct"
-fail_msg: .null "math mismatch"
+CASE_NAME: .null "math::add_basic"
+OK_MSG: .null "math is correct"
+FAIL_MSG: .null "math mismatch"
