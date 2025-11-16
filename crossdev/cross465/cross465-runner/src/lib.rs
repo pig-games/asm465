@@ -1,6 +1,7 @@
 mod assembler;
 mod catalog;
 mod executor;
+mod expect;
 mod report;
 
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
@@ -9,6 +10,7 @@ pub use executor::{
     backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
     TargetBackend, TargetKind, Ultimate64Backend,
 };
+pub use expect::{CaseActuals, ExpectError, ExpectResult};
 pub use report::{ActualValue, CaseReport, CaseStatus, RunReport, RunSummary};
 
 use std::collections::BTreeMap;

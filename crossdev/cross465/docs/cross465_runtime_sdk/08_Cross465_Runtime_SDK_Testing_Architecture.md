@@ -142,6 +142,22 @@ Fixtures live under `tests/fixtures/<target>/<suite>.json|hash`.
 - Same 6502 binary usable across all targets.
 - Allows richer predicates and golden tests on host.
 
+#### Host-Expect Helper APIs
+
+`cross465_runner` now exposes `CaseReport::actuals_view()` with typed helpers:
+
+```rust
+let report = run_cases(&cfg, &filter, &opts)?;
+let display = report.cases.iter().find(|c| c.name == "display::parallax_scroll").unwrap();
+let expect = display.actuals_view();
+expect.expect_eq("scroll_x", 0x0123)?;
+expect.expect_in("scroll_y", 0..=0x0010)?;
+expect.expect_hash_eq("fb_hash", 0xDEADBEEF)?;
+```
+
+Additional accessors return memory dumps (`get_bytes`), register snapshots (`get_regs`),
+and timing cycles (`get_cycles`), surfacing descriptive errors when a key is missing or
+has the wrong record type.
 ---
 
 ## 7. Errors and Comparison Failures
