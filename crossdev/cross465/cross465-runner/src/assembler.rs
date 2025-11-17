@@ -20,6 +20,8 @@ pub struct AssemblerConfig {
     pub tass_path: PathBuf,
     pub include_paths: Vec<PathBuf>,
     pub target: TargetKind,
+    pub defines: Vec<(String, String)>,
+    pub extra_args: Vec<String>,
 }
 
 /// Resulting PRG bytes from assembling a case.
@@ -83,11 +85,18 @@ pub fn assemble_case(
     let mut cmd = Command::new(&cfg.tass_path);
     cmd.current_dir(&cfg.workspace_root);
     cmd.arg("-q").arg("-C").arg("-a").arg("-B");
-    cmd.arg("-D")
-        .arg(format!("TARGET_{}:=1", cfg.target.as_define_suffix()));
+    for kind in TargetKind::all() {
+        let value = if kind == cfg.target { 1 } else { 0 };
+        cmd.arg("-D")
+            .arg(format!("TARGET_{}:={value}", kind.as_define_suffix()));
+    }
+    for (key, value) in &cfg.defines {
+        cmd.arg("-D").arg(format!("{key}:={value}"));
+    }
     for include in &cfg.include_paths {
         cmd.arg("-I").arg(include);
     }
+    cmd.args(&cfg.extra_args);
     cmd.arg(&source_path);
     cmd.arg("-o").arg(&output_path);
 

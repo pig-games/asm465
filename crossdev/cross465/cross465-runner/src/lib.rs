@@ -1,3 +1,4 @@
+mod asmtest;
 mod assembler;
 mod catalog;
 mod executor;
@@ -5,6 +6,7 @@ mod expect;
 mod fixtures;
 mod report;
 
+pub use asmtest::{run_asm6502_case, AsmTestBuilder, AsmTestResult};
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
 pub use catalog::{CaseSource, Catalog, CatalogCase};
 pub use executor::{
@@ -114,6 +116,8 @@ pub struct RunOptions {
     pub extra_includes: Vec<PathBuf>,
     pub fixture_dir: Option<PathBuf>,
     pub update_fixtures: bool,
+    pub extra_defines: Vec<(String, String)>,
+    pub tass_args: Vec<String>,
 }
 
 impl Default for RunOptions {
@@ -128,6 +132,8 @@ impl Default for RunOptions {
             extra_includes: Vec::new(),
             fixture_dir: None,
             update_fixtures: false,
+            extra_defines: Vec::new(),
+            tass_args: Vec::new(),
         }
     }
 }
@@ -173,6 +179,8 @@ pub enum RunnerError {
     Mega65Error { message: String },
     #[error("fixture error at {path}: {message}")]
     FixtureIo { path: PathBuf, message: String },
+    #[error("asm6502 invocation error: {message}")]
+    InvalidInvocation { message: String },
 }
 
 /// Discover cases according to the provided filters.
@@ -229,6 +237,8 @@ pub fn run_cases(
         tass_path: opts.tass_path.clone(),
         include_paths,
         target: opts.target,
+        defines: opts.extra_defines.clone(),
+        extra_args: opts.tass_args.clone(),
     };
 
     let backend = executor::backend_for_target(opts.target);

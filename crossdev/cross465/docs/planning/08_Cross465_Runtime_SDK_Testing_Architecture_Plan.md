@@ -21,11 +21,11 @@
 - [x] Extend RTST parsing to collect ACT_* payloads into a typed map covering KV, MEM, HASH, REGS, and TIME variants.
 - [x] Provide helper APIs (`expect_eq`, `expect_in`, `expect_hash_eq`, diff utilities) returning rich diagnostics.
 - [x] Implement fixture storage under `tests/fixtures/<target>/<suite>.*` with load/save (`--update`) support and hashing utilities.
-- [ ] Surface detailed mismatch diagnostics for cargo output and JSON traces.
+- [x] Surface detailed mismatch diagnostics for cargo output and JSON traces.
 
 ## 5. 6502 Test Authoring Ergonomics
-- [ ] Implement an `asm6502_test!` macro (or procedural macro) that routes to a `run_asm6502_case` helper supporting inline snippets and file-based assembly.
-- [ ] Handle temporary files, pass runtime parameters (personality, target, timeout, seed), and parse RTST output into a `TestRun` struct.
+- [x] Implement an `asm6502_test!` macro (or procedural macro) that routes to a `run_asm6502_case` helper supporting inline snippets and file-based assembly.
+- [x] Handle temporary files, pass runtime parameters (personality, target, timeout, seed), and parse RTST output into a `TestRun` struct.
 - [ ] Provide assertion helpers (`assert_case_ok`, `expect_*`) that layer atop the Host-Expect APIs, with documentation examples.
 
 ## 6. Robust Error, Timeout, and Artifact Handling

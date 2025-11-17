@@ -486,6 +486,23 @@ impl TargetKind {
             TargetKind::Mega65 => "MEGA65",
         }
     }
+
+    pub fn all() -> [Self; 3] {
+        [Self::Cross465, Self::Ultimate64, Self::Mega65]
+    }
+}
+
+impl std::str::FromStr for TargetKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "cross465" => Ok(TargetKind::Cross465),
+            "ultimate64" => Ok(TargetKind::Ultimate64),
+            "mega65" => Ok(TargetKind::Mega65),
+            _ => Err(()),
+        }
+    }
 }
 
 struct Ultimate64Client {

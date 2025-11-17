@@ -336,6 +336,14 @@ The `asm6502_test!` macro delegates to a low-level helper function (e.g. `run_as
 4. Poll RTST buffer and parse results into a `TestRun` struct.
 The macro simply wraps this call to make inline tests ergonomic and uniform with external ones.
 
+`cross465_runner` now ships both pieces: `AsmTestBuilder`/`run_asm6502_case()` for manual control, and the `asm6502_test!` macro shown above that expands into the builder calls.
+
+The builder/macro accept additional knobs so you can mirror CLI invocations:
+- `include = ["path/a", "path/b"]`
+- `defines = ["FLAG" => "1", "FOO" => "$c000"]`
+- `tass_args = ["--nostart"]` (passed verbatim to 64tass)
+-   plus the fixture/update flags described earlier.
+
 **Notes**
 - The macro respects CLI flags at runtime (e.g., `--format json`, `--update`, `--target`, `--personality`).
 - `seed = 0xDEADBEEF` is used by convention for deterministic examples.

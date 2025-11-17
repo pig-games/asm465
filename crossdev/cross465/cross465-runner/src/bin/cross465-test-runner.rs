@@ -82,6 +82,8 @@ fn main() -> Result<()> {
                 extra_includes,
                 fixture_dir,
                 update_fixtures: cli.update_fixtures,
+                extra_defines: Vec::new(),
+                tass_args: Vec::new(),
             };
             let start = Instant::now();
             let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
