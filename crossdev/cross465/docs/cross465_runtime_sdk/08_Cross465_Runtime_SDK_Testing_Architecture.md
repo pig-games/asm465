@@ -168,8 +168,8 @@ Each file stores the typed buckets (`scalars`, `hashes`, `memories`, `registers`
 
 For convenience, the crate also exposes top-level helpers:
 
-- `assert_case_ok(&result, "case_name")` / `assert_case_failed(..)` operate on an `asm6502_test!`
-  result or a `CaseReport`.
+- `assert_case_ok(&result)` / `assert_case_failed(&result)` operate on an `asm6502_test!`
+  result or a `CaseReport` (use the `*_named` variants if you need to double-check the case name).
 - `expect_eq`, `expect_in`, `expect_hash_eq`, `expect_mem_eq` accept the same inputs, so tests can
   call `expect_eq(&out, "scroll_x", 0x12)?;` directly.
 ---
@@ -258,7 +258,7 @@ fn inline_assert_native() -> anyhow::Result<()> {
     case_add: .asciiz "math::add_basic"
         "#
     );
-    assert_case_ok(&out, "math::add_basic")?;
+    assert_case_ok(&out)?;
     Ok(())
 }
 ```
@@ -312,7 +312,7 @@ fn external_assert_native() -> anyhow::Result<()> {
         asm_path = "native/src/tests/irq_dma_micro.s",
         timeout_ms = 5000
     );
-    assert_case_ok(&out, "irq::dma_micro")?;
+    assert_case_ok(&out)?;
     Ok(())
 }
 ```

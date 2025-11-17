@@ -276,7 +276,7 @@ macro_rules! __asm6502_option {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CaseStatus;
+    use crate::assert_case_ok;
     use std::process::Command;
     use tempfile::TempDir;
 
@@ -332,7 +332,7 @@ FAIL_MSG: .null "fail"
 "#,
             );
         let result = builder.run().expect("run asm case");
-        assert!(matches!(result.case().status, CaseStatus::Passed));
+        assert_case_ok(&result).unwrap();
     }
 
     #[test]
@@ -382,7 +382,7 @@ FAIL_MSG: .null "macro fail"
 "#
         )
         .expect("macro run");
-        assert!(matches!(result.case().status, CaseStatus::Passed));
+        assert_case_ok(&result).unwrap();
     }
 
     #[test]
@@ -429,7 +429,7 @@ FAIL_MSG: .null "defines fail"
 "#
         )
         .expect("macro defines run");
-        assert!(matches!(result.case().status, CaseStatus::Passed));
+        assert_case_ok(&result).unwrap();
     }
 
     #[test]
@@ -446,7 +446,7 @@ FAIL_MSG: .null "defines fail"
             .asm_path("crossdev/cross465/tests/cases/math_add_basic.s")
             .define("CUSTOM_CONST", "5");
         let result = builder.run().expect("run file case");
-        assert!(matches!(result.case().status, CaseStatus::Passed));
+        assert_case_ok(&result).unwrap();
     }
 
     #[test]
@@ -489,6 +489,6 @@ FAIL_MSG: .null "defines fail"
             .fixtures(fixture_root)
             .update_fixtures(false);
         let result = builder.run().expect("run with fixtures");
-        assert!(matches!(result.case().status, CaseStatus::Passed));
+        assert_case_ok(&result).unwrap();
     }
 }

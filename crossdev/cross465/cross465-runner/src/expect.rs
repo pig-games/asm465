@@ -268,16 +268,20 @@ impl CaseReport {
     }
 }
 
-/// Assert that the case succeeded with the expected name.
-pub fn assert_case_ok<T: CaseAccessor + ?Sized>(case: &T, expected_name: &str) -> AssertResult<()> {
-    let report = case.case_report();
-    if report.name != expected_name {
-        return Err(AssertError::NameMismatch {
-            expected: expected_name.to_string(),
-            actual: report.name.clone(),
-        });
+fn verify_status(
+    report: &CaseReport,
+    expected_name: Option<&str>,
+    required: CaseStatus,
+) -> AssertResult<()> {
+    if let Some(name) = expected_name {
+        if report.name != name {
+            return Err(AssertError::NameMismatch {
+                expected: name.to_string(),
+                actual: report.name.clone(),
+            });
+        }
     }
-    if matches!(report.status, CaseStatus::Passed) {
+    if report.status == required {
         Ok(())
     } else {
         Err(AssertError::UnexpectedStatus {
@@ -288,27 +292,32 @@ pub fn assert_case_ok<T: CaseAccessor + ?Sized>(case: &T, expected_name: &str) -
     }
 }
 
-/// Assert that the case failed with the expected name.
-pub fn assert_case_failed<T: CaseAccessor + ?Sized>(
+/// Assert that the case succeeded (using the case's name).
+pub fn assert_case_ok<T: CaseAccessor + ?Sized>(case: &T) -> AssertResult<()> {
+    verify_status(case.case_report(), None, CaseStatus::Passed)
+}
+
+/// Assert that the case succeeded with a specific name.
+#[allow(dead_code)]
+pub fn assert_case_ok_named<T: CaseAccessor + ?Sized>(
     case: &T,
     expected_name: &str,
 ) -> AssertResult<()> {
-    let report = case.case_report();
-    if report.name != expected_name {
-        return Err(AssertError::NameMismatch {
-            expected: expected_name.to_string(),
-            actual: report.name.clone(),
-        });
-    }
-    if matches!(report.status, CaseStatus::Failed) {
-        Ok(())
-    } else {
-        Err(AssertError::UnexpectedStatus {
-            name: report.name.clone(),
-            status: report.status.clone(),
-            message: report.message.clone(),
-        })
-    }
+    verify_status(case.case_report(), Some(expected_name), CaseStatus::Passed)
+}
+
+/// Assert that the case failed (using the case's name).
+pub fn assert_case_failed<T: CaseAccessor + ?Sized>(case: &T) -> AssertResult<()> {
+    verify_status(case.case_report(), None, CaseStatus::Failed)
+}
+
+/// Assert that the case failed with a specific name.
+#[allow(dead_code)]
+pub fn assert_case_failed_named<T: CaseAccessor + ?Sized>(
+    case: &T,
+    expected_name: &str,
+) -> AssertResult<()> {
+    verify_status(case.case_report(), Some(expected_name), CaseStatus::Failed)
 }
 
 /// Expect a key/value actual to match.
@@ -450,14 +459,15 @@ mod tests {
     #[test]
     fn assert_case_ok_helper_succeeds() {
         let report = build_report();
-        assert_case_ok(&report, "demo").unwrap();
+        assert_case_ok(&report).unwrap();
+        assert_case_ok_named(&report, "demo").unwrap();
     }
 
     #[test]
     fn assert_case_ok_helper_detects_status() {
         let mut report = build_report();
         report.status = CaseStatus::Failed;
-        let err = assert_case_ok(&report, "demo").unwrap_err();
+        let err = assert_case_ok(&report).unwrap_err();
         matches!(err, AssertError::UnexpectedStatus { .. });
     }
 
@@ -465,7 +475,8 @@ mod tests {
     fn assert_case_failed_helper_succeeds() {
         let mut report = build_report();
         report.status = CaseStatus::Failed;
-        assert_case_failed(&report, "demo").unwrap();
+        assert_case_failed(&report).unwrap();
+        assert_case_failed_named(&report, "demo").unwrap();
     }
 
     #[test]
