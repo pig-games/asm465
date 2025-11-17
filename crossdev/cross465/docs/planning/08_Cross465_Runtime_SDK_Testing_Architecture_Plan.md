@@ -18,9 +18,9 @@
 - [x] Add integration tests or mocks verifying each backend can complete a sample RTST session.
 
 ## 4. Host-Expect Aggregation and Helpers
-- [ ] Extend RTST parsing to collect ACT_* payloads into a typed map covering KV, MEM, HASH, REGS, and TIME variants.
+- [x] Extend RTST parsing to collect ACT_* payloads into a typed map covering KV, MEM, HASH, REGS, and TIME variants.
 - [x] Provide helper APIs (`expect_eq`, `expect_in`, `expect_hash_eq`, diff utilities) returning rich diagnostics.
-- [ ] Implement fixture storage under `tests/fixtures/<target>/<suite>.*` with load/save (`--update`) support and hashing utilities.
+- [x] Implement fixture storage under `tests/fixtures/<target>/<suite>.*` with load/save (`--update`) support and hashing utilities.
 - [ ] Surface detailed mismatch diagnostics for cargo output and JSON traces.
 
 ## 5. 6502 Test Authoring Ergonomics

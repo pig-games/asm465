@@ -2,6 +2,7 @@ mod assembler;
 mod catalog;
 mod executor;
 mod expect;
+mod fixtures;
 mod report;
 
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
@@ -20,6 +21,8 @@ use std::path::PathBuf;
 
 use runtime_sdk::rtst::{RecordId, Stream};
 use thiserror::Error;
+
+use fixtures::FixtureStore;
 
 /// Mode requested by the CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +112,8 @@ pub struct RunOptions {
     pub asm_override: Option<CaseSource>,
     pub tass_path: PathBuf,
     pub extra_includes: Vec<PathBuf>,
+    pub fixture_dir: Option<PathBuf>,
+    pub update_fixtures: bool,
 }
 
 impl Default for RunOptions {
@@ -121,6 +126,8 @@ impl Default for RunOptions {
             asm_override: None,
             tass_path: PathBuf::from("64tass"),
             extra_includes: Vec::new(),
+            fixture_dir: None,
+            update_fixtures: false,
         }
     }
 }
@@ -164,6 +171,8 @@ pub enum RunnerError {
     Ultimate64Error { message: String },
     #[error("mega65 backend error: {message}")]
     Mega65Error { message: String },
+    #[error("fixture error at {path}: {message}")]
+    FixtureIo { path: PathBuf, message: String },
 }
 
 /// Discover cases according to the provided filters.
@@ -223,6 +232,12 @@ pub fn run_cases(
     };
 
     let backend = executor::backend_for_target(opts.target);
+    let fixture_store = FixtureStore::new(
+        &config.workspace_root,
+        opts.target,
+        opts.fixture_dir.clone(),
+        opts.update_fixtures,
+    );
     let mut reports = Vec::new();
     for case in &cases {
         let assembly = assemble_case(case, &assembler_cfg)?;
@@ -234,6 +249,9 @@ pub fn run_cases(
             },
         )?;
         let mut parsed = parse_rtst(&exec)?;
+        for report in &mut parsed {
+            fixture_store.apply(report)?;
+        }
         if parsed.is_empty() {
             parsed.push(CaseReport {
                 name: case.name.clone(),
@@ -245,6 +263,9 @@ pub fn run_cases(
                 actuals: BTreeMap::new(),
                 actual_groups: ActualCollections::default(),
             });
+            if let Some(last) = parsed.last_mut() {
+                fixture_store.apply(last)?;
+            }
         }
         reports.extend(parsed);
     }
@@ -349,7 +370,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                         let key = mem.key.to_string();
                         entry
                             .actual_groups
-                            .memories
+                            .memory
                             .insert(key.clone(), mem.bytes.to_vec());
                         entry.actuals.insert(
                             key,
@@ -414,4 +435,93 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
         .filter_map(|name| cases.remove(&name))
         .collect();
     Ok(ordered_cases)
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use runtime_sdk::rtst::{RecordId, State, StreamEncoder};
+
+    fn payload_with_key(key: &str, mut rest: Vec<u8>) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(key.len() + 1 + rest.len());
+        buf.extend_from_slice(key.as_bytes());
+        buf.push(0);
+        buf.append(&mut rest);
+        buf
+    }
+
+    fn kv_payload(key: &str, value: u32) -> Vec<u8> {
+        payload_with_key(key, value.to_le_bytes().to_vec())
+    }
+
+    fn hash_payload(key: &str, hash: u32) -> Vec<u8> {
+        payload_with_key(key, hash.to_le_bytes().to_vec())
+    }
+
+    fn time_payload(key: &str, cycles: u32) -> Vec<u8> {
+        payload_with_key(key, cycles.to_le_bytes().to_vec())
+    }
+
+    fn mem_payload(key: &str, bytes: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+        body.extend_from_slice(bytes);
+        payload_with_key(key, body)
+    }
+
+    fn regs_payload(key: &str, regs: (u8, u8, u8, u8, u8, u16)) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(regs.0);
+        body.push(regs.1);
+        body.push(regs.2);
+        body.push(regs.3);
+        body.push(regs.4);
+        body.extend_from_slice(&regs.5.to_le_bytes());
+        payload_with_key(key, body)
+    }
+
+    #[test]
+    fn parse_rtst_populates_actual_groups() {
+        let mut enc = StreamEncoder::new();
+        enc.push_record(RecordId::CaseStart, b"demo\0").unwrap();
+        enc.push_record(RecordId::ActualKeyValue, kv_payload("score", 0x10))
+            .unwrap();
+        enc.push_record(RecordId::ActualHash, hash_payload("frame", 0xDEADBEEF))
+            .unwrap();
+        enc.push_record(
+            RecordId::ActualMem,
+            mem_payload("dump", &[0x00, 0x01, 0x02]),
+        )
+        .unwrap();
+        enc.push_record(
+            RecordId::ActualRegs,
+            regs_payload("regs", (1, 2, 3, 4, 0x24, 0x1234)),
+        )
+        .unwrap();
+        enc.push_record(RecordId::ActualTime, time_payload("elapsed", 500))
+            .unwrap();
+        enc.push_record(RecordId::CaseOk, &[0]).unwrap();
+        enc.push_record(RecordId::End, &[]).unwrap();
+        enc.set_counts(1, 1, 0).set_state(State::Done);
+        let buffer = enc.finish();
+        let exec = ExecutionOutput {
+            rtst_region: buffer,
+            cycles: 0,
+        };
+        let cases = parse_rtst(&exec).expect("parse");
+        assert_eq!(cases.len(), 1);
+        let case = &cases[0];
+        assert_eq!(case.actual_groups.scalars.get("score"), Some(&0x10));
+        assert_eq!(case.actual_groups.hashes.get("frame"), Some(&0xDEADBEEF));
+        assert_eq!(
+            case.actual_groups.memory.get("dump").map(|v| v.as_slice()),
+            Some(&[0x00, 0x01, 0x02][..])
+        );
+        assert_eq!(
+            case.actual_groups.registers.get("regs").map(|r| r.a),
+            Some(1)
+        );
+        assert_eq!(case.actual_groups.timings.get("elapsed"), Some(&500u32));
+        assert_eq!(case.actuals.len(), 5);
+    }
 }

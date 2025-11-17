@@ -6,6 +6,6 @@ timeout_ms = 1500
 tags = ["demo", "rtst"]
 
 [[case]]
-name = "display::parallax_scroll"
+name = "display::parallax_scroll2"
 path = "cases/display_parallax_scroll.s"
 timeout_ms = 2000

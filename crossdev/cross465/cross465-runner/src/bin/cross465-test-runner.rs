@@ -54,6 +54,24 @@ fn main() -> Result<()> {
             if let Some(port) = cli.ultimate64_port {
                 std::env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
             }
+            let fixture_dir = cli
+                .fixtures
+                .as_ref()
+                .and_then(|opt| match opt {
+                    Some(path) => Some(if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        workspace.join(path)
+                    }),
+                    None => Some(workspace.join("tests/fixtures")),
+                })
+                .or_else(|| {
+                    if cli.update_fixtures {
+                        Some(workspace.join("tests/fixtures"))
+                    } else {
+                        None
+                    }
+                });
             let opts = RunOptions {
                 target,
                 personality: cli.personality.clone(),
@@ -62,6 +80,8 @@ fn main() -> Result<()> {
                 asm_override,
                 tass_path: cli.tass.clone().unwrap_or_else(|| PathBuf::from("64tass")),
                 extra_includes,
+                fixture_dir,
+                update_fixtures: cli.update_fixtures,
             };
             let start = Instant::now();
             let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
@@ -106,6 +126,10 @@ struct Cli {
     asm_path: Option<PathBuf>,
     #[arg(long = "asm-inline")]
     asm_inline: Option<String>,
+    #[arg(long = "fixtures", value_name = "DIR", num_args = 0..=1)]
+    fixtures: Option<Option<PathBuf>>,
+    #[arg(long = "update-fixtures")]
+    update_fixtures: bool,
     #[arg(long = "ultimate64-host", value_name = "HOST")]
     ultimate64_host: Option<String>,
     #[arg(long = "ultimate64-port", value_name = "PORT")]

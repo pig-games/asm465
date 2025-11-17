@@ -144,7 +144,9 @@ Fixtures live under `tests/fixtures/<target>/<suite>.json|hash`.
 
 #### Host-Expect Helper APIs
 
-`cross465_runner` now exposes `CaseReport::actuals_view()` with typed helpers:
+`cross465_runner` now exposes `CaseReport::actuals_view()` with typed helpers and
+also groups the ACT_* payloads into `case.actual_groups` (scalars, hashes, memories,
+register snapshots, timings) for quick iteration.
 
 ```rust
 let report = run_cases(&cfg, &filter, &opts)?;
@@ -158,6 +160,11 @@ expect.expect_hash_eq("fb_hash", 0xDEADBEEF)?;
 Additional accessors return memory dumps (`get_bytes`), register snapshots (`get_regs`),
 and timing cycles (`get_cycles`), surfacing descriptive errors when a key is missing or
 has the wrong record type.
+
+Fixtures live under `tests/fixtures/<target>/<case>.json`. Use `--fixtures <dir>` to override
+the root directory (or just `--fixtures` to use the default `tests/fixtures`) and
+`--update-fixtures` to rewrite the golden values for the cases you run.
+Each file stores the typed buckets (`scalars`, `hashes`, `memories`, `registers`, `timings`).
 ---
 
 ## 7. Errors and Comparison Failures

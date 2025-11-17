@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -61,17 +61,18 @@ pub struct CaseReport {
     pub actual_groups: ActualCollections,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 /// Bucketed view of ACT_* payloads keyed by record type.
 pub struct ActualCollections {
     pub scalars: BTreeMap<String, u32>,
     pub hashes: BTreeMap<String, u32>,
-    pub memories: BTreeMap<String, Vec<u8>>,
+    #[serde(rename = "memory")]
+    pub memory: BTreeMap<String, Vec<u8>>,
     pub registers: BTreeMap<String, Registers>,
     pub timings: BTreeMap<String, u32>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Registers {
     pub a: u8,
     pub x: u8,
@@ -91,7 +92,7 @@ impl ActualCollections {
                 self.hashes.insert(key, *hash);
             }
             ActualValue::Memory { bytes } => {
-                self.memories.insert(key, bytes.clone());
+                self.memory.insert(key, bytes.clone());
             }
             ActualValue::Regs {
                 a,
