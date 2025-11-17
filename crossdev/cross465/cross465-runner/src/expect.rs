@@ -6,10 +6,30 @@
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
-use crate::report::{ActualValue, CaseReport};
+use crate::report::{ActualValue, CaseReport, CaseStatus};
 
 /// Result type returned by expectation helpers.
 pub type ExpectResult<T> = Result<T, ExpectError>;
+
+/// Result type returned by status assertions.
+pub type AssertResult<T> = Result<T, AssertError>;
+
+/// Accessor for host-side helper APIs.
+pub trait CaseAccessor {
+    fn case_report(&self) -> &CaseReport;
+}
+
+impl CaseAccessor for CaseReport {
+    fn case_report(&self) -> &CaseReport {
+        self
+    }
+}
+
+impl<'a> CaseAccessor for &'a CaseReport {
+    fn case_report(&self) -> &CaseReport {
+        self
+    }
+}
 
 /// Detailed expectation failures surfaced when comparing host-side actuals.
 #[derive(Debug, thiserror::Error)]
@@ -60,6 +80,18 @@ pub enum ExpectError {
         offset: usize,
         expected: u8,
         actual: u8,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AssertError {
+    #[error("expected case '{expected}', got '{actual}'")]
+    NameMismatch { expected: String, actual: String },
+    #[error("case '{name}' status {status:?} (message={message:?})")]
+    UnexpectedStatus {
+        name: String,
+        status: CaseStatus,
+        message: Option<String>,
     },
 }
 
@@ -236,6 +268,85 @@ impl CaseReport {
     }
 }
 
+/// Assert that the case succeeded with the expected name.
+pub fn assert_case_ok<T: CaseAccessor + ?Sized>(case: &T, expected_name: &str) -> AssertResult<()> {
+    let report = case.case_report();
+    if report.name != expected_name {
+        return Err(AssertError::NameMismatch {
+            expected: expected_name.to_string(),
+            actual: report.name.clone(),
+        });
+    }
+    if matches!(report.status, CaseStatus::Passed) {
+        Ok(())
+    } else {
+        Err(AssertError::UnexpectedStatus {
+            name: report.name.clone(),
+            status: report.status.clone(),
+            message: report.message.clone(),
+        })
+    }
+}
+
+/// Assert that the case failed with the expected name.
+pub fn assert_case_failed<T: CaseAccessor + ?Sized>(
+    case: &T,
+    expected_name: &str,
+) -> AssertResult<()> {
+    let report = case.case_report();
+    if report.name != expected_name {
+        return Err(AssertError::NameMismatch {
+            expected: expected_name.to_string(),
+            actual: report.name.clone(),
+        });
+    }
+    if matches!(report.status, CaseStatus::Failed) {
+        Ok(())
+    } else {
+        Err(AssertError::UnexpectedStatus {
+            name: report.name.clone(),
+            status: report.status.clone(),
+            message: report.message.clone(),
+        })
+    }
+}
+
+/// Expect a key/value actual to match.
+pub fn expect_eq<T: CaseAccessor + ?Sized>(case: &T, key: &str, expected: u32) -> ExpectResult<()> {
+    case.case_report().actuals_view().expect_eq(key, expected)
+}
+
+/// Expect a key/value actual to fall within the provided range.
+pub fn expect_in<T: CaseAccessor + ?Sized>(
+    case: &T,
+    key: &str,
+    range: RangeInclusive<u32>,
+) -> ExpectResult<()> {
+    case.case_report().actuals_view().expect_in(key, range)
+}
+
+/// Expect a hash actual to match the provided value.
+pub fn expect_hash_eq<T: CaseAccessor + ?Sized>(
+    case: &T,
+    key: &str,
+    expected: u32,
+) -> ExpectResult<()> {
+    case.case_report()
+        .actuals_view()
+        .expect_hash_eq(key, expected)
+}
+
+/// Expect a memory dump to match a provided slice.
+pub fn expect_mem_eq<T: CaseAccessor + ?Sized>(
+    case: &T,
+    key: &str,
+    expected: &[u8],
+) -> ExpectResult<()> {
+    case.case_report()
+        .actuals_view()
+        .expect_mem_eq(key, expected)
+}
+
 /// Lightweight register view used by expectation helpers.
 #[derive(Clone, Copy, Debug)]
 pub struct RegsView {
@@ -334,5 +445,32 @@ mod tests {
             .expect_in("score", 0x2000..=0x2FFF)
             .unwrap_err();
         matches!(err, ExpectError::RangeMismatch { .. });
+    }
+
+    #[test]
+    fn assert_case_ok_helper_succeeds() {
+        let report = build_report();
+        assert_case_ok(&report, "demo").unwrap();
+    }
+
+    #[test]
+    fn assert_case_ok_helper_detects_status() {
+        let mut report = build_report();
+        report.status = CaseStatus::Failed;
+        let err = assert_case_ok(&report, "demo").unwrap_err();
+        matches!(err, AssertError::UnexpectedStatus { .. });
+    }
+
+    #[test]
+    fn assert_case_failed_helper_succeeds() {
+        let mut report = build_report();
+        report.status = CaseStatus::Failed;
+        assert_case_failed(&report, "demo").unwrap();
+    }
+
+    #[test]
+    fn expect_eq_helper_works() {
+        let report = build_report();
+        expect_eq(&report, "score", 0x1234).unwrap();
     }
 }

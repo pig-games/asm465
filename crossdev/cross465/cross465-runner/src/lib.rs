@@ -13,7 +13,10 @@ pub use executor::{
     backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
     TargetBackend, TargetKind, Ultimate64Backend,
 };
-pub use expect::{CaseActuals, ExpectError, ExpectResult};
+pub use expect::{
+    assert_case_failed, assert_case_ok, expect_eq, expect_hash_eq, expect_in, expect_mem_eq,
+    AssertError, AssertResult, CaseAccessor, CaseActuals, ExpectError, ExpectResult,
+};
 pub use report::{
     ActualCollections, ActualValue, CaseReport, CaseStatus, Registers, RunReport, RunSummary,
 };

@@ -1,4 +1,5 @@
 use crate::catalog::CaseSource;
+use crate::expect::CaseAccessor;
 use crate::{run_cases, CaseFilter, CaseReport, RunOptions, RunnerConfig, RunnerError, TargetKind};
 use std::env;
 use std::path::PathBuf;
@@ -123,6 +124,12 @@ impl AsmTestResult {
 
     pub fn into_case(self) -> CaseReport {
         self.case
+    }
+}
+
+impl CaseAccessor for AsmTestResult {
+    fn case_report(&self) -> &CaseReport {
+        &self.case
     }
 }
 

@@ -26,7 +26,7 @@
 ## 5. 6502 Test Authoring Ergonomics
 - [x] Implement an `asm6502_test!` macro (or procedural macro) that routes to a `run_asm6502_case` helper supporting inline snippets and file-based assembly.
 - [x] Handle temporary files, pass runtime parameters (personality, target, timeout, seed), and parse RTST output into a `TestRun` struct.
-- [ ] Provide assertion helpers (`assert_case_ok`, `expect_*`) that layer atop the Host-Expect APIs, with documentation examples.
+- [x] Provide assertion helpers (`assert_case_ok`, `expect_*`) that layer atop the Host-Expect APIs, with documentation examples.
 
 ## 6. Robust Error, Timeout, and Artifact Handling
 - [ ] Detect protocol initialization failures (missing MAGIC/VERSION) and abort with captured RTST buffer artifacts.

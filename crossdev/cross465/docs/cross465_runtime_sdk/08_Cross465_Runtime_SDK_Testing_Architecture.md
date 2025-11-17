@@ -165,6 +165,13 @@ Fixtures live under `tests/fixtures/<target>/<case>.json`. Use `--fixtures <dir>
 the root directory (or just `--fixtures` to use the default `tests/fixtures`) and
 `--update-fixtures` to rewrite the golden values for the cases you run.
 Each file stores the typed buckets (`scalars`, `hashes`, `memories`, `registers`, `timings`).
+
+For convenience, the crate also exposes top-level helpers:
+
+- `assert_case_ok(&result, "case_name")` / `assert_case_failed(..)` operate on an `asm6502_test!`
+  result or a `CaseReport`.
+- `expect_eq`, `expect_in`, `expect_hash_eq`, `expect_mem_eq` accept the same inputs, so tests can
+  call `expect_eq(&out, "scroll_x", 0x12)?;` directly.
 ---
 
 ## 7. Errors and Comparison Failures
