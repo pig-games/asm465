@@ -187,7 +187,7 @@ pub fn run_asm6502_case(builder: AsmTestBuilder) -> Result<AsmTestResult, Runner
 
     let mut run_opts = RunOptions::default();
     run_opts.target = target;
-    run_opts.personality = personality;
+    run_opts.personality = Some(personality);
     run_opts.timeout_ms = builder.timeout_ms;
     run_opts.seed = builder.seed;
     run_opts.asm_override = Some(case_source);

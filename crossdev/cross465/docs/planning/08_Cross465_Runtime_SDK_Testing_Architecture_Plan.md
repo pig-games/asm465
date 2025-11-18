@@ -35,7 +35,7 @@
 - [x] Reset targets between cases and emit optional metrics/logs suitable for CI dashboards.
 
 ## 7. CI Matrix and Codex Export
-- [ ] Define CI workflows spanning target (`cross465`, `ultimate64`, `mega65`) and personality (`modern-retro`, `c64-compat`) combinations.
+- [x] Define CI workflows spanning target (`cross465`, `ultimate64`, `mega65`) and personality (`modern-retro`, `c64-compat`) combinations.
 - [ ] Configure jobs to run `cargo test` via the runner in JSON mode, upload RTST dumps/PRGs on failure, and schedule optional nightly hardware runs.
 - [ ] Generate Codex-compatible JSON outputs and publish as artifacts, including controlled fixture refresh jobs.
 

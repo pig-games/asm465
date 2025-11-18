@@ -9,7 +9,7 @@ mod report;
 
 pub use asmtest::{run_asm6502_case, AsmTestBuilder, AsmTestResult};
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
-pub use catalog::{CaseSource, Catalog, CatalogCase};
+pub use catalog::{CaseSource, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry};
 pub use executor::{
     backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
     TargetBackend, TargetKind, Ultimate64Backend,
@@ -68,7 +68,11 @@ impl RunnerConfig {
     pub fn catalog(&self) -> Result<Catalog, RunnerError> {
         let mut candidates = Vec::new();
         if let Some(path) = &self.catalog_path {
-            candidates.push(self.workspace_root.join(path));
+            if path.is_absolute() {
+                candidates.push(path.clone());
+            } else {
+                candidates.push(self.workspace_root.join(path));
+            }
         } else {
             candidates.push(
                 self.workspace_root
@@ -114,7 +118,7 @@ impl CaseFilter {
 /// Runtime options for running assemblable RTST cases.
 pub struct RunOptions {
     pub target: TargetKind,
-    pub personality: String,
+    pub personality: Option<String>,
     pub timeout_ms: Option<u64>,
     pub seed: u64,
     pub asm_override: Option<CaseSource>,
@@ -135,7 +139,7 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             target: TargetKind::Cross465,
-            personality: "modern-retro".to_string(),
+            personality: Some("modern-retro".to_string()),
             timeout_ms: Some(2_000),
             seed: 0xDEADBEEF,
             asm_override: None,
@@ -166,6 +170,8 @@ pub enum RunnerError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("invalid catalog configuration: {message}")]
+    CatalogInvalid { message: String },
     #[error("assembly source '{path}' not found")]
     AssemblyMissing { path: PathBuf },
     #[error("64tass invocation failed: {message}")]
@@ -280,6 +286,7 @@ pub fn run_cases(
         opts.keep_success_artifacts,
     );
     let mut reports = Vec::new();
+    let personality_label = effective_personality(opts);
     for case in &cases {
         let backend = executor::backend_for_target(opts.target);
         let assembly = assemble_case(case, &assembler_cfg)?;
@@ -296,7 +303,7 @@ pub fn run_cases(
             Err(err) => {
                 artifact_store.capture_backend_error(
                     &case.name,
-                    &opts.personality,
+                    &personality_label,
                     &assembly.prg,
                     &err,
                 );
@@ -308,7 +315,7 @@ pub fn run_cases(
             Err(err) => {
                 artifact_store.capture_parse_error(
                     &case.name,
-                    &opts.personality,
+                    &personality_label,
                     &assembly.prg,
                     &exec,
                     &err,
@@ -329,7 +336,7 @@ pub fn run_cases(
                 metrics: Some(metrics.clone()),
             };
             fixture_store.apply(&mut placeholder)?;
-            artifact_store.capture_case(&placeholder, &opts.personality, &assembly.prg, &exec);
+            artifact_store.capture_case(&placeholder, &personality_label, &assembly.prg, &exec);
             if opts.log_metrics {
                 log_case_metrics(&placeholder);
             }
@@ -338,13 +345,13 @@ pub fn run_cases(
         }
         for report in &mut parsed {
             if let Err(err) = fixture_store.apply(report) {
-                artifact_store.capture_case(report, &opts.personality, &assembly.prg, &exec);
+                artifact_store.capture_case(report, &personality_label, &assembly.prg, &exec);
                 if opts.log_metrics {
                     log_case_metrics(report);
                 }
                 return Err(err);
             }
-            artifact_store.capture_case(report, &opts.personality, &assembly.prg, &exec);
+            artifact_store.capture_case(report, &personality_label, &assembly.prg, &exec);
             if opts.log_metrics {
                 log_case_metrics(report);
             }
@@ -538,6 +545,22 @@ fn log_case_metrics(report: &CaseReport) {
             metrics.rtst_bytes,
             metrics.write_pos,
         );
+    }
+}
+
+fn effective_personality(opts: &RunOptions) -> String {
+    opts.personality
+        .clone()
+        .or_else(|| default_personality_for_target(opts.target).map(|s| s.to_string()))
+        .unwrap_or_else(|| format!("{}-builtin", opts.target.to_string()))
+}
+
+/// Default MMIO personality associated with a target (if any).
+pub fn default_personality_for_target(target: TargetKind) -> Option<&'static str> {
+    match target {
+        TargetKind::Cross465 => Some("modern-retro"),
+        TargetKind::Ultimate64 => None,
+        TargetKind::Mega65 => Some("modern-retro"),
     }
 }
 

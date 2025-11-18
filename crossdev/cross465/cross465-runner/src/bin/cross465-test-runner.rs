@@ -1,7 +1,8 @@
+use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
@@ -12,18 +13,26 @@ use serde::Serialize;
 /// Supports `--mode list` and `--mode run` flows so the RTST stream can be
 /// exercised outside of cargo tests.
 use cross465_runner::{
-    list_cases, run_cases, CaseFilter, CaseReport, CaseSource, CaseStatus, CatalogCase, RunOptions,
-    RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,
+    default_personality_for_target, list_cases, run_cases, CaseFilter, CaseReport, CaseSource,
+    CaseStatus, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, RunOptions, RunReport, RunSummary,
+    RunnerConfig, RunnerError, TargetKind,
 };
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let workspace = cli
-        .workspace
-        .clone()
-        .unwrap_or(std::env::current_dir().context("failed to resolve workspace")?);
+    let mut workspace = resolve_workspace_arg(cli.workspace.as_ref())?;
+    let mut catalog_path = resolve_catalog_path(&workspace, cli.catalog.as_ref());
+    let mut catalog_for_cli = Catalog::load(&catalog_path).map_err(to_anyhow)?;
+    if cli.workspace.is_none() {
+        if let Some(ws_override) = catalog_for_cli.workspace_override() {
+            workspace = ws_override.clone();
+            catalog_path = resolve_catalog_path(&workspace, cli.catalog.as_ref());
+            catalog_for_cli = Catalog::load(&catalog_path).map_err(to_anyhow)?;
+        }
+    }
     let workspace = workspace.canonicalize().unwrap_or(workspace);
-    let config = RunnerConfig::new(workspace.clone(), cli.catalog.clone());
+    let mut catalog_for_cli = Some(catalog_for_cli);
+    let config = RunnerConfig::new(workspace.clone(), Some(catalog_path.clone()));
     let filter = CaseFilter {
         names: cli.case.clone(),
     };
@@ -37,6 +46,9 @@ fn main() -> Result<()> {
             }
         }
         ModeArg::Run => {
+            let catalog = catalog_for_cli
+                .take()
+                .unwrap_or_else(|| config.catalog().map_err(to_anyhow).expect("load catalog"));
             let target = cli.target.into();
             let mut extra_includes = Vec::new();
             for extra in &cli.include {
@@ -90,7 +102,13 @@ fn main() -> Result<()> {
                     });
                 path.or(Some(default_dir))
             };
-            let opts = RunOptions {
+            if cli.ci_matrix && cli.personality.is_some() {
+                bail!(
+                    "--personality cannot be combined with --ci-matrix; specify combos in catalog"
+                );
+            }
+
+            let mut base_opts = RunOptions {
                 target,
                 personality: cli.personality.clone(),
                 timeout_ms: Some(cli.timeout_ms),
@@ -108,14 +126,73 @@ fn main() -> Result<()> {
                 progress_timeout_ms: cli.progress_timeout_ms,
                 transport_retries: cli.transport_retries,
             };
-            let start = Instant::now();
-            let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
-            match cli.format {
-                FormatArg::Text => render_run_text(&report, start.elapsed())?,
-                FormatArg::Json => render_run_json(&report, &cli, start.elapsed())?,
-            }
-            if report.summary.failed > 0 {
-                process::exit(1);
+
+            if cli.ci_matrix {
+                if base_opts.asm_override.is_some() {
+                    bail!("--ci-matrix cannot be combined with --asm-path/--asm-inline overrides");
+                }
+                let matrix_entries = catalog.ci_matrix().to_vec();
+                if matrix_entries.is_empty() {
+                    bail!("catalog does not define any [ci.matrix.<target>] entries");
+                }
+                let mut total_failed = 0usize;
+                for entry in matrix_entries {
+                    let target = entry.target;
+                    let resolved_includes = resolve_include_paths(&workspace, &entry.includes);
+                    for personality in entry.personalities.iter().cloned() {
+                        let label = describe_personality(target, personality.as_deref());
+                        if cli.format == FormatArg::Text {
+                            println!(
+                                "\n==> target={} personality={} <==",
+                                target.to_string(),
+                                label
+                            );
+                        }
+                        if let Some(endpoint) = &entry.endpoint {
+                            apply_endpoint(target, endpoint);
+                        }
+                        let mut opts = base_opts.clone();
+                        opts.target = target;
+                        opts.personality = personality;
+                        opts.extra_includes.extend(resolved_includes.clone());
+                        opts.extra_defines.extend(entry.defines.iter().cloned());
+                        opts.tass_args.extend(entry.tass_args.iter().cloned());
+                        let start = Instant::now();
+                        let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
+                        render_for_format(
+                            cli.format,
+                            &report,
+                            opts.target,
+                            &label,
+                            start.elapsed(),
+                        )?;
+                        total_failed += report.summary.failed;
+                    }
+                }
+                if total_failed > 0 {
+                    process::exit(1);
+                }
+            } else {
+                if let Some(entry) = catalog.ci_matrix().iter().find(|ci| ci.target == target) {
+                    apply_entry_overrides(&workspace, entry, &mut base_opts);
+                    if let Some(endpoint) = &entry.endpoint {
+                        apply_endpoint(target, endpoint);
+                    }
+                }
+                let start = Instant::now();
+                let report = run_cases(&config, &filter, &base_opts).map_err(to_anyhow)?;
+                let label =
+                    describe_personality(base_opts.target, base_opts.personality.as_deref());
+                render_for_format(
+                    cli.format,
+                    &report,
+                    base_opts.target,
+                    &label,
+                    start.elapsed(),
+                )?;
+                if report.summary.failed > 0 {
+                    process::exit(1);
+                }
             }
         }
     }
@@ -129,8 +206,8 @@ struct Cli {
     mode: ModeArg,
     #[arg(long, value_enum, default_value = "cross465")]
     target: TargetArg,
-    #[arg(long, default_value = "modern-retro")]
-    personality: String,
+    #[arg(long)]
+    personality: Option<String>,
     #[arg(long, value_enum, default_value = "text")]
     format: FormatArg,
     #[arg(long, default_value_t = 2000)]
@@ -155,6 +232,8 @@ struct Cli {
     fixtures: Option<Option<PathBuf>>,
     #[arg(long = "update-fixtures")]
     update_fixtures: bool,
+    #[arg(long = "ci-matrix")]
+    ci_matrix: bool,
     #[arg(long = "artifacts", value_name = "DIR", num_args = 0..=1)]
     artifacts: Option<Option<PathBuf>>,
     #[arg(long = "no-artifacts")]
@@ -196,7 +275,7 @@ impl From<TargetArg> for TargetKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
 enum FormatArg {
     Text,
     Json,
@@ -284,22 +363,23 @@ fn render_run_text(report: &RunReport, duration: std::time::Duration) -> Result<
     Ok(())
 }
 
-fn render_run_json(report: &RunReport, cli: &Cli, duration: std::time::Duration) -> Result<()> {
+fn render_run_json(
+    report: &RunReport,
+    target: TargetKind,
+    personality: &str,
+    duration: std::time::Duration,
+) -> Result<()> {
     #[derive(Serialize)]
     struct Payload<'a> {
-        target: &'a str,
+        target: String,
         personality: &'a str,
         duration_ms: u128,
         summary: &'a RunSummary,
         cases: &'a [CaseReport],
     }
     let payload = Payload {
-        target: match cli.target {
-            TargetArg::Cross465 => "cross465",
-            TargetArg::Ultimate64 => "ultimate64",
-            TargetArg::Mega65 => "mega65",
-        },
-        personality: &cli.personality,
+        target: target.to_string().to_string(),
+        personality,
         duration_ms: duration.as_millis(),
         summary: &report.summary,
         cases: &report.cases,
@@ -307,4 +387,95 @@ fn render_run_json(report: &RunReport, cli: &Cli, duration: std::time::Duration)
     serde_json::to_writer_pretty(io::stdout(), &payload)?;
     println!();
     Ok(())
+}
+
+fn render_for_format(
+    format: FormatArg,
+    report: &RunReport,
+    target: TargetKind,
+    personality: &str,
+    duration: Duration,
+) -> Result<()> {
+    match format {
+        FormatArg::Text => render_run_text(report, duration),
+        FormatArg::Json => render_run_json(report, target, personality, duration),
+    }
+}
+
+fn describe_personality(target: TargetKind, explicit: Option<&str>) -> String {
+    if let Some(value) = explicit {
+        value.to_string()
+    } else if let Some(default) = default_personality_for_target(target) {
+        default.to_string()
+    } else {
+        format!("{}-builtin", target.to_string())
+    }
+}
+
+fn resolve_include_path(workspace: &Path, include: &Path) -> PathBuf {
+    if include.is_absolute() {
+        include.to_path_buf()
+    } else {
+        workspace.join(include)
+    }
+}
+
+fn resolve_include_paths(workspace: &Path, includes: &[PathBuf]) -> Vec<PathBuf> {
+    includes
+        .iter()
+        .map(|p| resolve_include_path(workspace, p))
+        .collect()
+}
+
+fn apply_entry_overrides(workspace: &Path, entry: &CiMatrixEntry, opts: &mut RunOptions) {
+    let resolved = resolve_include_paths(workspace, &entry.includes);
+    opts.extra_includes.extend(resolved);
+    opts.extra_defines.extend(entry.defines.iter().cloned());
+    opts.tass_args.extend(entry.tass_args.iter().cloned());
+}
+
+fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint) {
+    match target {
+        TargetKind::Ultimate64 => {
+            if let Some(host) = &endpoint.host {
+                env::set_var("CROSS465_ULTIMATE64_HOST", host);
+            }
+            if let Some(port) = endpoint.port {
+                env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
+            }
+        }
+        TargetKind::Mega65 => {
+            // Future: add serial endpoint support.
+        }
+        TargetKind::Cross465 => {}
+    }
+}
+
+fn default_workspace_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .ancestors()
+        .nth(3)
+        .unwrap_or(manifest_dir.as_path())
+        .to_path_buf()
+}
+
+fn resolve_workspace_arg(arg: Option<&PathBuf>) -> Result<PathBuf> {
+    let path = match arg {
+        Some(path) if path.is_absolute() => path.clone(),
+        Some(path) => env::current_dir()
+            .context("failed to resolve workspace")?
+            .join(path),
+        None => default_workspace_root(),
+    };
+    Ok(path)
+}
+
+fn resolve_catalog_path(workspace: &Path, cli_path: Option<&PathBuf>) -> PathBuf {
+    let path = match cli_path {
+        Some(path) if path.is_absolute() => path.clone(),
+        Some(path) => workspace.join(path),
+        None => workspace.join("crossdev/cross465/tests/catalog.toml"),
+    };
+    path
 }

@@ -62,8 +62,16 @@ Cargo expects a test binary that can list and run cases, printing pass/fail line
 - **Execution (`--mode run --case <name>`)**: runs one case, emits full RTST.
 
 ### Personality/Target
-`--personality <id>` controls MMIO layout (``modern-retro``, ``c64-compat``).  
+`--personality <id>` controls MMIO layout (``modern-retro``, ``c64-compat``); omit it for targets
+with a fixed/built-in layout such as the Ultimate64.  
 `--target <id>` chooses backend (``cross465``, ``ultimate64``, ``mega65``).
+
+> **Future expansion:** even “fixed” targets can benefit from the personality catalog once we start
+> modeling hardware variants (e.g., JiffyDOS kernels, REU banks, extra SIDs). Those definitions could
+> drive both host-side validation (e.g., flagging invalid MMIO addresses) and generated assembler
+> includes so 6502 sources fail to assemble when referencing registers that a given personality
+> doesn’t expose. Keep target-specific `[ci.matrix.<target>]` sections up to date as those variants
+> materialize.
 
 ### Output
 Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.  
@@ -80,6 +88,9 @@ Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.
 - `--log-metrics` prints per-case lines such as
   `metric case=display::parallax status=passed cycles=523812 rtst_bytes=4096 write_pos=372`
   for CI ingestion.
+- `--ci-matrix` iterates over `[ci.matrix.<target>]` entries declared in
+  `crossdev/cross465/tests/catalog.toml`, running every target/personality
+  combination without having to pass `--target`/`--personality` manually.
 
 ---
 
@@ -211,11 +222,78 @@ cycles, RTST byte count, and the final header `WPOS`.
 
 ## 8. CI Matrix and Cross‑Target Validation
 
-- **Axes:** target × personality × OS.  
-- **Artifacts:** raw RTST dumps and PRGs on failure.  
-- **Cross‑target differential:** run same case on multiple backends and compare ACT_* actuals.  
-- **Golden update:** `--update` flag rewrites fixtures.  
-- **Codex integration:** JSON schema for ingestion and automated analysis.
+### 8.1 Matrix Inputs
+
+Targets and personalities form a tree: each target defines zero or more entry points in
+`[ci.matrix.<target>]`. A `personalities = []` clause means “run with the target’s built-in
+personality”. This data feeds `--ci-matrix`, so automated workflows don’t need to hardcode their
+own target/personality cartesian products.
+
+### 8.2 Driving the Matrix from `catalog.toml`
+
+`crossdev/cross465/tests/catalog.toml` stores every case plus optional tags (e.g. `"demo"`,
+`"rtst"`). Use the `[ci.matrix.<target>]` tables to declare which personalities should run on
+each backend, and an optional top-level `workspace = "<path>"` entry lets the CLI resolve the
+project root automatically (paths are relative to the catalog file):
+
+```toml
+workspace = "../../.."
+
+[ci.matrix.cross465]
+personalities = ["modern-retro", "c64-compat"]
+include = [
+  "native/src/include",
+  "native/src/platform/cross465/include"
+]
+define = { PLATFORM = "cross465" }
+tass_args = ["-Wall"]
+
+[ci.matrix.ultimate64]
+personalities = []
+
+[ci.matrix.ultimate64.endpoint]
+host = "192.168.0.64"
+port = 6510
+```
+
+With that in place CI jobs can query the catalog (for filtering) and then rely on
+`--ci-matrix` to execute every declared combo sequentially. To build ad-hoc case lists:
+
+> **Note:** Use an empty `personalities = []` list to run the target with its default/built-in
+> mapping (no personality override). Any `include`, `define`, `tass_args`, or `[...endpoint]` values
+> declared under a `[ci.matrix.<target>]` entry are automatically merged into the runner’s options:
+> - `include` &rarr; extra `-I` paths for 64tass (relative to the workspace root).
+> - `define` &rarr; `-D KEY:=VALUE` pairs (TOML table syntax keeps them organized).
+> - `tass_args` &rarr; additional raw arguments passed to 64tass.
+> - `endpoint` &rarr; per-target connection details (currently IP/port for Ultimate64).
+>
+> With those settings in the catalog, you no longer need to pass `--include`, `--define`, or remote
+> host/port flags manually.
+
+```bash
+python - <<'PY' > ci-cases.json
+import json, tomllib, pathlib
+data = tomllib.loads(pathlib.Path("crossdev/cross465/tests/catalog.toml").read_text())
+cases = [entry["name"] for entry in data["case"] if "rtst" in entry.get("tags", [])]
+print(json.dumps(cases))
+PY
+```
+
+With the generated JSON you can pass `--case case::name` repeatedly (or rely on the default
+“run everything” behavior). For discovery-only jobs use `--mode list --format json` and feed
+the output straight into Codex or CI dashboards.
+
+### 8.3 CI Integration
+
+Workflows (GitHub Actions, Buildkite, etc.) can shell out to the runner with `--ci-matrix` so every
+declared target/personality combination is exercised automatically. Capture the JSON output or the
+artifact directory (`target/cross465-runner/…`) to feed dashboards or log archives—no fixed matrix
+snippet required here.
+
+Extend the matrix with `mega65` for hardware labs, and add a weekly job that invokes the
+runner with `--fixtures --update-fixtures` to refresh goldens when needed. Because each
+run emits JSON (`--format json`) and stores RTST dumps under `target/cross465-runner`,
+Codex/CI aggregators can ingest both the structured results and the raw artifacts.
 
 ---
 

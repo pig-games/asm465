@@ -1,3 +1,5 @@
+workspace = "../../.."
+
 [[case]]
 name = "math::add_basic"
 path = "cases/math_add_basic.s"
@@ -9,3 +11,21 @@ tags = ["demo", "rtst"]
 name = "display::parallax_scroll2"
 path = "cases/display_parallax_scroll.s"
 timeout_ms = 2000
+
+[ci.matrix.cross465]
+personalities = ["modern-retro", "c64-compat"]
+include = [
+  "native/src/include",
+  "native/src/platform/cross465/include"
+]
+
+[ci.matrix.ultimate64]
+personalities = []
+include = [
+  "native/src/include",
+  "native/src/platform/ultimate64/include"
+]
+
+[ci.matrix.ultimate64.endpoint]
+host = "192.168.0.64"
+port = 6510
