@@ -213,10 +213,7 @@ For convenience, the crate also exposes top-level helpers:
 | Comparison fail | host diff mismatch | mark FAILED, print expected/actual |
 | Target offline | I/O error | retry (`--transport-retries`), fail if persistent |
 
-When artifacts are enabled (default), every failure writes
-`target/cross465-runner/<target>/<case>/{program.prg,rtst.bin,meta.json}`. The
-metadata captures the stage (`backend`, `rtst`, `case`), status, error string,
-cycles, RTST byte count, and the final header `WPOS`.
+When artifacts are enabled (default), every failure writes `target/cross465-runner/<target>/<case>/{program.prg,rtst.bin,meta.json}`. The metadata captures the stage (`backend`, `rtst`, `case`), status, error string, cycles, RTST byte count, and the final header `WPOS`.
 
 ---
 
@@ -224,17 +221,11 @@ cycles, RTST byte count, and the final header `WPOS`.
 
 ### 8.1 Matrix Inputs
 
-Targets and personalities form a tree: each target defines zero or more entry points in
-`[ci.matrix.<target>]`. A `personalities = []` clause means “run with the target’s built-in
-personality”. This data feeds `--ci-matrix`, so automated workflows don’t need to hardcode their
-own target/personality cartesian products.
+Targets and personalities form a tree: each target defines zero or more entry points in `[ci.matrix.<target>]`. A `personalities = []` clause means “run with the target’s built-in personality”. This data feeds `--ci-matrix`, so automated workflows don’t need to hardcode their own target/personality cartesian products.
 
 ### 8.2 Driving the Matrix from `catalog.toml`
 
-`crossdev/cross465/tests/catalog.toml` stores every case plus optional tags (e.g. `"demo"`,
-`"rtst"`). Use the `[ci.matrix.<target>]` tables to declare which personalities should run on
-each backend, and an optional top-level `workspace = "<path>"` entry lets the CLI resolve the
-project root automatically (paths are relative to the catalog file):
+`crossdev/cross465/tests/catalog.toml` stores every case plus optional tags (e.g. `"demo"`, `"rtst"`). Use the `[ci.matrix.<target>]` tables to declare which personalities should run on each backend, and an optional top-level `workspace = "<path>"` entry lets the CLI resolve the project root automatically (paths are relative to the catalog file):
 
 ```toml
 workspace = "../../.."
@@ -256,8 +247,7 @@ host = "192.168.0.64"
 port = 6510
 ```
 
-With that in place CI jobs can query the catalog (for filtering) and then rely on
-`--ci-matrix` to execute every declared combo sequentially. To build ad-hoc case lists:
+With that in place CI jobs can query the catalog (for filtering) and then rely on `--ci-matrix` to execute every declared combo sequentially. To build ad-hoc case lists:
 
 > **Note:** Use an empty `personalities = []` list to run the target with its default/built-in
 > mapping (no personality override). Any `include`, `define`, `tass_args`, or `[...endpoint]` values
@@ -285,15 +275,9 @@ the output straight into Codex or CI dashboards.
 
 ### 8.3 CI Integration
 
-Workflows (GitHub Actions, Buildkite, etc.) can shell out to the runner with `--ci-matrix` so every
-declared target/personality combination is exercised automatically. Capture the JSON output or the
-artifact directory (`target/cross465-runner/…`) to feed dashboards or log archives—no fixed matrix
-snippet required here.
+Workflows (GitHub Actions, Buildkite, etc.) can shell out to the runner with `--ci-matrix` so every declared target/personality combination is exercised automatically. Capture the JSON output or the artifact directory (`target/cross465-runner/…`) to feed dashboards or log archives. Today this same JSON output and the PRG/RTST artifacts are already useful for local/manual workflows; future automation can consume the same files when we decide to wire them into CI.
 
-Extend the matrix with `mega65` for hardware labs, and add a weekly job that invokes the
-runner with `--fixtures --update-fixtures` to refresh goldens when needed. Because each
-run emits JSON (`--format json`) and stores RTST dumps under `target/cross465-runner`,
-Codex/CI aggregators can ingest both the structured results and the raw artifacts.
+Extend the matrix with `mega65` for hardware labs, and add a weekly job that invokes the runner with `--fixtures --update-fixtures` to refresh goldens when needed. Because each run emits JSON (`--format json`) and stores RTST dumps under `target/cross465-runner`, Codex/CI aggregators can ingest both the structured results and the raw artifacts.
 
 ---
 

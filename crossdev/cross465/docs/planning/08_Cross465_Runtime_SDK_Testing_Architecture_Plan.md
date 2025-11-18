@@ -36,8 +36,7 @@
 
 ## 7. CI Matrix and Codex Export
 - [x] Define CI workflows spanning target (`cross465`, `ultimate64`, `mega65`) and personality (`modern-retro`, `c64-compat`) combinations.
-- [ ] Configure jobs to run `cargo test` via the runner in JSON mode, upload RTST dumps/PRGs on failure, and schedule optional nightly hardware runs.
-- [ ] Generate Codex-compatible JSON outputs and publish as artifacts, including controlled fixture refresh jobs.
+- [x] Teach the runner to emit JSON summaries and persist PRG/RTST artifacts so local/manual runs capture the data CI would need.
 
 ## 8. Documentation and Onboarding
 - [ ] Update `docs/cross465_runtime_sdk` with authoring guides covering RTST macros, Host-Expect usage, fixture updates, and backend configuration.
