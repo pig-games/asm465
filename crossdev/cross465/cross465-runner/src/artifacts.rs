@@ -210,3 +210,107 @@ fn now_ms() -> u128 {
         .map(|d| d.as_millis())
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::{ActualCollections, CaseMetrics};
+    use serde_json::Value;
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    fn case_path(root: &Path, case: &str) -> PathBuf {
+        let mut dir = root.join("cross465");
+        for part in case.split("::") {
+            dir = dir.join(part);
+        }
+        dir
+    }
+
+    fn read_meta(path: &Path) -> Value {
+        let data = fs::read(path).expect("meta readable");
+        serde_json::from_slice(&data).expect("meta json")
+    }
+
+    #[test]
+    fn backend_error_emits_artifacts() {
+        let temp = tempdir().expect("tempdir");
+        let store =
+            ArtifactStore::new(Some(temp.path().to_path_buf()), TargetKind::Cross465, false);
+        let err = RunnerError::MalformedPrg;
+        let prg = [0u8, 1, 2, 3];
+        store.capture_backend_error("math::add", "modern-retro", &prg, &err);
+        let case_dir = case_path(temp.path(), "math::add");
+        assert!(case_dir.join("program.prg").exists());
+        let meta = read_meta(&case_dir.join("meta.json"));
+        assert_eq!(meta["stage"], "backend");
+        assert_eq!(meta["status"], "error");
+        assert!(meta["error"].as_str().unwrap().contains("malformed PRG"));
+    }
+
+    #[test]
+    fn parse_error_writes_rtst_dump() {
+        let temp = tempdir().expect("tempdir");
+        let store =
+            ArtifactStore::new(Some(temp.path().to_path_buf()), TargetKind::Cross465, false);
+        let prg = [0u8; 4];
+        let exec = ExecutionOutput {
+            rtst_region: vec![0xAA; 32],
+            cycles: 99,
+        };
+        let err =
+            RunnerError::RtstParse(runtime_sdk::rtst::RtstError::BadMagic { found: *b"abcd" });
+        store.capture_parse_error("display::scroll", "modern-retro", &prg, &exec, &err);
+        let case_dir = case_path(temp.path(), "display::scroll");
+        assert_eq!(
+            fs::read(case_dir.join("rtst.bin")).unwrap().len(),
+            exec.rtst_region.len()
+        );
+        let meta = read_meta(&case_dir.join("meta.json"));
+        assert_eq!(meta["stage"], "rtst");
+        assert_eq!(meta["cycles"], 99);
+        assert_eq!(meta["rtst_bytes"], 32);
+    }
+
+    #[test]
+    fn capture_case_respects_keep_success_flag() {
+        let prg = [0u8; 4];
+        let exec = ExecutionOutput {
+            rtst_region: vec![0; 16],
+            cycles: 12,
+        };
+        let mut report = CaseReport {
+            name: "math::mul".into(),
+            status: CaseStatus::Passed,
+            status_code: None,
+            message: None,
+            logs: Vec::new(),
+            asserts: Vec::new(),
+            actuals: BTreeMap::new(),
+            actual_groups: ActualCollections::default(),
+            metrics: Some(CaseMetrics {
+                cycles: 12,
+                rtst_bytes: 16,
+                write_pos: 8,
+            }),
+        };
+        let temp = tempdir().expect("tempdir");
+        let store =
+            ArtifactStore::new(Some(temp.path().to_path_buf()), TargetKind::Cross465, false);
+        store.capture_case(&report, "modern-retro", &prg, &exec);
+        let case_dir = case_path(temp.path(), "math::mul");
+        assert!(
+            !case_dir.join("meta.json").exists(),
+            "success artifacts should be skipped"
+        );
+
+        report.status = CaseStatus::Failed;
+        let keeper =
+            ArtifactStore::new(Some(temp.path().to_path_buf()), TargetKind::Cross465, true);
+        keeper.capture_case(&report, "modern-retro", &prg, &exec);
+        assert!(case_dir.join("meta.json").exists());
+        let meta = read_meta(&case_dir.join("meta.json"));
+        assert_eq!(meta["status"], "failed");
+        assert_eq!(meta["write_pos"], 8);
+    }
+}
