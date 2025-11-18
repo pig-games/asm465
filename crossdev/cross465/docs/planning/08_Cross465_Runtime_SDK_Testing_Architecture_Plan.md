@@ -42,3 +42,12 @@
 - [x] Update `docs/cross465_runtime_sdk` with authoring guides covering RTST macros, Host-Expect usage, fixture updates, and backend configuration.
 - [x] Provide troubleshooting FAQs for assembler errors, backend connectivity issues, and expectation diffs.
 - [x] Highlight isolation practices (IRQ masking, setup/teardown) and pointers to CI outputs for diagnostics.
+
+## 9. Asm465 / WASM Runtime Targets
+- [ ] Treat the native `asm465` runtime (and its WASM build) as addressable backends for RTST, so tests that exercise graphics/audio via the emulator can run through the same cross465-test-runner pipeline.
+- [ ] Replace the Makefile-based unit test harnesses with `cross465-test-runner` once asm465/WASM targets are stable.
+
+## 10. Console MMIO Debug Integration
+- [ ] Capture console MMIO debug streams (reads/writes, overlay screenshots) alongside RTST so `cross465-test-runner` can archive them per case.
+- [ ] Provide host-side parsers/expectation helpers for the MMIO trace data (diffing overlays, asserting register access patterns).
+- [ ] Surface new CLI flags/documentation so developers can enable MMIO capture locally and in CI, keeping artifact formats aligned with the rest of the cross465-test-runner outputs.

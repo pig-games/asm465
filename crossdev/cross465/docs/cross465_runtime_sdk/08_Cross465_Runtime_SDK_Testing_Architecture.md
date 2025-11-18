@@ -7,9 +7,11 @@ This document specifies the architecture for a **unified testing framework** tha
 - Remote hardware tests (Ultimate64, MEGA65),
 - and **first-class integration with `cargo test`**.
 
-It defines the **Runtime Test Stream (RTST)** protocol, the cargo-facing runner, target backends,
-and a new **Host-Expect comparison model** that allows the 6502 side to log actuals while Rust (cargo)
-performs expectation checks, ideal for modern runtime and personality validation.
+It defines the **Runtime Test Stream (RTST)** protocol, the `cross465-test-runner` executable,
+target backends, and a new **Host-Expect comparison model** that allows the 6502 side to log actuals
+while Rust (via the `cross465_runner` library) performs expectation checks. Invoke
+`cross465-test-runner` directly for CLI workflows; `cargo test` links the same logic from the
+library so no separate process is needed.
 
 ---
 
@@ -381,7 +383,7 @@ Extend the matrix with `mega65` for hardware labs, and add a weekly job that inv
 ```text
 [6502 test] --> RTST (ACT_KV: scroll_x=0x123, ACT_HASH: fb_hash=deadbeef)
      ↓
-[cargo runner] parses RTST
+cross465-test-runner (or `cross465_runner` via cargo test) parses RTST
      ↓
 compare against expectations
      ↓
