@@ -69,6 +69,18 @@ Cargo expects a test binary that can list and run cases, printing pass/fail line
 Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.  
 `--format json` for CI/Codex.
 
+### Diagnostics & Artifacts
+- `--progress-timeout-ms <ms>` (default: 750) aborts runs when a target stops
+  advancing the RTST `WPOS` pointer; set to `0` to disable.
+- `--transport-retries <n>` retries Ultimate64/MEGA65 memory reads in-place
+  before propagating a backend error.
+- `--artifacts [DIR]` writes `<dir>/<target>/<case>/{program.prg,rtst.bin,meta.json}`
+  on failure (default root: `target/cross465-runner`); add `--keep-success-artifacts`
+  to retain passing cases or `--no-artifacts` to disable.
+- `--log-metrics` prints per-case lines such as
+  `metric case=display::parallax status=passed cycles=523812 rtst_bytes=4096 write_pos=372`
+  for CI ingestion.
+
 ---
 
 ## 4. Target Backends
@@ -90,6 +102,9 @@ MEGA65 runs shell out to the `m65` CLI. Point the runner at the correct binary
 and serial port via `CROSS465_MEGA65_M65_PATH`, `CROSS465_MEGA65_SERIAL`,
 `CROSS465_MEGA65_BAUD`, `CROSS465_MEGA65_POLL_DELAY_MS`, and
 `CROSS465_MEGA65_RETRIES`.
+
+Every case is executed on a freshly constructed backend so hardware targets
+receive an implicit reset between runs.
 
 ---
 
@@ -166,6 +181,9 @@ the root directory (or just `--fixtures` to use the default `tests/fixtures`) an
 `--update-fixtures` to rewrite the golden values for the cases you run.
 Each file stores the typed buckets (`scalars`, `hashes`, `memories`, `registers`, `timings`).
 
+Every `CaseReport` now carries `metrics` (cycles, RTST byte count, header `WPOS`),
+which are serialized in JSON output and can be mirrored to stdout via `--log-metrics`.
+
 For convenience, the crate also exposes top-level helpers:
 
 - `assert_case_ok(&result)` / `assert_case_failed(&result)` operate on an `asm6502_test!`
@@ -178,11 +196,16 @@ For convenience, the crate also exposes top-level helpers:
 
 | Error | Detection | Runner response |
 |-------|------------|-----------------|
-| No MAGIC | header invalid | initialization failure |
-| No progress | static WPOS | timeout |
-| Partial record | short LEN | test failed |
+| No MAGIC | header invalid | initialization failure + artifacts saved |
+| No progress | static WPOS | timeout (`--progress-timeout-ms`, logs last WPOS) |
+| Partial record | short LEN | test failed + `rtst.bin` dump |
 | Comparison fail | host diff mismatch | mark FAILED, print expected/actual |
-| Target offline | I/O error | retry (3×), fail if persistent |
+| Target offline | I/O error | retry (`--transport-retries`), fail if persistent |
+
+When artifacts are enabled (default), every failure writes
+`target/cross465-runner/<target>/<case>/{program.prg,rtst.bin,meta.json}`. The
+metadata captures the stage (`backend`, `rtst`, `case`), status, error string,
+cycles, RTST byte count, and the final header `WPOS`.
 
 ---
 

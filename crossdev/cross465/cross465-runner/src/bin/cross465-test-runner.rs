@@ -72,6 +72,24 @@ fn main() -> Result<()> {
                         None
                     }
                 });
+            let artifact_dir = if cli.no_artifacts {
+                None
+            } else {
+                let default_dir = workspace.join("target/cross465-runner");
+                let path = cli
+                    .artifacts
+                    .as_ref()
+                    .map_or(Some(default_dir.clone()), |opt| {
+                        opt.as_ref().map(|path| {
+                            if path.is_absolute() {
+                                path.clone()
+                            } else {
+                                workspace.join(path)
+                            }
+                        })
+                    });
+                path.or(Some(default_dir))
+            };
             let opts = RunOptions {
                 target,
                 personality: cli.personality.clone(),
@@ -84,6 +102,11 @@ fn main() -> Result<()> {
                 update_fixtures: cli.update_fixtures,
                 extra_defines: Vec::new(),
                 tass_args: Vec::new(),
+                artifact_dir,
+                keep_success_artifacts: cli.keep_success_artifacts,
+                log_metrics: cli.log_metrics,
+                progress_timeout_ms: cli.progress_timeout_ms,
+                transport_retries: cli.transport_retries,
             };
             let start = Instant::now();
             let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
@@ -132,6 +155,18 @@ struct Cli {
     fixtures: Option<Option<PathBuf>>,
     #[arg(long = "update-fixtures")]
     update_fixtures: bool,
+    #[arg(long = "artifacts", value_name = "DIR", num_args = 0..=1)]
+    artifacts: Option<Option<PathBuf>>,
+    #[arg(long = "no-artifacts")]
+    no_artifacts: bool,
+    #[arg(long = "keep-success-artifacts")]
+    keep_success_artifacts: bool,
+    #[arg(long = "progress-timeout-ms", default_value_t = 750)]
+    progress_timeout_ms: u64,
+    #[arg(long = "transport-retries", default_value_t = 3)]
+    transport_retries: u32,
+    #[arg(long = "log-metrics")]
+    log_metrics: bool,
     #[arg(long = "ultimate64-host", value_name = "HOST")]
     ultimate64_host: Option<String>,
     #[arg(long = "ultimate64-port", value_name = "PORT")]

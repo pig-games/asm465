@@ -20,6 +20,14 @@ impl CaseStatus {
     pub fn is_failed(&self) -> bool {
         matches!(self, CaseStatus::Failed)
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CaseStatus::Pending => "pending",
+            CaseStatus::Passed => "passed",
+            CaseStatus::Failed => "failed",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -59,6 +67,16 @@ pub struct CaseReport {
     pub asserts: Vec<String>,
     pub actuals: BTreeMap<String, ActualValue>,
     pub actual_groups: ActualCollections,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<CaseMetrics>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+/// Runtime metrics captured for a case (cycles + RTST footprint).
+pub struct CaseMetrics {
+    pub cycles: u64,
+    pub rtst_bytes: usize,
+    pub write_pos: u16,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

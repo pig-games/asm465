@@ -196,6 +196,7 @@ pub fn run_asm6502_case(builder: AsmTestBuilder) -> Result<AsmTestResult, Runner
     run_opts.update_fixtures = builder.update_fixtures;
     run_opts.extra_defines = builder.defines.clone();
     run_opts.tass_args = builder.tass_args.clone();
+    run_opts.artifact_dir = Some(workspace.join("target/cross465-runner"));
 
     let config = RunnerConfig::new(workspace.clone(), None);
     let filter = CaseFilter {

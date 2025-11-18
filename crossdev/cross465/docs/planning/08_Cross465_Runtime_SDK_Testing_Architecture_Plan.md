@@ -29,10 +29,10 @@
 - [x] Provide assertion helpers (`assert_case_ok`, `expect_*`) that layer atop the Host-Expect APIs, with documentation examples.
 
 ## 6. Robust Error, Timeout, and Artifact Handling
-- [ ] Detect protocol initialization failures (missing MAGIC/VERSION) and abort with captured RTST buffer artifacts.
-- [ ] Monitor WPOS progress with configurable timeouts and automatic retries for transient transport failures.
-- [ ] Validate record lengths, fail tests on malformed streams, and persist raw dumps/PRGs for debugging.
-- [ ] Reset targets between cases and emit optional metrics/logs suitable for CI dashboards.
+- [x] Detect protocol initialization failures (missing MAGIC/VERSION) and abort with captured RTST buffer artifacts.
+- [x] Monitor WPOS progress with configurable timeouts and automatic retries for transient transport failures.
+- [x] Validate record lengths, fail tests on malformed streams, and persist raw dumps/PRGs for debugging.
+- [x] Reset targets between cases and emit optional metrics/logs suitable for CI dashboards.
 
 ## 7. CI Matrix and Codex Export
 - [ ] Define CI workflows spanning target (`cross465`, `ultimate64`, `mega65`) and personality (`modern-retro`, `c64-compat`) combinations.

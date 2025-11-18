@@ -1,3 +1,4 @@
+mod artifacts;
 mod asmtest;
 mod assembler;
 mod catalog;
@@ -18,12 +19,14 @@ pub use expect::{
     AssertError, AssertResult, CaseAccessor, CaseActuals, ExpectError, ExpectResult,
 };
 pub use report::{
-    ActualCollections, ActualValue, CaseReport, CaseStatus, Registers, RunReport, RunSummary,
+    ActualCollections, ActualValue, CaseMetrics, CaseReport, CaseStatus, Registers, RunReport,
+    RunSummary,
 };
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use artifacts::ArtifactStore;
 use runtime_sdk::rtst::{RecordId, Stream};
 use thiserror::Error;
 
@@ -121,6 +124,11 @@ pub struct RunOptions {
     pub update_fixtures: bool,
     pub extra_defines: Vec<(String, String)>,
     pub tass_args: Vec<String>,
+    pub artifact_dir: Option<PathBuf>,
+    pub keep_success_artifacts: bool,
+    pub log_metrics: bool,
+    pub progress_timeout_ms: u64,
+    pub transport_retries: u32,
 }
 
 impl Default for RunOptions {
@@ -137,6 +145,11 @@ impl Default for RunOptions {
             update_fixtures: false,
             extra_defines: Vec::new(),
             tass_args: Vec::new(),
+            artifact_dir: None,
+            keep_success_artifacts: false,
+            log_metrics: false,
+            progress_timeout_ms: 750,
+            transport_retries: 3,
         }
     }
 }
@@ -169,6 +182,17 @@ pub enum RunnerError {
         state: Option<runtime_sdk::rtst::State>,
         wpos: u16,
         pc: u16,
+    },
+    #[error("protocol initialization failed: {source}")]
+    ProtocolInit {
+        #[source]
+        source: runtime_sdk::rtst::RtstError,
+    },
+    #[error("no RTST progress for {elapsed_ms} ms (state={state:?}, wpos={wpos})")]
+    NoProgress {
+        state: Option<runtime_sdk::rtst::State>,
+        wpos: u16,
+        elapsed_ms: u64,
     },
     #[error("RTST buffer parse error: {0}")]
     RtstParse(#[from] runtime_sdk::rtst::RtstError),
@@ -244,29 +268,56 @@ pub fn run_cases(
         extra_args: opts.tass_args.clone(),
     };
 
-    let backend = executor::backend_for_target(opts.target);
     let fixture_store = FixtureStore::new(
         &config.workspace_root,
         opts.target,
         opts.fixture_dir.clone(),
         opts.update_fixtures,
     );
+    let artifact_store = ArtifactStore::new(
+        opts.artifact_dir.clone(),
+        opts.target,
+        opts.keep_success_artifacts,
+    );
     let mut reports = Vec::new();
     for case in &cases {
+        let backend = executor::backend_for_target(opts.target);
         let assembly = assemble_case(case, &assembler_cfg)?;
-        let exec = backend.run(
+        let exec = match backend.run(
             &assembly.prg,
             ExecutionConfig {
                 target: opts.target,
                 timeout_ms: opts.timeout_ms.unwrap_or(2_000),
+                progress_timeout_ms: opts.progress_timeout_ms,
+                transport_retries: opts.transport_retries,
             },
-        )?;
-        let mut parsed = parse_rtst(&exec)?;
-        for report in &mut parsed {
-            fixture_store.apply(report)?;
-        }
+        ) {
+            Ok(output) => output,
+            Err(err) => {
+                artifact_store.capture_backend_error(
+                    &case.name,
+                    &opts.personality,
+                    &assembly.prg,
+                    &err,
+                );
+                return Err(err);
+            }
+        };
+        let (mut parsed, metrics) = match parse_rtst(&exec) {
+            Ok(result) => result,
+            Err(err) => {
+                artifact_store.capture_parse_error(
+                    &case.name,
+                    &opts.personality,
+                    &assembly.prg,
+                    &exec,
+                    &err,
+                );
+                return Err(err);
+            }
+        };
         if parsed.is_empty() {
-            parsed.push(CaseReport {
+            let mut placeholder = CaseReport {
                 name: case.name.clone(),
                 status: CaseStatus::Failed,
                 status_code: None,
@@ -275,9 +326,27 @@ pub fn run_cases(
                 asserts: Vec::new(),
                 actuals: BTreeMap::new(),
                 actual_groups: ActualCollections::default(),
-            });
-            if let Some(last) = parsed.last_mut() {
-                fixture_store.apply(last)?;
+                metrics: Some(metrics.clone()),
+            };
+            fixture_store.apply(&mut placeholder)?;
+            artifact_store.capture_case(&placeholder, &opts.personality, &assembly.prg, &exec);
+            if opts.log_metrics {
+                log_case_metrics(&placeholder);
+            }
+            reports.push(placeholder);
+            continue;
+        }
+        for report in &mut parsed {
+            if let Err(err) = fixture_store.apply(report) {
+                artifact_store.capture_case(report, &opts.personality, &assembly.prg, &exec);
+                if opts.log_metrics {
+                    log_case_metrics(report);
+                }
+                return Err(err);
+            }
+            artifact_store.capture_case(report, &opts.personality, &assembly.prg, &exec);
+            if opts.log_metrics {
+                log_case_metrics(report);
             }
         }
         reports.extend(parsed);
@@ -286,8 +355,13 @@ pub fn run_cases(
     Ok(RunReport::from_cases(reports))
 }
 
-fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
+fn parse_rtst(exec: &ExecutionOutput) -> Result<(Vec<CaseReport>, CaseMetrics), RunnerError> {
     let stream = Stream::parse(&exec.rtst_region)?;
+    let metrics = CaseMetrics {
+        cycles: exec.cycles,
+        rtst_bytes: exec.rtst_region.len(),
+        write_pos: stream.header().write_pos(),
+    };
     let mut order = Vec::new();
     let mut cases: BTreeMap<String, CaseReport> = BTreeMap::new();
     let mut current: Option<String> = None;
@@ -310,6 +384,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
                         asserts: Vec::new(),
                         actuals: BTreeMap::new(),
                         actual_groups: ActualCollections::default(),
+                        metrics: None,
                     });
             }
             Some(RecordId::CaseOk) => {
@@ -443,11 +518,27 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<Vec<CaseReport>, RunnerError> {
         }
     }
 
-    let ordered_cases: Vec<_> = order
+    let mut ordered_cases: Vec<_> = order
         .into_iter()
         .filter_map(|name| cases.remove(&name))
         .collect();
-    Ok(ordered_cases)
+    for case in &mut ordered_cases {
+        case.metrics = Some(metrics.clone());
+    }
+    Ok((ordered_cases, metrics))
+}
+
+fn log_case_metrics(report: &CaseReport) {
+    if let Some(metrics) = &report.metrics {
+        println!(
+            "metric case={} status={} cycles={} rtst_bytes={} write_pos={}",
+            report.name,
+            report.status.as_str(),
+            metrics.cycles,
+            metrics.rtst_bytes,
+            metrics.write_pos,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -521,7 +612,7 @@ mod report_tests {
             rtst_region: buffer,
             cycles: 0,
         };
-        let cases = parse_rtst(&exec).expect("parse");
+        let (cases, metrics) = parse_rtst(&exec).expect("parse");
         assert_eq!(cases.len(), 1);
         let case = &cases[0];
         assert_eq!(case.actual_groups.scalars.get("score"), Some(&0x10));
@@ -536,5 +627,7 @@ mod report_tests {
         );
         assert_eq!(case.actual_groups.timings.get("elapsed"), Some(&500u32));
         assert_eq!(case.actuals.len(), 5);
+        assert_eq!(metrics.rtst_bytes, exec.rtst_region.len());
+        assert!(metrics.write_pos > 0);
     }
 }

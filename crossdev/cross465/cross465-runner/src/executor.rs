@@ -34,6 +34,8 @@ pub enum TargetKind {
 pub struct ExecutionConfig {
     pub target: TargetKind,
     pub timeout_ms: u64,
+    pub progress_timeout_ms: u64,
+    pub transport_retries: u32,
 }
 
 /// Results captured from executing a PRG.
@@ -79,9 +81,16 @@ impl Cross465Backend {
         let poll_interval: u64 = 1024;
         let cycle_budget = cfg.timeout_ms.saturating_mul(1_000) as u64;
         let base_addr = base.address as u16;
+        let progress_deadline = if cfg.progress_timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(cfg.progress_timeout_ms))
+        };
 
         let mut last_header: Option<Header> = None;
         let mut last_wpos: u16 = 0;
+        let mut initialized = false;
+        let mut last_progress = Instant::now();
 
         loop {
             let step_cycles = cpu.step() as u64;
@@ -95,15 +104,49 @@ impl Cross465Backend {
                     pc: cpu.pc,
                 });
             }
+            if initialized {
+                if let Some(limit) = progress_deadline {
+                    if last_progress.elapsed() >= limit {
+                        return Err(RunnerError::NoProgress {
+                            state: last_header.as_ref().map(|h| h.state()),
+                            wpos: last_wpos,
+                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
+                        });
+                    }
+                }
+            }
             if cycles % poll_interval != 0 {
                 continue;
             }
             let header_bytes = read_bytes(&mut cpu.bus, base_addr, HEADER_LEN);
-            if let Ok(header) = Header::parse(&header_bytes) {
-                last_wpos = header.write_pos();
-                last_header = Some(header);
-                if last_header.as_ref().unwrap().state().is_terminal() {
-                    break;
+            match Header::parse(&header_bytes) {
+                Ok(header) => {
+                    if !initialized {
+                        initialized = true;
+                        last_progress = Instant::now();
+                    }
+                    if header.write_pos() != last_wpos {
+                        last_wpos = header.write_pos();
+                        last_progress = Instant::now();
+                    } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state())
+                    {
+                        last_progress = Instant::now();
+                    }
+                    last_header = Some(header);
+                    if last_header.as_ref().unwrap().state().is_terminal() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    if !initialized {
+                        if let Some(limit) = progress_deadline {
+                            if last_progress.elapsed() >= limit {
+                                return Err(RunnerError::ProtocolInit { source: err });
+                            }
+                        }
+                    } else {
+                        return Err(RunnerError::RtstParse(err));
+                    }
                 }
             }
         }
@@ -217,23 +260,66 @@ impl Ultimate64Backend {
         } else {
             Some(Duration::from_millis(cfg.timeout_ms))
         };
+        let progress_deadline = if cfg.progress_timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(cfg.progress_timeout_ms))
+        };
+        let mut last_progress = Instant::now();
+        let mut initialized = false;
+        let mut last_header: Option<Header> = None;
+        let mut last_wpos: u16 = 0;
         let start = Instant::now();
         let client = Ultimate64Client::connect(&self.config)?;
-        client.run_program(prg)?;
+        self.retry_transport(|| client.run_program(prg), cfg.transport_retries)?;
         loop {
-            let header_bytes = client.read_memory(layout.address, HEADER_LEN)?;
+            if initialized {
+                if let Some(limit) = progress_deadline {
+                    if last_progress.elapsed() >= limit {
+                        return Err(RunnerError::NoProgress {
+                            state: last_header.as_ref().map(|h| h.state()),
+                            wpos: last_wpos,
+                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
+                        });
+                    }
+                }
+            }
+            let header_bytes = self.retry_transport(
+                || client.read_memory(layout.address, HEADER_LEN),
+                cfg.transport_retries,
+            )?;
             let header = match Header::parse(&header_bytes) {
                 Ok(header) => header,
                 Err(err) => {
-                    if let Some(limit) = timeout {
-                        if start.elapsed() >= limit {
-                            return Err(RunnerError::RtstParse(err));
+                    if !initialized {
+                        if let Some(limit) = progress_deadline {
+                            if last_progress.elapsed() >= limit {
+                                return Err(RunnerError::ProtocolInit { source: err });
+                            }
                         }
+                        if let Some(limit) = timeout {
+                            if start.elapsed() >= limit {
+                                return Err(RunnerError::RtstParse(err));
+                            }
+                        }
+                    } else {
+                        return Err(RunnerError::RtstParse(err));
                     }
                     thread::sleep(self.config.poll_delay);
                     continue;
                 }
             };
+            if !initialized {
+                initialized = true;
+                last_progress = Instant::now();
+            }
+            if header.write_pos() != last_wpos {
+                last_wpos = header.write_pos();
+                last_progress = Instant::now();
+            } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state()) {
+                last_progress = Instant::now();
+            }
+            last_header = Some(header);
             if header.state().is_terminal() {
                 break;
             }
@@ -249,11 +335,34 @@ impl Ultimate64Backend {
             }
             thread::sleep(self.config.poll_delay);
         }
-        let rtst = client.read_memory(layout.address, layout.span)?;
+        let rtst = self.retry_transport(
+            || client.read_memory(layout.address, layout.span),
+            cfg.transport_retries,
+        )?;
         Ok(ExecutionOutput {
             rtst_region: rtst,
             cycles: 0,
         })
+    }
+
+    fn retry_transport<T, F>(&self, mut op: F, retries: u32) -> Result<T, RunnerError>
+    where
+        F: FnMut() -> Result<T, RunnerError>,
+    {
+        let mut attempts = 0;
+        loop {
+            match op() {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    if matches!(err, RunnerError::Ultimate64Error { .. }) && attempts < retries {
+                        attempts += 1;
+                        thread::sleep(self.config.poll_delay);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 }
 
@@ -351,6 +460,26 @@ impl Mega65Backend {
         Self { config }
     }
 
+    fn retry_transport<T, F>(&self, mut op: F, retries: u32) -> Result<T, RunnerError>
+    where
+        F: FnMut() -> Result<T, RunnerError>,
+    {
+        let mut attempts = 0;
+        loop {
+            match op() {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    if matches!(err, RunnerError::Mega65Error { .. }) && attempts < retries {
+                        attempts += 1;
+                        thread::sleep(self.config.poll_delay);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
     fn execute(&self, prg: &[u8], cfg: ExecutionConfig) -> Result<ExecutionOutput, RunnerError> {
         let layout = match cfg.target {
             TargetKind::Cross465 => BASE_LAYOUT_CROSS465,
@@ -368,30 +497,75 @@ impl Mega65Backend {
             })?;
         let temp_path = temp_prg.into_temp_path();
         let client = Mega65Client::new(&self.config);
-        let run_result = client.run_program(temp_path.as_ref());
+        self.retry_transport(
+            || client.run_program(temp_path.as_ref()),
+            cfg.transport_retries,
+        )?;
         let _ = temp_path.close();
-        run_result?;
 
         let timeout = if cfg.timeout_ms == 0 {
             None
         } else {
             Some(Duration::from_millis(cfg.timeout_ms))
         };
+        let progress_deadline = if cfg.progress_timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(cfg.progress_timeout_ms))
+        };
+        let mut last_progress = Instant::now();
+        let mut initialized = false;
+        let mut last_header: Option<Header> = None;
+        let mut last_wpos: u16 = 0;
         let start = Instant::now();
         loop {
-            let header_bytes = client.read_memory(layout.address, HEADER_LEN)?;
+            if initialized {
+                if let Some(limit) = progress_deadline {
+                    if last_progress.elapsed() >= limit {
+                        return Err(RunnerError::NoProgress {
+                            state: last_header.as_ref().map(|h| h.state()),
+                            wpos: last_wpos,
+                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
+                        });
+                    }
+                }
+            }
+            let header_bytes = self.retry_transport(
+                || client.read_memory(layout.address, HEADER_LEN),
+                cfg.transport_retries,
+            )?;
             let header = match Header::parse(&header_bytes) {
                 Ok(header) => header,
                 Err(err) => {
-                    if let Some(limit) = timeout {
-                        if start.elapsed() >= limit {
-                            return Err(RunnerError::RtstParse(err));
+                    if !initialized {
+                        if let Some(limit) = progress_deadline {
+                            if last_progress.elapsed() >= limit {
+                                return Err(RunnerError::ProtocolInit { source: err });
+                            }
                         }
+                        if let Some(limit) = timeout {
+                            if start.elapsed() >= limit {
+                                return Err(RunnerError::RtstParse(err));
+                            }
+                        }
+                    } else {
+                        return Err(RunnerError::RtstParse(err));
                     }
                     thread::sleep(self.config.poll_delay);
                     continue;
                 }
             };
+            if !initialized {
+                initialized = true;
+                last_progress = Instant::now();
+            }
+            if header.write_pos() != last_wpos {
+                last_wpos = header.write_pos();
+                last_progress = Instant::now();
+            } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state()) {
+                last_progress = Instant::now();
+            }
+            last_header = Some(header);
             if header.state().is_terminal() {
                 break;
             }
@@ -407,7 +581,10 @@ impl Mega65Backend {
             }
             thread::sleep(self.config.poll_delay);
         }
-        let rtst = client.read_memory(layout.address, layout.span)?;
+        let rtst = self.retry_transport(
+            || client.read_memory(layout.address, layout.span),
+            cfg.transport_retries,
+        )?;
         Ok(ExecutionOutput {
             rtst_region: rtst,
             cycles: 0,
@@ -715,6 +892,8 @@ mod tests {
                 ExecutionConfig {
                     target: TargetKind::Cross465,
                     timeout_ms: 5_000,
+                    progress_timeout_ms: 500,
+                    transport_retries: 3,
                 },
             )
             .expect("cross backend should execute sample");

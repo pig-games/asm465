@@ -424,6 +424,7 @@ mod tests {
             asserts: Vec::new(),
             actuals,
             actual_groups: groups,
+            metrics: None,
         }
     }
 
