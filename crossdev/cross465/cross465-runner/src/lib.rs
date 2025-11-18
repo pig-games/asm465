@@ -9,7 +9,7 @@ mod report;
 
 pub use asmtest::{run_asm6502_case, AsmTestBuilder, AsmTestResult};
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
-pub use catalog::{CaseSource, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry};
+pub use catalog::{CaseSource, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, CiRemoteFailure};
 pub use executor::{
     backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
     TargetBackend, TargetKind, Ultimate64Backend,

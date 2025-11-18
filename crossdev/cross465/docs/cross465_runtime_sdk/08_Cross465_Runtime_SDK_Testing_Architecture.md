@@ -238,13 +238,31 @@ include = [
 ]
 define = { PLATFORM = "cross465" }
 tass_args = ["-Wall"]
+remote_failure = "error"
 
 [ci.matrix.ultimate64]
 personalities = []
+include = [
+  "native/src/include",
+  "native/src/platform/ultimate64/include"
+]
+tass_args = ["-DREMOTE"]
+remote_failure = "warn"
+
+[ci.matrix.ultimate64.define]
+FEATURE = "1"
 
 [ci.matrix.ultimate64.endpoint]
 host = "192.168.0.64"
 port = 6510
+
+[ci.matrix.mega65]
+personalities = ["modern-retro"]
+include = [
+  "native/src/include",
+  "native/src/platform/mega65/include"
+]
+tass_args = ["-Wall"]
 ```
 
 With that in place CI jobs can query the catalog (for filtering) and then rely on `--ci-matrix` to execute every declared combo sequentially. To build ad-hoc case lists:
@@ -255,6 +273,7 @@ With that in place CI jobs can query the catalog (for filtering) and then rely o
 > - `include` &rarr; extra `-I` paths for 64tass (relative to the workspace root).
 > - `define` &rarr; `-D KEY:=VALUE` pairs (TOML table syntax keeps them organized).
 > - `tass_args` &rarr; additional raw arguments passed to 64tass.
+> - `remote_failure` &rarr; how to treat transport errors when the target is unreachable (`"error"` or `"warn"`).
 > - `endpoint` &rarr; per-target connection details (currently IP/port for Ultimate64).
 >
 > With those settings in the catalog, you no longer need to pass `--include`, `--define`, or remote

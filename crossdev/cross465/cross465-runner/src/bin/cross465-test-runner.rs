@@ -14,8 +14,8 @@ use serde::Serialize;
 /// exercised outside of cargo tests.
 use cross465_runner::{
     default_personality_for_target, list_cases, run_cases, CaseFilter, CaseReport, CaseSource,
-    CaseStatus, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, RunOptions, RunReport, RunSummary,
-    RunnerConfig, RunnerError, TargetKind,
+    CaseStatus, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, CiRemoteFailure, RunOptions,
+    RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,
 };
 
 fn main() -> Result<()> {
@@ -139,6 +139,10 @@ fn main() -> Result<()> {
                 for entry in matrix_entries {
                     let target = entry.target;
                     let resolved_includes = resolve_include_paths(&workspace, &entry.includes);
+                    let entry_policy = entry
+                        .remote_failure
+                        .map(RemoteFailurePolicy::from)
+                        .unwrap_or(cli.remote_failure);
                     for personality in entry.personalities.iter().cloned() {
                         let label = describe_personality(target, personality.as_deref());
                         if cli.format == FormatArg::Text {
@@ -158,40 +162,66 @@ fn main() -> Result<()> {
                         opts.extra_defines.extend(entry.defines.iter().cloned());
                         opts.tass_args.extend(entry.tass_args.iter().cloned());
                         let start = Instant::now();
-                        let report = run_cases(&config, &filter, &opts).map_err(to_anyhow)?;
-                        render_for_format(
-                            cli.format,
-                            &report,
-                            opts.target,
-                            &label,
-                            start.elapsed(),
-                        )?;
-                        total_failed += report.summary.failed;
+                        match run_cases(&config, &filter, &opts) {
+                            Ok(report) => {
+                                render_for_format(
+                                    cli.format,
+                                    &report,
+                                    opts.target,
+                                    &label,
+                                    start.elapsed(),
+                                )?;
+                                total_failed += report.summary.failed;
+                            }
+                            Err(err) => {
+                                if downgrade_remote_failure(entry_policy, &err) {
+                                    warn_remote_failure(opts.target, &label, &err);
+                                    continue;
+                                } else {
+                                    return Err(to_anyhow(err));
+                                }
+                            }
+                        }
                     }
                 }
                 if total_failed > 0 {
                     process::exit(1);
                 }
             } else {
+                let mut entry_policy = cli.remote_failure;
                 if let Some(entry) = catalog.ci_matrix().iter().find(|ci| ci.target == target) {
                     apply_entry_overrides(&workspace, entry, &mut base_opts);
                     if let Some(endpoint) = &entry.endpoint {
                         apply_endpoint(target, endpoint);
                     }
+                    if let Some(mode) = entry.remote_failure {
+                        entry_policy = RemoteFailurePolicy::from(mode);
+                    }
                 }
-                let start = Instant::now();
-                let report = run_cases(&config, &filter, &base_opts).map_err(to_anyhow)?;
                 let label =
                     describe_personality(base_opts.target, base_opts.personality.as_deref());
-                render_for_format(
-                    cli.format,
-                    &report,
-                    base_opts.target,
-                    &label,
-                    start.elapsed(),
-                )?;
-                if report.summary.failed > 0 {
-                    process::exit(1);
+                let start = Instant::now();
+                match run_cases(&config, &filter, &base_opts) {
+                    Ok(report) => {
+                        render_for_format(
+                            cli.format,
+                            &report,
+                            base_opts.target,
+                            &label,
+                            start.elapsed(),
+                        )?;
+                        if report.summary.failed > 0 {
+                            process::exit(1);
+                        }
+                    }
+                    Err(err) => {
+                        if downgrade_remote_failure(entry_policy, &err) {
+                            warn_remote_failure(base_opts.target, &label, &err);
+                            return Ok(());
+                        } else {
+                            return Err(to_anyhow(err));
+                        }
+                    }
                 }
             }
         }
@@ -246,6 +276,8 @@ struct Cli {
     transport_retries: u32,
     #[arg(long = "log-metrics")]
     log_metrics: bool,
+    #[arg(long = "remote-failure", value_enum, default_value = "error")]
+    remote_failure: RemoteFailurePolicy,
     #[arg(long = "ultimate64-host", value_name = "HOST")]
     ultimate64_host: Option<String>,
     #[arg(long = "ultimate64-port", value_name = "PORT")]
@@ -279,6 +311,21 @@ impl From<TargetArg> for TargetKind {
 enum FormatArg {
     Text,
     Json,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+enum RemoteFailurePolicy {
+    Error,
+    Warn,
+}
+
+impl From<CiRemoteFailure> for RemoteFailurePolicy {
+    fn from(value: CiRemoteFailure) -> Self {
+        match value {
+            CiRemoteFailure::Error => RemoteFailurePolicy::Error,
+            CiRemoteFailure::Warn => RemoteFailurePolicy::Warn,
+        }
+    }
 }
 
 fn build_override_source(cli: &Cli, workspace: &Path) -> Result<Option<CaseSource>> {
@@ -478,4 +525,24 @@ fn resolve_catalog_path(workspace: &Path, cli_path: Option<&PathBuf>) -> PathBuf
         None => workspace.join("crossdev/cross465/tests/catalog.toml"),
     };
     path
+}
+
+fn downgrade_remote_failure(policy: RemoteFailurePolicy, err: &RunnerError) -> bool {
+    matches!(policy, RemoteFailurePolicy::Warn) && is_remote_transport_error(err)
+}
+
+fn is_remote_transport_error(err: &RunnerError) -> bool {
+    matches!(
+        err,
+        RunnerError::Ultimate64Error { .. } | RunnerError::Mega65Error { .. }
+    )
+}
+
+fn warn_remote_failure(target: TargetKind, personality: &str, err: &RunnerError) {
+    eprintln!(
+        "warning: remote run skipped for target={} personality={} => {}",
+        target.to_string(),
+        personality,
+        err
+    );
 }

@@ -61,6 +61,7 @@ pub struct CiMatrixEntry {
     pub defines: Vec<(String, String)>,
     pub tass_args: Vec<String>,
     pub endpoint: Option<CiEndpoint>,
+    pub remote_failure: Option<CiRemoteFailure>,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +139,7 @@ impl Catalog {
                     defines,
                     tass_args: entry.tass_args,
                     endpoint,
+                    remote_failure: entry.remote_failure,
                 });
             }
         }
@@ -209,12 +211,21 @@ struct CiMatrixEntryToml {
     tass_args: Vec<String>,
     #[serde(default)]
     endpoint: Option<CiEndpointToml>,
+    #[serde(default)]
+    remote_failure: Option<CiRemoteFailure>,
 }
 
 #[derive(Deserialize)]
 struct CiEndpointToml {
     host: Option<String>,
     port: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CiRemoteFailure {
+    Error,
+    Warn,
 }
 
 #[cfg(test)]
@@ -304,6 +315,7 @@ personalities = []
 personalities = []
 include = ["native/src/include"]
 tass_args = ["-DFAST"]
+remote_failure = "warn"
 
 [ci.matrix.ultimate64.define]
 FEATURE = "1"
@@ -324,6 +336,7 @@ port = 6510
         let endpoint = entry.endpoint.as_ref().expect("endpoint");
         assert_eq!(endpoint.host.as_deref(), Some("192.168.0.64"));
         assert_eq!(endpoint.port, Some(6510));
+        assert_eq!(entry.remote_failure, Some(CiRemoteFailure::Warn));
     }
 
     #[test]

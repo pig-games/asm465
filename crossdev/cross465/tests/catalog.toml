@@ -18,6 +18,9 @@ include = [
   "native/src/include",
   "native/src/platform/cross465/include"
 ]
+define = { PLATFORM = "cross465" }
+tass_args = ["-Wall"]
+remote_failure = "error"
 
 [ci.matrix.ultimate64]
 personalities = []
@@ -25,7 +28,20 @@ include = [
   "native/src/include",
   "native/src/platform/ultimate64/include"
 ]
+tass_args = ["-DREMOTE"]
+remote_failure = "warn"
+
+[ci.matrix.ultimate64.define]
+FEATURE = "1"
 
 [ci.matrix.ultimate64.endpoint]
 host = "192.168.0.64"
 port = 6510
+
+[ci.matrix.mega65]
+personalities = ["modern-retro"]
+include = [
+  "native/src/include",
+  "native/src/platform/mega65/include"
+]
+tass_args = ["-Wall"]
