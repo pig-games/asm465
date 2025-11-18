@@ -203,7 +203,83 @@ For convenience, the crate also exposes top-level helpers:
   call `expect_eq(&out, "scroll_x", 0x12)?;` directly.
 ---
 
-## 7. Errors and Comparison Failures
+## 7. Authoring & Workflow Guide
+
+### 7.1 Including the RTST Macros
+
+- Every case must include `native/src/include/test_rtst.h` (aliased as `test_rtst.inc` in the 64tass
+  include path). Use `.include "test_rtst.inc"` at the top of the file or inline string. The header
+  defines the `RTST_BEGIN/END`, `TEST_CASE_*`, `LOG_*`, and `.ctest.*` helpers shown earlier.
+- Declare a `RTST_BASE` symbol (e.g., `$C000` for Cross465/Ultimate64) before
+  invoking the macros. This keeps assembler diagnostics friendly.
+- When authoring strings, prefer `.null` so the runner can parse names exactly once.
+
+### 7.2 Host-Expect & `asm6502_test!`
+
+- Use `asm6502_test!` inside Rust unit tests to assemble inline snippets or `.s` files. The builder
+  mirrors all CLI flags (target, personality, timeout, seed, extra includes) and returns a `Result`
+  you can feed to `assert_case_ok`, `expect_eq`, etc.
+- Inline tests automatically dump PRG/RTST artifacts under `target/cross465-runner/<target>/<case>`,
+  so you can inspect the raw stream.
+- For CLI workflows, `cross465-test-runner --mode run --format json --artifacts` provides the same
+  data; the JSON mirrors what `asm6502_test!` exposes programmatically.
+
+### 7.3 Fixture Workflow
+
+- Enable fixture checking via `--fixtures` (uses `tests/fixtures/<target>` by default) and refresh
+  goldens with `--update-fixtures`. The runner writes one JSON file per case containing `scalars`,
+  `hashes`, `memories`, `registers`, and `timings`.
+- The same flags are available in `AsmTestBuilder` (`builder.fixtures(...).update_fixtures(true)`).
+  Use them whenever you add new ACT_* records so developers get immediate, cargo-friendly diffs.
+- Fixture files are regular JSON; review them in PRs just like you would review snapshots.
+
+### 7.4 Backend Configuration Cheat Sheet
+
+- Cross465 (emulator): no extra configuration required. Use `--personality modern-retro` (default) or
+  `c64-compat` when developing compatibility suites.
+- Ultimate64: configure `CROSS465_ULTIMATE64_HOST` / `PORT` (or `--ultimate64-host/--ultimate64-port`),
+  the REST timeouts (`*_POLL_DELAY_MS`, `*_CONNECT_TIMEOUT_MS`, `*_READ_TIMEOUT_MS`), and optionally
+  a `[ci.matrix.ultimate64].remote_failure = "warn"` entry to skip runs when the hardware is offline.
+- MEGA65: set `CROSS465_MEGA65_M65_PATH`, `*_SERIAL`, `*_BAUD`, and `*_RETRIES`. Catalog entries can
+  supply include paths for MEGA65-specific headers.
+- All backends honor catalog-provided include paths (`include`), defines (`define`), extra 64tass args
+  (`tass_args`), and the workspace root (`workspace = "../../.."`) so local and CI runs stay in sync.
+
+## 8. Troubleshooting & Isolation
+
+### 8.1 64tass / Include Errors
+
+- “not defined symbol `rtst`” or “can't open file `test_rtst.h`” indicates the header wasn’t found.
+  Ensure your catalog entry includes `native/src/include` and `native/src/platform/<target>/include`
+  (already present in the sample catalog), or pass additional `--include` flags/`builder.include(...)`.
+- If 64tass itself isn’t on PATH, pass `--tass /path/to/64tass` or set `TASS=...` when invoking the
+  CLI. The runner prints the assembler stdout/stderr on failure.
+
+### 8.2 Backend Connectivity Issues
+
+- Ultimate64/Mega65 failures throw `ultimate64 backend error: ...` or `mega65 backend error: ...`.
+  Use the new `--remote-failure warn` flag (or `[ci.matrix.<target>].remote_failure = "warn"`) to log
+  a warning and skip unreachable hardware while you iterate locally. Leave it at `error` in CI.
+- Regardless of the policy, the runner always writes artifacts (`program.prg`, `rtst.bin`,
+  `meta.json`) so you can inspect partial runs or send the files to someone with hardware access.
+
+### 8.3 Fixture & JSON Diffs
+
+- When fixture checks fail, the runner prints a diff-style message (`fixture mismatch [scalar] ...`)
+  and points at the JSON file under `tests/fixtures/...`. Re-run with `--update-fixtures` only after
+  verifying the new values are expected.
+- The JSON output (`--format json`) mirrors the CLI summary and includes per-case `metrics`, `logs`,
+  and actuals. It’s useful for debugging automation before we wire CI.
+
+### 8.4 Isolation Best Practices
+
+- Each RTST case should clean up after itself: disable IRQs when testing critical sections, restore
+  zero-page state, and avoid writing outside the RTST buffer unless you log the mutation as ACT_MEM.
+- Use deterministic seeds (`--seed` / `AsmTestBuilder::seed`) to make flaky tests reproducible.
+- Prefer `.ctest.begin` / `.ctest.end` labels (from `test_rtst.h`) when authoring multi-assert cases;
+  they enforce a consistent structure and make aggregated logs easier to read.
+
+## 9. Errors and Comparison Failures
 
 | Error | Detection | Runner response |
 |-------|------------|-----------------|
@@ -217,7 +293,7 @@ When artifacts are enabled (default), every failure writes `target/cross465-runn
 
 ---
 
-## 8. CI Matrix and Cross‑Target Validation
+## 10. CI Matrix and Cross‑Target Validation
 
 ### 8.1 Matrix Inputs
 
@@ -292,7 +368,7 @@ With the generated JSON you can pass `--case case::name` repeatedly (or rely on 
 “run everything” behavior). For discovery-only jobs use `--mode list --format json` and feed
 the output straight into Codex or CI dashboards.
 
-### 8.3 CI Integration
+### 10.3 CI Integration
 
 Workflows (GitHub Actions, Buildkite, etc.) can shell out to the runner with `--ci-matrix` so every declared target/personality combination is exercised automatically. Capture the JSON output or the artifact directory (`target/cross465-runner/…`) to feed dashboards or log archives. Today this same JSON output and the PRG/RTST artifacts are already useful for local/manual workflows; future automation can consume the same files when we decide to wire them into CI.
 
@@ -300,7 +376,7 @@ Extend the matrix with `mega65` for hardware labs, and add a weekly job that inv
 
 ---
 
-## 9. Example Flow
+## 11. Example Flow
 
 ```text
 [6502 test] --> RTST (ACT_KV: scroll_x=0x123, ACT_HASH: fb_hash=deadbeef)
@@ -317,7 +393,7 @@ print cargo output:
 
 ---
 
-## 10. Summary
+## 12. Summary
 
 The unified testing architecture now supports **two‑way validation**:
 - Pure 6502 asserts for self‑contained tests and in‑editor use.

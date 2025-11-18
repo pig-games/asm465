@@ -39,6 +39,6 @@
 - [x] Teach the runner to emit JSON summaries and persist PRG/RTST artifacts so local/manual runs capture the data CI would need.
 
 ## 8. Documentation and Onboarding
-- [ ] Update `docs/cross465_runtime_sdk` with authoring guides covering RTST macros, Host-Expect usage, fixture updates, and backend configuration.
-- [ ] Provide troubleshooting FAQs for assembler errors, backend connectivity issues, and expectation diffs.
-- [ ] Highlight isolation practices (IRQ masking, setup/teardown) and pointers to CI outputs for diagnostics.
+- [x] Update `docs/cross465_runtime_sdk` with authoring guides covering RTST macros, Host-Expect usage, fixture updates, and backend configuration.
+- [x] Provide troubleshooting FAQs for assembler errors, backend connectivity issues, and expectation diffs.
+- [x] Highlight isolation practices (IRQ masking, setup/teardown) and pointers to CI outputs for diagnostics.
