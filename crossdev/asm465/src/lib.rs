@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bevy::ecs::system::NonSend;
 use bevy::input::gamepad::{
@@ -62,6 +62,7 @@ use base64::Engine;
 use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
+use instant::Instant;
 use runtime_sdk::rtst::{Header, State, HEADER_LEN};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "native-service")]

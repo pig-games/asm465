@@ -308,6 +308,7 @@ dependencies = [
  "futures",
  "getrandom 0.3.3",
  "gloo-net",
+ "instant",
  "js-sys",
  "log",
  "rfd",
