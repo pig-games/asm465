@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::ecs::system::NonSend;
+use bevy::ecs::system::{NonSend, NonSendMut};
 use bevy::input::gamepad::{
     Gamepad, GamepadAxisChangedEvent, GamepadAxisType, GamepadButtonChangedEvent,
     GamepadButtonType, GamepadConnection, GamepadConnectionEvent, GamepadEvent,
@@ -49,6 +49,8 @@ use video_backend::VideoOverlaySignals;
 
 mod cpu_worker;
 mod video_backend;
+#[cfg(target_arch = "wasm32")]
+use self::web::WebSocketBridgeManager;
 use cpu_worker::{
     CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs, PersonalitySelection,
 };
@@ -2369,7 +2371,7 @@ fn ui_system(
     keyboard_tracker: Res<KeyboardTracker>,
     bindings: Option<Res<InterruptBindings>>,
     #[cfg(feature = "native-service")] service_listener: Option<Res<ServiceListener>>,
-    #[cfg(target_arch = "wasm32")] web_service: Option<NonSend<web::WebSocketBridge>>,
+    #[cfg(target_arch = "wasm32")] mut web_service: Option<NonSendMut<web::WebSocketBridgeManager>>,
 ) {
     #[cfg(feature = "native-service")]
     if let Some(listener) = service_listener {
@@ -2385,16 +2387,19 @@ fn ui_system(
     let mut wasm_bridge_connected = false;
 
     #[cfg(target_arch = "wasm32")]
-    if let Some(service) = web_service {
-        wasm_bridge_connected = true;
-        for pending in service.drain_commands() {
-            let mut response = emulator.handle_service_command(pending.command);
-            ui_state.status = Some(response.message.clone());
-            if let Some(id) = pending.bridge_id {
-                response.bridge_id = Some(id);
+    if let Some(mut manager) = web_service.as_deref_mut() {
+        manager.ensure_connected();
+        if let Some(service) = manager.bridge_mut() {
+            wasm_bridge_connected = true;
+            for pending in service.drain_commands() {
+                let mut response = emulator.handle_service_command(pending.command);
+                ui_state.status = Some(response.message.clone());
+                if let Some(id) = pending.bridge_id {
+                    response.bridge_id = Some(id);
+                }
+                service.send_response(response);
+                controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
             }
-            service.send_response(response);
-            controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
     }
 

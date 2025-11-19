@@ -846,7 +846,12 @@ impl Mega65Client {
     }
 
     fn run_command(&self, mut cmd: Command, action: &str) -> Result<(), RunnerError> {
-        let output = cmd.output().map_err(RunnerError::Spawn)?;
+        let output = cmd.output().map_err(|err| RunnerError::Mega65Error {
+            message: format!(
+                "failed to invoke m65 (path: {:?}): {err}. Set CROSS465_MEGA65_M65_PATH to the CLI location",
+                self.config.m65_path
+            ),
+        })?;
         if output.status.success() {
             return Ok(());
         }

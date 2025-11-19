@@ -11,11 +11,13 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use bevy::prelude::App;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
+use instant::Instant;
 use js_sys::{Array, Function, Promise, Reflect, Uint8Array};
 use rfd::AsyncFileDialog;
 use serde::Deserialize;
@@ -134,6 +136,71 @@ impl WebSocketBridge {
     }
 }
 
+pub struct WebSocketBridgeManager {
+    urls: Vec<String>,
+    bridge: Option<WebSocketBridge>,
+    next_retry: Instant,
+    retry_delay: Duration,
+}
+
+impl WebSocketBridgeManager {
+    pub fn with_bridge(urls: Vec<String>, bridge: WebSocketBridge) -> Self {
+        Self {
+            urls,
+            bridge: Some(bridge),
+            next_retry: Instant::now(),
+            retry_delay: Duration::from_secs(2),
+        }
+    }
+
+    pub fn disconnected(urls: Vec<String>) -> Self {
+        Self {
+            urls,
+            bridge: None,
+            next_retry: Instant::now(),
+            retry_delay: Duration::from_secs(2),
+        }
+    }
+
+    pub fn ensure_connected(&mut self) {
+        if self.bridge.is_some() {
+            return;
+        }
+        if Instant::now() < self.next_retry {
+            return;
+        }
+        for url in &self.urls {
+            match WebSocketBridge::connect(url) {
+                Ok(bridge) => {
+                    log::info!("Bridge connected ({url})");
+                    self.bridge = Some(bridge);
+                    break;
+                }
+                Err(err) => {
+                    log::warn!("Bridge connection failed for {url}: {err:?}");
+                }
+            }
+        }
+        self.next_retry = Instant::now() + self.retry_delay;
+    }
+
+    pub fn bridge(&self) -> Option<&WebSocketBridge> {
+        self.bridge.as_ref()
+    }
+
+    pub fn bridge_mut(&mut self) -> Option<&mut WebSocketBridge> {
+        self.bridge.as_mut()
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.bridge.is_some()
+    }
+
+    pub fn urls(&self) -> &[String] {
+        &self.urls
+    }
+}
+
 /// Install browser-specific resources (file picker + websocket bridge) into
 /// the Bevy app, returning a status message that can be displayed in the UI.
 pub fn configure_app(app: &mut App) -> Option<String> {
@@ -154,12 +221,14 @@ pub fn configure_app(app: &mut App) -> Option<String> {
     }
 
     let mut last_error: Option<String> = None;
-    for url in urls {
+    let mut manager = WebSocketBridgeManager::disconnected(urls.clone());
+    for url in &urls {
         match WebSocketBridge::connect(&url) {
             Ok(service) => {
                 let message = format!("Bridge connected ({url})");
                 log::info!("{message}");
-                app.insert_non_send_resource(service);
+                manager = WebSocketBridgeManager::with_bridge(urls.clone(), service);
+                app.insert_non_send_resource(manager);
                 extend_status(&mut status, message);
                 return status;
             }
@@ -170,11 +239,10 @@ pub fn configure_app(app: &mut App) -> Option<String> {
             }
         }
     }
-
+    app.insert_non_send_resource(manager);
     if let Some(message) = last_error {
         extend_status(&mut status, message);
     }
-
     status
 }
 

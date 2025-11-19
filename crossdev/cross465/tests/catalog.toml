@@ -22,6 +22,24 @@ define = { PLATFORM = "cross465" }
 tass_args = ["-Wall"]
 remote_failure = "error"
 
+[ci.matrix.asm465]
+personalities = ["modern-retro"]
+include = [
+  "native/src/include",
+  "native/src/platform/cross465/include"
+]
+tass_args = ["-Wall"]
+remote_failure = "warn"
+
+[ci.matrix."asm465-wasm"]
+personalities = ["modern-retro"]
+include = [
+  "native/src/include",
+  "native/src/platform/cross465/include"
+]
+tass_args = ["-Wall"]
+remote_failure = "warn"
+
 [ci.matrix.ultimate64]
 personalities = []
 include = [

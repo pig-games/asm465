@@ -43,6 +43,10 @@ ASM465_NATIVE_PID_FILE ?= native/build/cross465/asm465_native.pid
 ASM465_NATIVE_LOG ?= native/build/cross465/asm465_native.log
 ASM465_BRIDGE_PID_FILE ?= native/build/cross465/asm465_bridge.pid
 ASM465_BRIDGE_LOG ?= native/build/cross465/asm465_bridge.log
+WASM_HTTP_HOST ?= 127.0.0.1
+WASM_HTTP_PORT ?= 8000
+WASM_HTTP_PID_FILE ?= native/build/wasm_http_server.pid
+WASM_HTTP_LOG ?= native/build/wasm_http_server.log
 
 ifeq ($(origin CROSS465_MODE),undefined)
   ifeq ($(TARGET),cross465)
@@ -131,6 +135,33 @@ define STOP_ASM465_SERVICE
 	fi
 endef
 
+define ENSURE_WASM_HTTP_SERVER
+        @host="$(WASM_HTTP_HOST)"; \
+        port="$(WASM_HTTP_PORT)"; \
+        pid_file="$(WASM_HTTP_PID_FILE)"; \
+        if [ -f "$$pid_file" ] && kill -0 $$(cat "$$pid_file") 2>/dev/null; then \
+                :; \
+        else \
+                mkdir -p $$(dirname "$$pid_file"); \
+                echo ">> Starting wasm HTTP server on $$host:$$port"; \
+                cd crossdev/asm465-wasm/web-dist && \
+                        nohup python3 -m http.server $$port --bind $$host >$(WASM_HTTP_LOG) 2>&1 & \
+                        echo $$! > "$$pid_file"; \
+                sleep $(CROSS465_WAIT); \
+        fi
+endef
+
+define STOP_WASM_HTTP_SERVER
+	if [ -f $(WASM_HTTP_PID_FILE) ]; then \
+		PID=$$(cat $(WASM_HTTP_PID_FILE)); \
+		if kill -0 $$PID 2>/dev/null; then \
+			echo ">> Stopping wasm HTTP server ($$PID)"; \
+			kill $$PID >/dev/null 2>&1 || true; \
+		fi; \
+		rm -f $(WASM_HTTP_PID_FILE); \
+	fi
+endef
+
 # Per-target output dir (watch out for tabs here!)
 OUTDIR := native/build/$(TARGET)
 
@@ -181,92 +212,101 @@ CORE_SRC = \
         native/src/screen.s \
         native/src/util.s
 
-PTEST_SRC = native/src/tests/parsertest.s native/src/parser.s
-STEST_SRC = native/src/tests/screentest.s
-DTEST_SRC = native/src/tests/debugtest.s
-UTEST_SRC = native/src/unittest.s native/src/tests/unittest.s
+# ---- RTST test runner shortcuts --------------------------------------------
+RTST_TARGET ?= cross465
+RUNNER_ARGS ?=
+RUNNER_INCLUDE_TARGETS ?=
+RUNNER_EXCLUDE_TARGETS ?=
+USE_FIXTURES ?= true
+UPDATE_FIXTURES ?=
+FIXTURES ?=
 
-# ---- Build targets ---------------------------------------------------------
-parsertest: $(PTEST_SRC) $(CORE_SRC) | $(OUTDIR)
-	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(PTEST_SRC) \
-		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET_ALIAS)),.prg) \
-		--list $(OUTDIR)/$@.lst \
-		--labels=$(OUTDIR)/$@.lbl
-
-screentest: $(STEST_SRC) $(CORE_SRC) | $(OUTDIR)
-	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(STEST_SRC) \
-		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET_ALIAS)),.prg) \
-		--list $(OUTDIR)/$@.lst \
-		--labels=$(OUTDIR)/$@.lbl
-
-debugtest: $(DTEST_SRC) $(CORE_SRC) | $(OUTDIR)
-	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(DTEST_SRC) \
-		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET_ALIAS)),.prg) \
-		--list $(OUTDIR)/$@.lst \
-		--labels=$(OUTDIR)/$@.lbl
-
-unittest: $(UTEST_SRC) $(CORE_SRC) | $(OUTDIR)
-	64tass -D DEBUG_:=true $(OPTS) $(CORE_SRC) $(UTEST_SRC) \
-		-o $(OUTDIR)/$@$(if $(filter cross465,$(TARGET_ALIAS)),.prg) \
-		--list $(OUTDIR)/$@.lst \
-		--labels=$(OUTDIR)/$@.lbl
-
-all: parsertest screentest debugtest unittest
-
-# ---- Run / Upload (kept separate) -----------------------------------------
-run_%: %
-ifeq ($(TARGET),mega65)
-	etherload.osx --quiet -r $(OUTDIR)/$*
-else ifeq ($(TARGET),ultimate64)
-	curl --http1.1 -s -X POST http://$(ULTIMATE_IP)/v1/runners:run_prg \
-		-H "Content-Type: application/octet-stream" \
-		-H "Expect:" \
-		-H "Content-Length: $(shell stat -f%z $(OUTDIR)/$*)" \
-		--data-binary @$(OUTDIR)/$*
-else ifeq ($(TARGET_ALIAS),cross465)
-	$(ENSURE_ASM465_SERVICE)
-	$(PYTHON) native/tools/send_prg.py "$(OUTDIR)/$*.prg" "$(ASM465_SEND_PORT)" "$(CROSS465_MAX_CYCLES)" --host "$(ASM465_SEND_HOST)" --embed --name "$*"
+ifdef CASE
+RUNNER_CASE_ARGS := $(foreach c,$(CASE),--case $(c))
 endif
 
-# Convenience wrappers (build then run)
-run_ptest:   parsertest   run_parsertest
-run_stest:   screentest   run_screentest
-run_dtest:   debugtest    run_debugtest
-run_utest:   unittest     run_unittest
+ifdef PERSONALITY
+RUNNER_PERSONALITY_ARG := --personality $(PERSONALITY)
+endif
+
+CROSS465_TEST_RUNNER = cargo run --quiet --manifest-path crossdev/cross465/Cargo.toml --bin cross465-test-runner --
+
+RUNNER_FIXTURE_ARGS :=
+ifeq ($(UPDATE_FIXTURES),true)
+RUNNER_FIXTURE_ARGS += --update-fixtures
+ifneq ($(strip $(FIXTURES)),)
+RUNNER_FIXTURE_ARGS += --fixtures $(FIXTURES)
+else
+RUNNER_FIXTURE_ARGS += --fixtures
+endif
+else
+ifneq ($(strip $(FIXTURES)),)
+RUNNER_FIXTURE_ARGS += --fixtures $(FIXTURES)
+else ifeq ($(USE_FIXTURES),true)
+RUNNER_FIXTURE_ARGS += --fixtures
+endif
+endif
+
+WASM_READY_WAIT ?= 20
+
+TEST_DEPS :=
+ifeq ($(RTST_TARGET),asm465)
+TEST_DEPS += build-asm465 build-asm465-server
+endif
+ifeq ($(RTST_TARGET),asm465-wasm)
+TEST_DEPS += build-asm465 build-asm465-server build-asm465-wasm
+endif
+
+all: test
+
+.PHONY: test
+test: $(TEST_DEPS)
+	@target="$(RTST_TARGET)"; \
+	if [ "$$target" = "asm465" ]; then \
+		$(MAKE) CROSS465_MODE=native asm465-service-start || exit $$?; \
+	elif [ "$$target" = "asm465-wasm" ]; then \
+		$(MAKE) CROSS465_MODE=bridge asm465-service-start || exit $$?; \
+		$(MAKE) ensure-wasm-http-server || exit $$?; \
+		echo ">> Waiting $(WASM_READY_WAIT)s for asm465-wasm viewer to connect at http://$(WASM_HTTP_HOST):$(WASM_HTTP_PORT)/"; \
+		sleep $(WASM_READY_WAIT); \
+	fi; \
+	$(CROSS465_TEST_RUNNER) --mode run --target $(RTST_TARGET) $(RUNNER_PERSONALITY_ARG) $(RUNNER_CASE_ARGS) $(RUNNER_FIXTURE_ARGS) $(RUNNER_ARGS); \
+	status=$$?; \
+	if [ "$$target" = "asm465" ]; then \
+		$(MAKE) asm465-service-stop; \
+	fi; \
+	if [ "$$target" = "asm465-wasm" ]; then \
+		$(MAKE) asm465-service-stop; \
+		$(MAKE) wasm-http-server-stop; \
+	fi; \
+	exit $$status
+
+.PHONY: test-ci
+test-ci: build-asm465 build-asm465-server build-asm465-wasm
+	@$(MAKE) CROSS465_MODE="native bridge" asm465-service-start || exit $$?; \
+	$(MAKE) ensure-wasm-http-server || exit $$?; \
+	echo ">> Waiting $(WASM_READY_WAIT)s for asm465-wasm viewer to connect at http://$(WASM_HTTP_HOST):$(WASM_HTTP_PORT)/"; \
+	sleep $(WASM_READY_WAIT); \
+	$(CROSS465_TEST_RUNNER) --mode run --ci-matrix $(foreach t,$(RUNNER_INCLUDE_TARGETS),--ci-target $(t)) $(foreach t,$(RUNNER_EXCLUDE_TARGETS),--ci-skip-target $(t)) $(RUNNER_FIXTURE_ARGS) $(RUNNER_ARGS); \
+	status=$$?; \
+	$(MAKE) asm465-service-stop; \
+	$(MAKE) wasm-http-server-stop; \
+	exit $$status
+
+.PHONY: ci
+ci: test-ci
+
+.PHONY: fixtures
+fixtures:
+	$(MAKE) test-ci USE_FIXTURES=true
+
+.PHONY: update-fixtures
+update-fixtures:
+	$(MAKE) test-ci USE_FIXTURES=true UPDATE_FIXTURES=true
 
 # ---- Housekeeping ----------------------------------------------------------
 clean:
 	@rm -rf native/build/*
-
-# ===== Build/Run Matrix ======================================================
-BUILD_TARGETS ?= $(VALID_TARGETS)
-PROGRAMS ?= parsertest screentest debugtest
-
-.PHONY: matrix_build
-matrix_build:
-	@echo ">> Building [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
-	@set -e; \
-	for P in $(PROGRAMS); do \
-		for T in $(BUILD_TARGETS); do \
-			$(MAKE) --no-print-directory TARGET=$$T $$P; \
-		done; \
-	done
-
-.PHONY: matrix_run
-matrix_run:
-	@echo ">> Building+Running [$(PROGRAMS)] for targets: $(BUILD_TARGETS)"
-	@set -e; \
-	for P in $(PROGRAMS); do \
-		for T in $(BUILD_TARGETS); do \
-			$(MAKE) --no-print-directory TARGET=$$T run_$$P; \
-		done; \
-		echo; \
-		if [ -z "$$NOPAUSE" ]; then \
-			read -p "Press [Enter] to continue..." dummy; \
-		fi; \
-	done
-
-ci: matrix_build matrix_run
 
 .PHONY: asm465-service-start asm465-service-stop
 asm465-service-start:
@@ -282,4 +322,21 @@ wasm:
 wasm-clean:
 	@$(MAKE) -C crossdev/asm465-wasm clean
 
-.PHONY: all clean run_% run_ptest run_stest run_dtest run_utest matrix_build matrix_run ci asm465-service-start asm465-service-stop wasm wasm-clean
+.PHONY: ensure-wasm-http-server wasm-http-server-stop
+ensure-wasm-http-server:
+	$(ENSURE_WASM_HTTP_SERVER)
+
+wasm-http-server-stop:
+	$(STOP_WASM_HTTP_SERVER)
+
+.PHONY: build-asm465 build-asm465-server build-asm465-wasm
+build-asm465:
+	cargo build --manifest-path crossdev/asm465/Cargo.toml
+
+build-asm465-server:
+	cargo build --manifest-path crossdev/asm465-server/Cargo.toml
+
+build-asm465-wasm:
+	@$(MAKE) -C crossdev/asm465-wasm build
+
+.PHONY: all clean test test-ci ci fixtures update-fixtures asm465-service-start asm465-service-stop wasm wasm-clean ensure-wasm-http-server wasm-http-server-stop build-asm465 build-asm465-server build-asm465-wasm

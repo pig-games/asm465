@@ -45,7 +45,7 @@
 
 ## 9. Asm465 / WASM Runtime Targets
 - [x] Treat the native `asm465` runtime (and its WASM build) as addressable backends for RTST, so tests that exercise graphics/audio via the emulator can run through the same cross465-test-runner pipeline.
-- [ ] Replace the Makefile-based unit test harnesses with `cross465-test-runner` once asm465/WASM targets are stable.
+- [x] Replace the Makefile-based unit test harnesses with `cross465-test-runner` once asm465/WASM targets are stable.
 
 ## 10. Console MMIO Debug Integration
 - [ ] Capture console MMIO debug streams (reads/writes, overlay screenshots) alongside RTST so `cross465-test-runner` can archive them per case.

@@ -12,3 +12,4 @@ build
 **/target
 **/web-dist
 /native/src/platform/c64os
+**/tests/fixtures/

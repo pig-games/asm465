@@ -155,7 +155,23 @@ fn main() -> Result<()> {
                 if base_opts.asm_override.is_some() {
                     bail!("--ci-matrix cannot be combined with --asm-path/--asm-inline overrides");
                 }
-                let matrix_entries = catalog.ci_matrix().to_vec();
+                let mut matrix_entries = catalog.ci_matrix().to_vec();
+                if !cli.ci_target.is_empty() {
+                    let targets: std::collections::HashSet<String> = cli
+                        .ci_target
+                        .iter()
+                        .map(|t| t.to_ascii_lowercase())
+                        .collect();
+                    matrix_entries.retain(|entry| targets.contains(entry.target.to_string()));
+                }
+                if !cli.ci_skip_target.is_empty() {
+                    let skips: std::collections::HashSet<String> = cli
+                        .ci_skip_target
+                        .iter()
+                        .map(|t| t.to_ascii_lowercase())
+                        .collect();
+                    matrix_entries.retain(|entry| !skips.contains(entry.target.to_string()));
+                }
                 if matrix_entries.is_empty() {
                     bail!("catalog does not define any [ci.matrix.<target>] entries");
                 }
@@ -202,7 +218,8 @@ fn main() -> Result<()> {
                                     warn_remote_failure(opts.target, &label, &err);
                                     continue;
                                 } else {
-                                    return Err(to_anyhow(err));
+                                    warn_remote_failure(opts.target, &label, &err);
+                                    continue;
                                 }
                             }
                         }
@@ -302,6 +319,10 @@ struct Cli {
     log_metrics: bool,
     #[arg(long = "remote-failure", value_enum, default_value = "error")]
     remote_failure: RemoteFailurePolicy,
+    #[arg(long = "ci-target", value_name = "TARGET", num_args = 1.., requires = "ci_matrix")]
+    ci_target: Vec<String>,
+    #[arg(long = "ci-skip-target", value_name = "TARGET", num_args = 1.., requires = "ci_matrix")]
+    ci_skip_target: Vec<String>,
     #[arg(long = "ultimate64-host", value_name = "HOST")]
     ultimate64_host: Option<String>,
     #[arg(long = "ultimate64-port", value_name = "PORT")]
@@ -320,7 +341,10 @@ struct Cli {
     asm465_ws_port: Option<u16>,
     #[arg(long = "asm465-max-cycles", value_name = "CYCLES")]
     asm465_max_cycles: Option<u64>,
-    #[arg(long = "asm465-keep-alive", help = "Leave auto-started asm465 runtimes alive after the run")]
+    #[arg(
+        long = "asm465-keep-alive",
+        help = "Leave auto-started asm465 runtimes alive after the run"
+    )]
     asm465_keep_alive: bool,
 }
 
