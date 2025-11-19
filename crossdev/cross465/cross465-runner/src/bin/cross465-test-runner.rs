@@ -218,8 +218,7 @@ fn main() -> Result<()> {
                                     warn_remote_failure(opts.target, &label, &err);
                                     continue;
                                 } else {
-                                    warn_remote_failure(opts.target, &label, &err);
-                                    continue;
+                                    return Err(to_anyhow(err));
                                 }
                             }
                         }

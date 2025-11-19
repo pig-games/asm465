@@ -51,3 +51,4 @@
 - [ ] Capture console MMIO debug streams (reads/writes, overlay screenshots) alongside RTST so `cross465-test-runner` can archive them per case.
 - [ ] Provide host-side parsers/expectation helpers for the MMIO trace data (diffing overlays, asserting register access patterns).
 - [ ] Surface new CLI flags/documentation so developers can enable MMIO capture locally and in CI, keeping artifact formats aligned with the rest of the cross465-test-runner outputs.
+- [ ] Migrate 'old' test cases (debugtest, screentest, parsertest) to the new unit testing framework.
