@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bevy::ecs::system::NonSend;
 use bevy::input::gamepad::{
@@ -62,6 +62,7 @@ use base64::Engine;
 use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
+use runtime_sdk::rtst::{Header, State, HEADER_LEN};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "native-service")]
 use std::fs;
@@ -629,6 +630,14 @@ pub struct StartupConfig {
     pub source: ProgramSource,
     pub max_cycles: u64,
     pub start: Option<u16>,
+    pub rtst: Option<RtstMonitorConfig>,
+    pub progress_timeout_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RtstMonitorConfig {
+    pub base: u32,
+    pub span: u32,
 }
 
 /// Details about a bounded CPU run triggered by the host.
@@ -644,13 +653,25 @@ pub enum ServiceCommand {
         source: ProgramSource,
         max_cycles: Option<u64>,
         start: Option<u16>,
+        rtst: Option<RtstMonitorConfig>,
+        progress_timeout_ms: Option<u64>,
+    },
+    ReadMemory {
+        address: u32,
+        length: u32,
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ServiceResponseMessage {
     pub status: ServiceStatus,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bridge_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycles: Option<u64>,
 }
 
 impl ServiceResponseMessage {
@@ -658,6 +679,19 @@ impl ServiceResponseMessage {
         Self {
             status: ServiceStatus::Ok,
             message: message.into(),
+            data: None,
+            bridge_id: None,
+            cycles: None,
+        }
+    }
+
+    pub fn ok_with_data(message: impl Into<String>, bytes: &[u8]) -> Self {
+        Self {
+            status: ServiceStatus::Ok,
+            message: message.into(),
+            data: Some(BASE64_STANDARD.encode(bytes)),
+            bridge_id: None,
+            cycles: None,
         }
     }
 
@@ -665,11 +699,14 @@ impl ServiceResponseMessage {
         Self {
             status: ServiceStatus::Error,
             message: message.into(),
+            data: None,
+            bridge_id: None,
+            cycles: None,
         }
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceStatus {
     Ok,
@@ -685,6 +722,12 @@ pub enum ServiceRequestPayload {
         max_cycles: Option<u64>,
         #[serde(default)]
         start: Option<u16>,
+        #[serde(default)]
+        rtst_base: Option<u32>,
+        #[serde(default)]
+        rtst_span: Option<u32>,
+        #[serde(default)]
+        progress_timeout_ms: Option<u64>,
     },
     RunPrgData {
         data: String,
@@ -694,6 +737,16 @@ pub enum ServiceRequestPayload {
         max_cycles: Option<u64>,
         #[serde(default)]
         start: Option<u16>,
+        #[serde(default)]
+        rtst_base: Option<u32>,
+        #[serde(default)]
+        rtst_span: Option<u32>,
+        #[serde(default)]
+        progress_timeout_ms: Option<u64>,
+    },
+    ReadMem {
+        address: u32,
+        length: u32,
     },
 }
 
@@ -704,14 +757,20 @@ impl ServiceRequestPayload {
                 path,
                 max_cycles,
                 start,
+                rtst_base,
+                rtst_span,
+                progress_timeout_ms,
             } => {
                 if path.is_empty() {
                     return Err("run_prg requires a non-empty path".into());
                 }
+                let rtst = parse_rtst_config(rtst_base, rtst_span)?;
                 Ok(ServiceCommand::RunProgram {
                     source: ProgramSource::File(PathBuf::from(path)),
                     max_cycles,
                     start,
+                    rtst,
+                    progress_timeout_ms,
                 })
             }
             ServiceRequestPayload::RunPrgData {
@@ -719,6 +778,9 @@ impl ServiceRequestPayload {
                 name,
                 max_cycles,
                 start,
+                rtst_base,
+                rtst_span,
+                progress_timeout_ms,
             } => {
                 if data.trim().is_empty() {
                     return Err("run_prg_data requires a non-empty base64 payload".into());
@@ -726,6 +788,7 @@ impl ServiceRequestPayload {
                 let decoded = BASE64_STANDARD
                     .decode(data.as_bytes())
                     .map_err(|err| format!("invalid base64 payload for run_prg_data: {err}"))?;
+                let rtst = parse_rtst_config(rtst_base, rtst_span)?;
                 Ok(ServiceCommand::RunProgram {
                     source: ProgramSource::Inline {
                         name,
@@ -733,9 +796,36 @@ impl ServiceRequestPayload {
                     },
                     max_cycles,
                     start,
+                    rtst,
+                    progress_timeout_ms,
                 })
             }
+            ServiceRequestPayload::ReadMem { address, length } => {
+                if length == 0 || length > 0x10000 {
+                    return Err("read_mem length must be between 1 and 65536 bytes".into());
+                }
+                Ok(ServiceCommand::ReadMemory { address, length })
+            }
         }
+    }
+}
+
+fn parse_rtst_config(
+    base: Option<u32>,
+    span: Option<u32>,
+) -> Result<Option<RtstMonitorConfig>, String> {
+    match (base, span) {
+        (Some(base), Some(span)) => {
+            if span == 0 {
+                return Err("rtst_span must be greater than zero".into());
+            }
+            if base >= 0x1_0000 || base + span > 0x1_0000 {
+                return Err("rtst_base/span must be within the 64 KB address space".into());
+            }
+            Ok(Some(RtstMonitorConfig { base, span }))
+        }
+        (None, None) => Ok(None),
+        _ => Err("rtst_base and rtst_span must be provided together".into()),
     }
 }
 
@@ -929,6 +1019,8 @@ pub fn run_native() -> Result<(), String> {
         source: ProgramSource::File(path),
         max_cycles: args.max_cycles,
         start: args.start,
+        rtst: None,
+        progress_timeout_ms: None,
     });
 
     let service = args.service_port.map(|port| ServiceConfig {
@@ -1203,12 +1295,16 @@ impl EmulatorState {
         source: ProgramSource,
         max_cycles: Option<u64>,
         start: Option<u16>,
+        rtst: Option<RtstMonitorConfig>,
+        progress_timeout_ms: Option<u64>,
     ) -> Result<String, String> {
         let configured_cycles = max_cycles.unwrap_or(self.default_max_cycles);
         let config = StartupConfig {
             source,
             max_cycles: configured_cycles,
             start,
+            rtst,
+            progress_timeout_ms,
         };
         match self.cpu.run_program(config) {
             Ok(CpuRunReply {
@@ -1285,10 +1381,28 @@ impl EmulatorState {
                 source,
                 max_cycles,
                 start,
-            } => match self.run_program(source, max_cycles, start) {
-                Ok(msg) => ServiceResponseMessage::ok(msg),
-                Err(err) => ServiceResponseMessage::error(err),
-            },
+                rtst,
+                progress_timeout_ms,
+            } => {
+                let timeout = progress_timeout_ms.filter(|ms| *ms > 0);
+                match self.run_program(source, max_cycles, start, rtst, timeout) {
+                    Ok(msg) => {
+                        let mut resp = ServiceResponseMessage::ok(msg);
+                        resp.cycles = self.last_outcome.map(|outcome| outcome.cycles);
+                        resp
+                    }
+                    Err(err) => ServiceResponseMessage::error(err),
+                }
+            }
+            ServiceCommand::ReadMemory { address, length } => {
+                match self.cpu.read_memory(address, length as usize) {
+                    Ok(bytes) => ServiceResponseMessage::ok_with_data(
+                        format!("read {length} bytes from {address:#06X}"),
+                        &bytes,
+                    ),
+                    Err(err) => ServiceResponseMessage::error(err),
+                }
+            }
         }
     }
 }
@@ -2272,9 +2386,12 @@ fn ui_system(
     #[cfg(target_arch = "wasm32")]
     if let Some(service) = web_service {
         wasm_bridge_connected = true;
-        for command in service.drain_commands() {
-            let response = emulator.handle_service_command(command);
+        for pending in service.drain_commands() {
+            let mut response = emulator.handle_service_command(pending.command);
             ui_state.status = Some(response.message.clone());
+            if let Some(id) = pending.bridge_id {
+                response.bridge_id = Some(id);
+            }
             service.send_response(response);
             controller_state.sync_backend(emulator.input_backend(), emulator.input_snapshot());
         }
@@ -2283,7 +2400,7 @@ fn ui_system(
     #[cfg(target_arch = "wasm32")]
     for (data, name) in web::drain_pending_files() {
         let source = ProgramSource::Inline { name, data };
-        let result = emulator.run_program(source, None, None);
+        let result = emulator.run_program(source, None, None, None, None);
         ui_state.status = Some(match result {
             Ok(msg) => msg,
             Err(err) => err,
@@ -2321,8 +2438,13 @@ fn ui_system(
                             .add_filter("PRG/BIN", &["prg", "bin"])
                             .pick_file()
                         {
-                            let result =
-                                emulator.run_program(ProgramSource::File(path.clone()), None, None);
+                            let result = emulator.run_program(
+                                ProgramSource::File(path.clone()),
+                                None,
+                                None,
+                                None,
+                                None,
+                            );
                             ui_state.status = Some(match result {
                                 Ok(msg) => msg,
                                 Err(err) => err,
@@ -2576,7 +2698,24 @@ pub(crate) fn run_program_with_config(
 
     let mut cpu = Cpu::new(bus);
     cpu.reset();
-    let outcome = cpu.run_for(config.max_cycles);
+    let progress_timeout = config.progress_timeout_ms.map(Duration::from_millis);
+    let outcome = if let Some(rtst) = config.rtst {
+        match run_until_rtst_done(&mut cpu, rtst, config.max_cycles, progress_timeout) {
+            Ok(outcome) => outcome,
+            Err(message) => {
+                let bus = cpu.bus;
+                return Err((
+                    bus,
+                    ProgramRunReport {
+                        outcome: None,
+                        message,
+                    },
+                ));
+            }
+        }
+    } else {
+        cpu.run_for(config.max_cycles)
+    };
     let bus = cpu.bus;
 
     let limit_desc = match outcome.limit {
@@ -2596,6 +2735,78 @@ pub(crate) fn run_program_with_config(
             message: summary,
         },
     ))
+}
+
+fn run_until_rtst_done(
+    cpu: &mut Cpu,
+    monitor: RtstMonitorConfig,
+    max_cycles: u64,
+    progress_timeout: Option<Duration>,
+) -> Result<RunOutcome, String> {
+    let poll_interval = 1024u64;
+    let mut header_buf = [0u8; HEADER_LEN];
+    let mut cycles: u64 = 0;
+    let mut initialized = false;
+    let mut last_wpos: u16 = 0;
+    let mut last_state = State::Pending;
+    let mut last_progress = Instant::now();
+    let base = monitor.base as u16;
+
+    loop {
+        let step_cycles = cpu.step() as u64;
+        cycles = cycles.saturating_add(step_cycles);
+        if cycles >= max_cycles {
+            return Err(format!(
+                "RTST timeout after {cycles} cycles (state={:?}, wpos={last_wpos})",
+                last_state
+            ));
+        }
+        if cycles % poll_interval != 0 {
+            continue;
+        }
+        for i in 0..HEADER_LEN {
+            header_buf[i] = cpu.bus.read(base.wrapping_add(i as u16));
+        }
+        match Header::parse(&header_buf) {
+            Ok(header) => {
+                if !initialized {
+                    initialized = true;
+                    last_progress = Instant::now();
+                }
+                if header.write_pos() != last_wpos || header.state() != last_state {
+                    last_progress = Instant::now();
+                }
+                last_wpos = header.write_pos();
+                last_state = header.state();
+                if header.state().is_terminal() {
+                    break;
+                }
+            }
+            Err(_) => {
+                if !initialized {
+                    if let Some(limit) = progress_timeout {
+                        if last_progress.elapsed() >= limit {
+                            return Err("RTST header was never initialised".into());
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+        if let Some(limit) = progress_timeout {
+            if initialized && last_progress.elapsed() >= limit {
+                return Err(format!(
+                    "RTST made no progress for {:?} (state={:?}, wpos={last_wpos})",
+                    limit, last_state
+                ));
+            }
+        }
+    }
+
+    Ok(RunOutcome {
+        cycles,
+        limit: RunLimit::Brk,
+    })
 }
 
 pub(crate) fn write_console_line(bus: &mut Bus, line: &str) {

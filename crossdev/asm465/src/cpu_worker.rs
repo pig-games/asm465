@@ -233,6 +233,11 @@ mod native {
             config: StartupConfig,
             respond_to: Sender<Result<CpuRunReply, String>>,
         },
+        ReadMemory {
+            address: u32,
+            length: usize,
+            respond_to: Sender<Result<Vec<u8>, String>>,
+        },
         Pause,
         Resume,
         SetThrottle(CpuThrottle),
@@ -357,6 +362,14 @@ mod native {
                     self.status.running.store(false, Ordering::SeqCst);
                     self.status.paused.store(true, Ordering::SeqCst);
                 }
+                CpuCommand::ReadMemory {
+                    address,
+                    length,
+                    respond_to,
+                } => {
+                    let bytes = self.snapshot_memory(address, length);
+                    let _ = respond_to.send(Ok(bytes));
+                }
             }
         }
 
@@ -398,6 +411,19 @@ mod native {
                 outputs,
                 outcome,
             }
+        }
+
+        fn snapshot_memory(&mut self, address: u32, length: usize) -> Vec<u8> {
+            let mut bytes = vec![0u8; length];
+            if length == 0 {
+                return bytes;
+            }
+            let mem = self.cpu.bus.mem_mut();
+            for (idx, byte) in bytes.iter_mut().enumerate() {
+                let addr = address.wrapping_add(idx as u32) as u16;
+                *byte = mem.read(addr);
+            }
+            bytes
         }
     }
 
@@ -468,6 +494,19 @@ mod native {
             self.command_tx
                 .send(CpuCommand::RunProgram {
                     config,
+                    respond_to: tx,
+                })
+                .map_err(|err| err.to_string())?;
+            rx.recv().map_err(|err| err.to_string())?
+        }
+
+        /// Snapshot a region of the current RAM contents.
+        pub fn read_memory(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
+            let (tx, rx) = mpsc::channel();
+            self.command_tx
+                .send(CpuCommand::ReadMemory {
+                    address,
+                    length,
                     respond_to: tx,
                 })
                 .map_err(|err| err.to_string())?;
@@ -594,6 +633,20 @@ mod wasm {
                     })
                 }
             }
+        }
+
+        /// Snapshot a region of RAM for host tooling.
+        pub fn read_memory(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
+            let mut bytes = vec![0u8; length];
+            if length == 0 {
+                return Ok(bytes);
+            }
+            let mem = self.bus.mem_mut();
+            for (idx, byte) in bytes.iter_mut().enumerate() {
+                let addr = address.wrapping_add(idx as u32) as u16;
+                *byte = mem.read(addr);
+            }
+            Ok(bytes)
         }
 
         /// Hint to the scheduler (no-op placeholder for API parity).

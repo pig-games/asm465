@@ -309,6 +309,7 @@ dependencies = [
  "js-sys",
  "log",
  "rfd",
+ "runtime_sdk",
  "serde",
  "serde_json",
  "uuid",
@@ -4117,6 +4118,10 @@ dependencies = [
  "serde",
  "serde_derive",
 ]
+
+[[package]]
+name = "runtime_sdk"
+version = "0.1.0"
 
 [[package]]
 name = "rustc-demangle"

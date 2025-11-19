@@ -37,7 +37,7 @@ pub fn default_include_paths(root: &Path, target: TargetKind) -> Vec<PathBuf> {
         paths.push(common);
     }
     let alias = match target {
-        TargetKind::Cross465 => "cross465",
+        TargetKind::Cross465 | TargetKind::Asm465Native | TargetKind::Asm465Wasm => "cross465",
         TargetKind::Ultimate64 => "ultimate64",
         TargetKind::Mega65 => "mega65",
     };

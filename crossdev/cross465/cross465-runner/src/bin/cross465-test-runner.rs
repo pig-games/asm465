@@ -66,6 +66,30 @@ fn main() -> Result<()> {
             if let Some(port) = cli.ultimate64_port {
                 std::env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
             }
+            if let Some(host) = &cli.asm465_host {
+                std::env::set_var("CROSS465_NATIVE_HOST", host);
+            }
+            if let Some(port) = cli.asm465_port {
+                std::env::set_var("CROSS465_NATIVE_PORT", port.to_string());
+            }
+            if let Some(host) = &cli.asm465_bridge_host {
+                std::env::set_var("CROSS465_BRIDGE_HOST", host);
+            }
+            if let Some(port) = cli.asm465_bridge_port {
+                std::env::set_var("CROSS465_BRIDGE_PORT", port.to_string());
+            }
+            if let Some(host) = &cli.asm465_ws_host {
+                std::env::set_var("CROSS465_BRIDGE_WS_HOST", host);
+            }
+            if let Some(port) = cli.asm465_ws_port {
+                std::env::set_var("CROSS465_BRIDGE_WS_PORT", port.to_string());
+            }
+            if let Some(cycles) = cli.asm465_max_cycles {
+                std::env::set_var("CROSS465_MAX_CYCLES", cycles.to_string());
+            }
+            if cli.asm465_keep_alive {
+                std::env::set_var("CROSS465_ASM465_KEEP_ALIVE", "1");
+            }
             let fixture_dir = cli
                 .fixtures
                 .as_ref()
@@ -282,6 +306,22 @@ struct Cli {
     ultimate64_host: Option<String>,
     #[arg(long = "ultimate64-port", value_name = "PORT")]
     ultimate64_port: Option<u16>,
+    #[arg(long = "asm465-host", value_name = "HOST")]
+    asm465_host: Option<String>,
+    #[arg(long = "asm465-port", value_name = "PORT")]
+    asm465_port: Option<u16>,
+    #[arg(long = "asm465-bridge-host", value_name = "HOST")]
+    asm465_bridge_host: Option<String>,
+    #[arg(long = "asm465-bridge-port", value_name = "PORT")]
+    asm465_bridge_port: Option<u16>,
+    #[arg(long = "asm465-ws-host", value_name = "HOST")]
+    asm465_ws_host: Option<String>,
+    #[arg(long = "asm465-ws-port", value_name = "PORT")]
+    asm465_ws_port: Option<u16>,
+    #[arg(long = "asm465-max-cycles", value_name = "CYCLES")]
+    asm465_max_cycles: Option<u64>,
+    #[arg(long = "asm465-keep-alive", help = "Leave auto-started asm465 runtimes alive after the run")]
+    asm465_keep_alive: bool,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -295,6 +335,8 @@ enum TargetArg {
     Cross465,
     Ultimate64,
     Mega65,
+    Asm465,
+    Asm465Wasm,
 }
 
 impl From<TargetArg> for TargetKind {
@@ -303,6 +345,8 @@ impl From<TargetArg> for TargetKind {
             TargetArg::Cross465 => TargetKind::Cross465,
             TargetArg::Ultimate64 => TargetKind::Ultimate64,
             TargetArg::Mega65 => TargetKind::Mega65,
+            TargetArg::Asm465 => TargetKind::Asm465Native,
+            TargetArg::Asm465Wasm => TargetKind::Asm465Wasm,
         }
     }
 }
@@ -494,6 +538,23 @@ fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint) {
         TargetKind::Mega65 => {
             // Future: add serial endpoint support.
         }
+        TargetKind::Asm465Native => {
+            if let Some(host) = &endpoint.host {
+                env::set_var("CROSS465_NATIVE_HOST", host);
+            }
+            if let Some(port) = endpoint.port {
+                env::set_var("CROSS465_NATIVE_PORT", port.to_string());
+            }
+        }
+        TargetKind::Asm465Wasm => {
+            if let Some(host) = &endpoint.host {
+                env::set_var("CROSS465_BRIDGE_HOST", host);
+                env::set_var("CROSS465_BRIDGE_WS_HOST", host);
+            }
+            if let Some(port) = endpoint.port {
+                env::set_var("CROSS465_BRIDGE_PORT", port.to_string());
+            }
+        }
         TargetKind::Cross465 => {}
     }
 }
@@ -534,7 +595,9 @@ fn downgrade_remote_failure(policy: RemoteFailurePolicy, err: &RunnerError) -> b
 fn is_remote_transport_error(err: &RunnerError) -> bool {
     matches!(
         err,
-        RunnerError::Ultimate64Error { .. } | RunnerError::Mega65Error { .. }
+        RunnerError::Ultimate64Error { .. }
+            | RunnerError::Mega65Error { .. }
+            | RunnerError::Asm465Error { .. }
     )
 }
 

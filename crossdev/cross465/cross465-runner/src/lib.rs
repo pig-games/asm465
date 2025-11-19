@@ -210,6 +210,8 @@ pub enum RunnerError {
     Ultimate64Error { message: String },
     #[error("mega65 backend error: {message}")]
     Mega65Error { message: String },
+    #[error("asm465 backend error: {message}")]
+    Asm465Error { message: String },
     #[error("fixture error at {path}: {message}")]
     FixtureIo { path: PathBuf, message: String },
     #[error("asm6502 invocation error: {message}")]
@@ -287,8 +289,8 @@ pub fn run_cases(
     );
     let mut reports = Vec::new();
     let personality_label = effective_personality(opts);
+    let backend = executor::backend_for_target(opts.target, Some(config.workspace_root.clone()));
     for case in &cases {
-        let backend = executor::backend_for_target(opts.target);
         let assembly = assemble_case(case, &assembler_cfg)?;
         let exec = match backend.run(
             &assembly.prg,
@@ -558,7 +560,9 @@ fn effective_personality(opts: &RunOptions) -> String {
 /// Default MMIO personality associated with a target (if any).
 pub fn default_personality_for_target(target: TargetKind) -> Option<&'static str> {
     match target {
-        TargetKind::Cross465 => Some("modern-retro"),
+        TargetKind::Cross465 | TargetKind::Asm465Native | TargetKind::Asm465Wasm => {
+            Some("modern-retro")
+        }
         TargetKind::Ultimate64 => None,
         TargetKind::Mega65 => Some("modern-retro"),
     }

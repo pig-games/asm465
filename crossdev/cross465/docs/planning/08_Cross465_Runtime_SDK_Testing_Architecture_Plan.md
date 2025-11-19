@@ -44,7 +44,7 @@
 - [x] Highlight isolation practices (IRQ masking, setup/teardown) and pointers to CI outputs for diagnostics.
 
 ## 9. Asm465 / WASM Runtime Targets
-- [ ] Treat the native `asm465` runtime (and its WASM build) as addressable backends for RTST, so tests that exercise graphics/audio via the emulator can run through the same cross465-test-runner pipeline.
+- [x] Treat the native `asm465` runtime (and its WASM build) as addressable backends for RTST, so tests that exercise graphics/audio via the emulator can run through the same cross465-test-runner pipeline.
 - [ ] Replace the Makefile-based unit test harnesses with `cross465-test-runner` once asm465/WASM targets are stable.
 
 ## 10. Console MMIO Debug Integration

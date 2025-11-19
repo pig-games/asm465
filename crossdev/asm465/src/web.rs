@@ -18,6 +18,7 @@ use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
 use js_sys::{Array, Function, Promise, Reflect, Uint8Array};
 use rfd::AsyncFileDialog;
+use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
@@ -47,10 +48,23 @@ fn extend_status(status: &mut Option<String>, message: String) {
     }
 }
 
+#[derive(Deserialize)]
+struct BridgeCommandPayload {
+    #[serde(default)]
+    bridge_id: Option<String>,
+    #[serde(flatten)]
+    payload: ServiceRequestPayload,
+}
+
+pub struct QueuedCommand {
+    pub command: ServiceCommand,
+    pub bridge_id: Option<String>,
+}
+
 /// Shared state used to bridge websocket commands/responses between the async
 /// browser tasks and the Bevy schedule.
 pub struct WebSocketBridge {
-    pending: Rc<RefCell<Vec<ServiceCommand>>>,
+    pending: Rc<RefCell<Vec<QueuedCommand>>>,
     response_tx: mpsc::UnboundedSender<ServiceResponseMessage>,
 }
 
@@ -66,9 +80,12 @@ impl WebSocketBridge {
             while let Some(message) = read.next().await {
                 match message {
                     Ok(Message::Text(text)) => {
-                        match serde_json::from_str::<ServiceRequestPayload>(&text) {
-                            Ok(payload) => match payload.into_command() {
-                                Ok(command) => pending_reader.borrow_mut().push(command),
+                        match serde_json::from_str::<BridgeCommandPayload>(&text) {
+                            Ok(payload) => match payload.payload.into_command() {
+                                Ok(command) => pending_reader.borrow_mut().push(QueuedCommand {
+                                    command,
+                                    bridge_id: payload.bridge_id,
+                                }),
                                 Err(err) => log::error!("invalid service command: {err}"),
                             },
                             Err(err) => log::error!("failed to parse command: {err}"),
@@ -106,7 +123,7 @@ impl WebSocketBridge {
         })
     }
 
-    pub fn drain_commands(&self) -> Vec<ServiceCommand> {
+    pub fn drain_commands(&self) -> Vec<QueuedCommand> {
         self.pending.borrow_mut().drain(..).collect()
     }
 

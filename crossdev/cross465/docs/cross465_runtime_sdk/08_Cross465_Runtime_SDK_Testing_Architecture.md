@@ -66,7 +66,7 @@ Cargo expects a test binary that can list and run cases, printing pass/fail line
 ### Personality/Target
 `--personality <id>` controls MMIO layout (``modern-retro``, ``c64-compat``); omit it for targets
 with a fixed/built-in layout such as the Ultimate64.  
-`--target <id>` chooses backend (``cross465``, ``ultimate64``, ``mega65``).
+`--target <id>` chooses backend (``cross465``, ``asm465``, ``asm465-wasm``, ``ultimate64``, ``mega65``).
 
 > **Future expansion:** even “fixed” targets can benefit from the personality catalog once we start
 > modeling hardware variants (e.g., JiffyDOS kernels, REU banks, extra SIDs). Those definitions could
@@ -239,6 +239,22 @@ For convenience, the crate also exposes top-level helpers:
 
 - Cross465 (emulator): no extra configuration required. Use `--personality modern-retro` (default) or
   `c64-compat` when developing compatibility suites.
+- asm465 (native): point `--target asm465` at a running asm465 desktop build. By default the runner
+  talks to `127.0.0.1:7465`, but you can override the endpoint via
+  `--asm465-host/--asm465-port` (or `CROSS465_NATIVE_HOST/PORT`). When the host is loopback and the
+  workspace is available, the runner will automatically `cargo run --manifest-path crossdev/asm465`
+  with `--service-port/--service-host/--max-cycles`. Use `--asm465-max-cycles` (or
+  `CROSS465_MAX_CYCLES`) to tweak the runtime budget, use `--asm465-keep-alive` (or
+  `CROSS465_ASM465_KEEP_ALIVE=1`) to leave the auto-launched runtime running after your tests finish,
+  and inspect logs under `target/cross465-runner/asm465_native.log`. The service monitors the RTST
+  stream directly, so `metric cycles=` now reflects the real execution time instead of the hard
+  cycle budget.
+- asm465-wasm: use `--target asm465-wasm` to drive a browser/WebAssembly build through the
+  `asm465-server` bridge. The CLI flags `--asm465-bridge-host/--asm465-bridge-port` configure the
+  TCP control socket, while `--asm465-ws-host/--asm465-ws-port` control the websocket fan-out. When
+  the bridge host is loopback the runner auto-starts `cargo run --manifest-path crossdev/asm465-server`.
+  Make sure the wasm viewer is connected to the websocket; if no clients are listening the runner
+  reports an `asm465 backend error: no websocket clients connected`.
 - Ultimate64: configure `CROSS465_ULTIMATE64_HOST` / `PORT` (or `--ultimate64-host/--ultimate64-port`),
   the REST timeouts (`*_POLL_DELAY_MS`, `*_CONNECT_TIMEOUT_MS`, `*_READ_TIMEOUT_MS`), and optionally
   a `[ci.matrix.ultimate64].remote_failure = "warn"` entry to skip runs when the hardware is offline.
@@ -262,6 +278,10 @@ For convenience, the crate also exposes top-level helpers:
 - Ultimate64/Mega65 failures throw `ultimate64 backend error: ...` or `mega65 backend error: ...`.
   Use the new `--remote-failure warn` flag (or `[ci.matrix.<target>].remote_failure = "warn"`) to log
   a warning and skip unreachable hardware while you iterate locally. Leave it at `error` in CI.
+- asm465-native/asm465-wasm failures surface as `asm465 backend error: …`. Verify the service host/
+  port (`--asm465-host/--asm465-port` or `--asm465-bridge-host/--asm465-bridge-port`), and ensure the
+  wasm viewer is connected to the bridge. The remote failure policy applies here as well, so you can
+  elect to warn instead of failing when the GUI isn’t running.
 - Regardless of the policy, the runner always writes artifacts (`program.prg`, `rtst.bin`,
   `meta.json`) so you can inspect partial runs or send the files to someone with hardware access.
 
