@@ -19,14 +19,15 @@ pub use expect::{
     AssertError, AssertResult, CaseAccessor, CaseActuals, ExpectError, ExpectResult,
 };
 pub use report::{
-    ActualCollections, ActualValue, CaseMetrics, CaseReport, CaseStatus, Registers, RunReport,
-    RunSummary,
+    ActualCollections, ActualValue, CaseDebug, CaseDebugDisplay, CaseDebugOverlay, CaseMetrics,
+    CaseReport, CaseStatus, Registers, RunReport, RunSummary,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use artifacts::ArtifactStore;
+use executor::ExecutionDebug;
 use runtime_sdk::rtst::{RecordId, Stream};
 use thiserror::Error;
 
@@ -131,6 +132,10 @@ pub struct RunOptions {
     pub artifact_dir: Option<PathBuf>,
     pub keep_success_artifacts: bool,
     pub log_metrics: bool,
+    pub log_console: bool,
+    pub log_display: bool,
+    pub log_overlay: bool,
+    pub debug_rtst_only: bool,
     pub progress_timeout_ms: u64,
     pub transport_retries: u32,
 }
@@ -152,6 +157,10 @@ impl Default for RunOptions {
             artifact_dir: None,
             keep_success_artifacts: false,
             log_metrics: false,
+            log_console: false,
+            log_display: false,
+            log_overlay: false,
+            debug_rtst_only: false,
             progress_timeout_ms: 750,
             transport_retries: 3,
         }
@@ -267,12 +276,19 @@ pub fn run_cases(
 
     let mut include_paths = default_include_paths(&config.workspace_root, opts.target);
     include_paths.extend(opts.extra_includes.clone());
+    let mut defines = opts.extra_defines.clone();
+    if !defines.iter().any(|(k, _)| k == "DEBUG_RTST_ENABLED") {
+        defines.push(("DEBUG_RTST_ENABLED".to_string(), "1".to_string()));
+    }
+    if opts.debug_rtst_only && !defines.iter().any(|(k, _)| k == "DEBUG_RTST_ONLY") {
+        defines.push(("DEBUG_RTST_ONLY".to_string(), "1".to_string()));
+    }
     let assembler_cfg = AssemblerConfig {
         workspace_root: config.workspace_root.clone(),
         tass_path: opts.tass_path.clone(),
         include_paths,
         target: opts.target,
-        defines: opts.extra_defines.clone(),
+        defines,
         extra_args: opts.tass_args.clone(),
     };
 
@@ -290,6 +306,7 @@ pub fn run_cases(
     let mut reports = Vec::new();
     let personality_label = effective_personality(opts);
     let backend = executor::backend_for_target(opts.target, Some(config.workspace_root.clone()));
+    let mut debug_warnings = HashSet::new();
     for case in &cases {
         let assembly = assemble_case(case, &assembler_cfg)?;
         let exec = match backend.run(
@@ -299,6 +316,9 @@ pub fn run_cases(
                 timeout_ms: opts.timeout_ms.unwrap_or(2_000),
                 progress_timeout_ms: opts.progress_timeout_ms,
                 transport_retries: opts.transport_retries,
+                capture_console: opts.log_console,
+                capture_display: opts.log_display,
+                capture_overlay: opts.log_overlay,
             },
         ) {
             Ok(output) => output,
@@ -312,6 +332,8 @@ pub fn run_cases(
                 return Err(err);
             }
         };
+        let case_debug = case_debug_from_execution(&exec.debug);
+        track_missing_debug(opts, &exec.debug, &mut debug_warnings);
         let (mut parsed, metrics) = match parse_rtst(&exec) {
             Ok(result) => result,
             Err(err) => {
@@ -320,6 +342,7 @@ pub fn run_cases(
                     &personality_label,
                     &assembly.prg,
                     &exec,
+                    case_debug.as_ref(),
                     &err,
                 );
                 return Err(err);
@@ -335,6 +358,7 @@ pub fn run_cases(
                 asserts: Vec::new(),
                 actuals: BTreeMap::new(),
                 actual_groups: ActualCollections::default(),
+                debug: case_debug.clone(),
                 metrics: Some(metrics.clone()),
             };
             fixture_store.apply(&mut placeholder)?;
@@ -346,6 +370,9 @@ pub fn run_cases(
             continue;
         }
         for report in &mut parsed {
+            if let Some(debug) = &case_debug {
+                report.debug = Some(debug.clone());
+            }
             if let Err(err) = fixture_store.apply(report) {
                 artifact_store.capture_case(report, &personality_label, &assembly.prg, &exec);
                 if opts.log_metrics {
@@ -393,6 +420,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<(Vec<CaseReport>, CaseMetrics), 
                         asserts: Vec::new(),
                         actuals: BTreeMap::new(),
                         actual_groups: ActualCollections::default(),
+                        debug: None,
                         metrics: None,
                     });
             }
@@ -557,6 +585,82 @@ fn effective_personality(opts: &RunOptions) -> String {
         .unwrap_or_else(|| format!("{}-builtin", opts.target.to_string()))
 }
 
+fn case_debug_from_execution(debug: &ExecutionDebug) -> Option<CaseDebug> {
+    let mut info = CaseDebug::default();
+    if let Some(text) = &debug.console_log {
+        if !text.trim().is_empty() {
+            info.console_log = Some(text.clone());
+        }
+    }
+    if let Some(display) = debug.display {
+        info.display = Some(CaseDebugDisplay {
+            border_color: display.border_color,
+            background_color: display.background_color,
+        });
+    }
+    if let Some(overlay) = debug.overlay {
+        info.overlay = Some(CaseDebugOverlay {
+            raster: overlay.raster,
+            sprite_collisions: overlay.sprite_collisions,
+            background_collisions: overlay.background_collisions,
+        });
+    }
+    if info.is_empty() {
+        None
+    } else {
+        Some(info)
+    }
+}
+
+fn track_missing_debug(
+    opts: &RunOptions,
+    debug: &ExecutionDebug,
+    warned: &mut HashSet<(TargetKind, DebugFeature)>,
+) {
+    if opts.log_console && console_capture_missing(debug) {
+        warn_missing_debug_feature(opts.target, DebugFeature::Console, warned);
+    }
+    if opts.log_display && debug.display.is_none() {
+        warn_missing_debug_feature(opts.target, DebugFeature::Display, warned);
+    }
+    if opts.log_overlay && debug.overlay.is_none() {
+        warn_missing_debug_feature(opts.target, DebugFeature::Overlay, warned);
+    }
+}
+
+fn console_capture_missing(debug: &ExecutionDebug) -> bool {
+    match &debug.console_log {
+        Some(text) => text.trim().is_empty(),
+        None => true,
+    }
+}
+
+fn warn_missing_debug_feature(
+    target: TargetKind,
+    feature: DebugFeature,
+    warned: &mut HashSet<(TargetKind, DebugFeature)>,
+) {
+    if !warned.insert((target, feature)) {
+        return;
+    }
+    let label = match feature {
+        DebugFeature::Console => "console logging",
+        DebugFeature::Display => "display snapshots",
+        DebugFeature::Overlay => "overlay snapshots",
+    };
+    eprintln!(
+        "cross465-runner: target {} does not expose {label}; requested capture skipped",
+        target.to_string()
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DebugFeature {
+    Console,
+    Display,
+    Overlay,
+}
+
 /// Default MMIO personality associated with a target (if any).
 pub fn default_personality_for_target(target: TargetKind) -> Option<&'static str> {
     match target {
@@ -638,6 +742,7 @@ mod report_tests {
         let exec = ExecutionOutput {
             rtst_region: buffer,
             cycles: 0,
+            debug: ExecutionDebug::default(),
         };
         let (cases, metrics) = parse_rtst(&exec).expect("parse");
         assert_eq!(cases.len(), 1);
@@ -656,5 +761,51 @@ mod report_tests {
         assert_eq!(case.actuals.len(), 5);
         assert_eq!(metrics.rtst_bytes, exec.rtst_region.len());
         assert!(metrics.write_pos > 0);
+    }
+}
+
+#[cfg(test)]
+mod debug_capture_tests {
+    use super::*;
+    use crate::CaseSource;
+    use std::path::PathBuf;
+
+    const CONSOLE_CASE: &str = "logging::console_output";
+
+    #[test]
+    fn captures_console_log_when_requested() {
+        let workspace = workspace_root();
+        let mut opts = RunOptions::default();
+        opts.target = TargetKind::Cross465;
+        opts.personality = Some("modern-retro".to_string());
+        opts.timeout_ms = Some(2_000);
+        opts.asm_override = Some(CaseSource::File(
+            workspace.join("crossdev/cross465/tests/cases/logging_console_output.s"),
+        ));
+        opts.log_console = true;
+        let config = RunnerConfig::new(workspace.clone(), None);
+        let filter = CaseFilter {
+            names: vec![CONSOLE_CASE.to_string()],
+        };
+        let report = run_cases(&config, &filter, &opts).expect("run console logging case");
+        let case = report
+            .cases
+            .iter()
+            .find(|c| c.name == CONSOLE_CASE)
+            .expect("case present");
+        let debug = case.debug.as_ref().expect("console debug present");
+        let log = debug.console_log.as_ref().expect("console log captured");
+        assert!(
+            log.contains("CONSOLE LOGGING FROM ASM"),
+            "console log missing expected text: {log:?}"
+        );
+    }
+
+    fn workspace_root() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest
+            .join("../../..")
+            .canonicalize()
+            .unwrap_or_else(|_| manifest.join("../../.."))
     }
 }

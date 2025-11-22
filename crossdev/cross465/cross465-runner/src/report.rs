@@ -68,6 +68,8 @@ pub struct CaseReport {
     pub actuals: BTreeMap<String, ActualValue>,
     pub actual_groups: ActualCollections,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug: Option<CaseDebug>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<CaseMetrics>,
 }
 
@@ -98,6 +100,38 @@ pub struct Registers {
     pub sp: u8,
     pub status: u8,
     pub pc: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+/// Optional MMIO debug captures recorded alongside RTST.
+pub struct CaseDebug {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub console_log: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<CaseDebugDisplay>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<CaseDebugOverlay>,
+}
+
+impl CaseDebug {
+    pub fn is_empty(&self) -> bool {
+        self.console_log.is_none() && self.display.is_none() && self.overlay.is_none()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// Snapshot of display palette registers.
+pub struct CaseDebugDisplay {
+    pub border_color: u8,
+    pub background_color: u8,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// Snapshot of overlay/raster instrumentation when available.
+pub struct CaseDebugOverlay {
+    pub raster: u16,
+    pub sprite_collisions: u8,
+    pub background_collisions: u8,
 }
 
 impl ActualCollections {

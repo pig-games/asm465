@@ -48,7 +48,7 @@
 - [x] Replace the Makefile-based unit test harnesses with `cross465-test-runner` once asm465/WASM targets are stable.
 
 ## 10. Console MMIO Debug Integration
-- [ ] Capture console MMIO debug streams (reads/writes, overlay screenshots) alongside RTST so `cross465-test-runner` can archive them per case.
+- [x] Capture console MMIO debug streams (reads/writes, overlay screenshots) alongside RTST so `cross465-test-runner` can archive them per case. (Console text + display snapshots now persist for every case; overlay capture will light up as soon as backends expose the signals.)
 - [ ] Provide host-side parsers/expectation helpers for the MMIO trace data (diffing overlays, asserting register access patterns).
-- [ ] Surface new CLI flags/documentation so developers can enable MMIO capture locally and in CI, keeping artifact formats aligned with the rest of the cross465-test-runner outputs.
+- [x] Surface new CLI flags/documentation so developers can enable MMIO capture locally and in CI, keeping artifact formats aligned with the rest of the cross465-test-runner outputs.
 - [ ] Migrate 'old' test cases (debugtest, screentest, parsertest) to the new unit testing framework.

@@ -147,6 +147,10 @@ fn main() -> Result<()> {
                 artifact_dir,
                 keep_success_artifacts: cli.keep_success_artifacts,
                 log_metrics: cli.log_metrics,
+                log_console: cli.log_console,
+                log_display: cli.log_display,
+                log_overlay: cli.log_overlay,
+                debug_rtst_only: cli.debug_rtst_only,
                 progress_timeout_ms: cli.progress_timeout_ms,
                 transport_retries: cli.transport_retries,
             };
@@ -316,6 +320,17 @@ struct Cli {
     transport_retries: u32,
     #[arg(long = "log-metrics")]
     log_metrics: bool,
+    #[arg(long = "log-console")]
+    log_console: bool,
+    #[arg(long = "log-display")]
+    log_display: bool,
+    #[arg(long = "log-overlay")]
+    log_overlay: bool,
+    #[arg(
+        long = "debug-rtst-only",
+        help = "When set, debug macros write to RTST only (skip target console output)"
+    )]
+    debug_rtst_only: bool,
     #[arg(long = "remote-failure", value_enum, default_value = "error")]
     remote_failure: RemoteFailurePolicy,
     #[arg(long = "ci-target", value_name = "TARGET", num_args = 1.., requires = "ci_matrix")]

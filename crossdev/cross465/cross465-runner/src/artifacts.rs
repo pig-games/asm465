@@ -1,4 +1,4 @@
-use crate::report::{CaseMetrics, CaseReport, CaseStatus};
+use crate::report::{CaseDebug, CaseMetrics, CaseReport, CaseStatus};
 use crate::{ExecutionOutput, RunnerError, TargetKind};
 use serde::Serialize;
 use std::fs;
@@ -34,7 +34,7 @@ impl ArtifactStore {
         }
         let meta = ArtifactMeta::new("backend", case_name, self.target, personality, "error")
             .with_error(err.to_string());
-        self.write_artifacts(case_name, prg, None, meta);
+        self.write_artifacts(case_name, prg, None, None, meta);
     }
 
     /// Capture artifacts when RTST parsing fails.
@@ -44,6 +44,7 @@ impl ArtifactStore {
         personality: &str,
         prg: &[u8],
         exec: &ExecutionOutput,
+        debug: Option<&CaseDebug>,
         err: &RunnerError,
     ) {
         if self.root.is_none() {
@@ -53,7 +54,7 @@ impl ArtifactStore {
             .with_error(err.to_string());
         meta.cycles = Some(exec.cycles);
         meta.rtst_bytes = Some(exec.rtst_region.len());
-        self.write_artifacts(case_name, prg, Some(&exec.rtst_region), meta);
+        self.write_artifacts(case_name, prg, Some(&exec.rtst_region), debug, meta);
     }
 
     /// Capture artifacts after a case finished (optionally only for failures).
@@ -83,7 +84,13 @@ impl ArtifactStore {
                 meta = meta.with_error(message);
             }
         }
-        self.write_artifacts(&report.name, prg, Some(&exec.rtst_region), meta);
+        self.write_artifacts(
+            &report.name,
+            prg,
+            Some(&exec.rtst_region),
+            report.debug.as_ref(),
+            meta,
+        );
     }
 
     fn write_artifacts(
@@ -91,6 +98,7 @@ impl ArtifactStore {
         case_name: &str,
         prg: &[u8],
         rtst: Option<&[u8]>,
+        debug: Option<&CaseDebug>,
         meta: ArtifactMeta,
     ) {
         let Some(dir) = self.case_dir(case_name) else {
@@ -106,6 +114,47 @@ impl ArtifactStore {
         if let Some(buf) = rtst {
             if let Err(err) = fs::write(dir.join("rtst.bin"), buf) {
                 warn_io("write rtst.bin", dir.join("rtst.bin").as_path(), err);
+            }
+        }
+        if let Some(debug) = debug {
+            if let Some(console) = &debug.console_log {
+                if !console.is_empty() {
+                    if let Err(err) = fs::write(dir.join("console.txt"), console) {
+                        warn_io("write console.txt", dir.join("console.txt").as_path(), err);
+                    }
+                }
+            }
+            if let Some(display) = debug.display {
+                match serde_json::to_vec_pretty(&display) {
+                    Ok(payload) => {
+                        if let Err(err) = fs::write(dir.join("display.json"), payload) {
+                            warn_io(
+                                "write display.json",
+                                dir.join("display.json").as_path(),
+                                err,
+                            );
+                        }
+                    }
+                    Err(err) => eprintln!(
+                        "cross465-runner: failed to serialize display.json for {case_name}: {err}"
+                    ),
+                }
+            }
+            if let Some(overlay) = debug.overlay {
+                match serde_json::to_vec_pretty(&overlay) {
+                    Ok(payload) => {
+                        if let Err(err) = fs::write(dir.join("overlay.json"), payload) {
+                            warn_io(
+                                "write overlay.json",
+                                dir.join("overlay.json").as_path(),
+                                err,
+                            );
+                        }
+                    }
+                    Err(err) => eprintln!(
+                        "cross465-runner: failed to serialize overlay.json for {case_name}: {err}"
+                    ),
+                }
             }
         }
         match serde_json::to_vec_pretty(&meta) {
@@ -214,7 +263,10 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::{ActualCollections, CaseMetrics};
+    use crate::executor::ExecutionDebug;
+    use crate::report::{
+        ActualCollections, CaseDebug, CaseDebugDisplay, CaseDebugOverlay, CaseMetrics,
+    };
     use serde_json::Value;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
@@ -257,10 +309,11 @@ mod tests {
         let exec = ExecutionOutput {
             rtst_region: vec![0xAA; 32],
             cycles: 99,
+            debug: ExecutionDebug::default(),
         };
         let err =
             RunnerError::RtstParse(runtime_sdk::rtst::RtstError::BadMagic { found: *b"abcd" });
-        store.capture_parse_error("display::scroll", "modern-retro", &prg, &exec, &err);
+        store.capture_parse_error("display::scroll", "modern-retro", &prg, &exec, None, &err);
         let case_dir = case_path(temp.path(), "display::scroll");
         assert_eq!(
             fs::read(case_dir.join("rtst.bin")).unwrap().len(),
@@ -278,6 +331,7 @@ mod tests {
         let exec = ExecutionOutput {
             rtst_region: vec![0; 16],
             cycles: 12,
+            debug: ExecutionDebug::default(),
         };
         let mut report = CaseReport {
             name: "math::mul".into(),
@@ -288,6 +342,7 @@ mod tests {
             asserts: Vec::new(),
             actuals: BTreeMap::new(),
             actual_groups: ActualCollections::default(),
+            debug: None,
             metrics: Some(CaseMetrics {
                 cycles: 12,
                 rtst_bytes: 16,
@@ -312,5 +367,58 @@ mod tests {
         let meta = read_meta(&case_dir.join("meta.json"));
         assert_eq!(meta["status"], "failed");
         assert_eq!(meta["write_pos"], 8);
+    }
+
+    #[test]
+    fn capture_case_writes_debug_artifacts() {
+        let temp = tempdir().expect("tempdir");
+        let store = ArtifactStore::new(Some(temp.path().to_path_buf()), TargetKind::Cross465, true);
+        let prg = [0u8; 2];
+        let exec = ExecutionOutput {
+            rtst_region: vec![0u8; 8],
+            cycles: 33,
+            debug: ExecutionDebug::default(),
+        };
+        let report = CaseReport {
+            name: "math::dbg".into(),
+            status: CaseStatus::Failed,
+            status_code: None,
+            message: None,
+            logs: Vec::new(),
+            asserts: Vec::new(),
+            actuals: BTreeMap::new(),
+            actual_groups: ActualCollections::default(),
+            debug: Some(CaseDebug {
+                console_log: Some("Hello Console".into()),
+                display: Some(CaseDebugDisplay {
+                    border_color: 0x0F,
+                    background_color: 0x06,
+                }),
+                overlay: Some(CaseDebugOverlay {
+                    raster: 312,
+                    sprite_collisions: 0xAA,
+                    background_collisions: 0xBB,
+                }),
+            }),
+            metrics: Some(CaseMetrics {
+                cycles: 33,
+                rtst_bytes: 8,
+                write_pos: 4,
+            }),
+        };
+        store.capture_case(&report, "modern-retro", &prg, &exec);
+        let case_dir = case_path(temp.path(), "math::dbg");
+        let console = fs::read_to_string(case_dir.join("console.txt")).expect("console");
+        assert!(console.contains("Hello Console"));
+        let display: CaseDebugDisplay =
+            serde_json::from_slice(&fs::read(case_dir.join("display.json")).expect("display json"))
+                .expect("display parse");
+        assert_eq!(display.border_color, 0x0F);
+        let overlay: CaseDebugOverlay =
+            serde_json::from_slice(&fs::read(case_dir.join("overlay.json")).expect("overlay json"))
+                .expect("overlay parse");
+        assert_eq!(overlay.raster, 312);
+        assert_eq!(overlay.sprite_collisions, 0xAA);
+        assert_eq!(overlay.background_collisions, 0xBB);
     }
 }

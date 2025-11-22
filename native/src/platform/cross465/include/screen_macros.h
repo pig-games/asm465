@@ -4,6 +4,8 @@ SCREENMACROS :?= false
 .if !SCREENMACROS
 SCREENMACROS := true
 
+DEBUG_RTST_ONLY :?= 0
+
 .include "platformdefs.h"
 .include "platformmacros.h"
 .include "gen_screen_macros.h"
@@ -14,22 +16,30 @@ SCREENMACROS := true
 
 ; Clear screen and color RAM, then set cursor to 0,0
 ClearScreen .macro colour
-    ; clear chars
-    sta cross465.console.CLR
+    .if !DEBUG_RTST_ONLY
+        ; clear chars
+        sta cross465.console.CLR
+    .endif
 .endmacro
 
 SetBGColor .macro col
-    lda #\col
-    sta cross465.console.SETCOL
+    .if !DEBUG_RTST_ONLY
+        lda #\col
+        sta cross465.console.SETCOL
+    .endif
 .endmacro
 
 SetBColor .macro col
-    lda #\col
-    sta cross465.console.SETBGCOL
+    .if !DEBUG_RTST_ONLY
+        lda #\col
+        sta cross465.console.SETBGCOL
+    .endif
 .endmacro
 
 PutC .macro
-    sta cross465.console.PUTC
+    .if !DEBUG_RTST_ONLY
+        sta cross465.console.PUTC
+    .endif
 .endmacro
 
 .endif ; SCREENMACROS

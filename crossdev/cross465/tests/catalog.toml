@@ -12,6 +12,11 @@ name = "display::parallax_scroll2"
 path = "cases/display_parallax_scroll.s"
 timeout_ms = 2000
 
+[[case]]
+name = "logging::console_output"
+path = "cases/logging_console_output.s"
+timeout_ms = 1500
+
 [ci.matrix.cross465]
 personalities = ["modern-retro", "c64-compat"]
 include = [
@@ -53,13 +58,5 @@ remote_failure = "warn"
 FEATURE = "1"
 
 [ci.matrix.ultimate64.endpoint]
-host = "192.168.0.64"
-port = 6510
-
-[ci.matrix.mega65]
-personalities = ["modern-retro"]
-include = [
-  "native/src/include",
-  "native/src/platform/mega65/include"
-]
-tass_args = ["-Wall"]
+host = "192.168.0.214"
+port = 80

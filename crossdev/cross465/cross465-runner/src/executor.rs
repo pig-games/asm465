@@ -27,7 +27,7 @@ use ureq::{Agent, AgentBuilder, Error as UreqError, Response};
 
 use crate::RunnerError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Targets supported by the runner backend.
 pub enum TargetKind {
     Cross465,
@@ -44,12 +44,39 @@ pub struct ExecutionConfig {
     pub timeout_ms: u64,
     pub progress_timeout_ms: u64,
     pub transport_retries: u32,
+    pub capture_console: bool,
+    pub capture_display: bool,
+    pub capture_overlay: bool,
 }
 
 /// Results captured from executing a PRG.
 pub struct ExecutionOutput {
     pub rtst_region: Vec<u8>,
     pub cycles: u64,
+    pub debug: ExecutionDebug,
+}
+
+#[derive(Clone, Debug, Default)]
+/// Optional MMIO debug snapshots returned by a backend.
+pub struct ExecutionDebug {
+    pub console_log: Option<String>,
+    pub display: Option<DisplaySample>,
+    pub overlay: Option<OverlaySample>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+/// Simple palette snapshot captured from display MMIO.
+pub struct DisplaySample {
+    pub border_color: u8,
+    pub background_color: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+/// Optional overlay/raster snapshot captured from the target.
+pub struct OverlaySample {
+    pub raster: u16,
+    pub sprite_collisions: u8,
+    pub background_collisions: u8,
 }
 
 /// Backend contract for running RTST-enabled binaries.
@@ -166,9 +193,26 @@ impl Cross465Backend {
             *byte = cpu.bus.read(base_addr.wrapping_add(offset as u16));
         }
 
+        let mut debug = ExecutionDebug::default();
+        if cfg.capture_console {
+            debug.console_log = cpu.bus.console_buffer();
+        }
+        if cfg.capture_display {
+            if let Some(handle) = cpu.bus.display_output_handle() {
+                if let Ok(output) = handle.lock() {
+                    let snapshot = output.snapshot();
+                    debug.display = Some(DisplaySample {
+                        border_color: snapshot.border_color,
+                        background_color: snapshot.background_color,
+                    });
+                }
+            }
+        }
+
         Ok(ExecutionOutput {
             rtst_region: region,
             cycles,
+            debug,
         })
     }
 }
@@ -354,6 +398,7 @@ impl Ultimate64Backend {
         Ok(ExecutionOutput {
             rtst_region: rtst,
             cycles: 0,
+            debug: ExecutionDebug::default(),
         })
     }
 
@@ -602,6 +647,7 @@ impl Mega65Backend {
         Ok(ExecutionOutput {
             rtst_region: rtst,
             cycles: 0,
+            debug: ExecutionDebug::default(),
         })
     }
 }
@@ -1271,6 +1317,7 @@ impl TargetBackend for Asm465Backend {
         Ok(ExecutionOutput {
             rtst_region: rtst,
             cycles: run_response.cycles.unwrap_or(0),
+            debug: ExecutionDebug::default(),
         })
     }
 }
@@ -1490,6 +1537,9 @@ mod tests {
                     timeout_ms: 5_000,
                     progress_timeout_ms: 500,
                     transport_retries: 3,
+                    capture_console: false,
+                    capture_display: false,
+                    capture_overlay: false,
                 },
             )
             .expect("cross backend should execute sample");

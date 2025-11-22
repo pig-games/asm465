@@ -90,6 +90,14 @@ Per-case lines (`test fqname ... ok|FAILED`), failure grouping, summary.
 - `--log-metrics` prints per-case lines such as
   `metric case=display::parallax status=passed cycles=523812 rtst_bytes=4096 write_pos=372`
   for CI ingestion.
+- `--log-console`, `--log-display`, and `--log-overlay` opt into MMIO capture. When
+  enabled, the runner records `console.txt`, `display.json`, and `overlay.json`
+  alongside the usual PRG/RTST dumps and also emits the same data inside each
+  `CaseReport::debug`. Targets that do not expose the requested capture simply
+  print a warning and continue running so hardware gaps do not abort a test run.
+- `--debug-rtst-only` tells the runner to define `DEBUG_RTST_ONLY` for the 6502
+  debug macros: they still emit RTST log records but skip writing to the target
+  console, which is useful when you only want host-side logs/artifacts.
 - `--ci-matrix` iterates over `[ci.matrix.<target>]` entries declared in
   `crossdev/cross465/tests/catalog.toml`, running every target/personality
   combination without having to pass `--target`/`--personality` manually.
@@ -196,6 +204,9 @@ Each file stores the typed buckets (`scalars`, `hashes`, `memories`, `registers`
 
 Every `CaseReport` now carries `metrics` (cycles, RTST byte count, header `WPOS`),
 which are serialized in JSON output and can be mirrored to stdout via `--log-metrics`.
+When you opt into the MMIO capture flags, the same `CaseReport` also exposes an
+optional `debug` block that includes the console text plus the serialized display/overlay
+snapshots so JSON output and assertions can reason about those artifacts directly.
 
 For convenience, the crate also exposes top-level helpers:
 

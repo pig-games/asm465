@@ -4,6 +4,15 @@ DEBUGMACROS := true
 
 .enc "screen"
 
+; When enabled, debug macros also emit RTST MSG records (and optionally skip
+; device console output). The runner defines DEBUG_RTST_ENABLED by default.
+DEBUG_RTST_ENABLED :?= 0
+DEBUG_RTST_ONLY    :?= 0
+
+.if DEBUG_RTST_ENABLED
+.include "test_rtst.h"
+.endif
+
 dbg .namespace
 
 setupDebugStats .macro datasection=data
@@ -139,7 +148,14 @@ infoCXYHex .macro col=5, pre="", post=""
 
 infoC .macro col, str
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
-        .cpr \col, \str
+        .if !DEBUG_RTST_ONLY
+            .cpr \col, \str
+        .endif
+        .if DEBUG_RTST_ENABLED
+msg\@:
+            .null \str
+            .rtst.logMsg msg\@
+        .endif
     .endif
 .endmacro
 
@@ -149,12 +165,17 @@ info .macro str
 
 infoCPtr .macro col, ptr
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
-        phq
-        ldx #\col
-        stx PrtColour
-        .ldxy \ptr
-        jsr print
-        plq
+        .if !DEBUG_RTST_ONLY
+            phq
+            ldx #\col
+            stx PrtColour
+            .ldxy \ptr
+            jsr print
+            plq
+        .endif
+        .if DEBUG_RTST_ENABLED
+            .rtst.logMsg \ptr
+        .endif
     .endif
 .endmacro
 

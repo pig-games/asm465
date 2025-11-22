@@ -19,26 +19,32 @@ SetBGBColors .macro bg, b
 .endmacro
 
 nl .macro
-    phq
-    jsr printNL
-    plq
+    .if !DEBUG_RTST_ONLY
+        phq
+        jsr printNL
+        plq
+    .endif
 .endmacro
 
 ; Print raw (inline) string after JSR — same calling as M65 pr
 pr .macro str
-    phq
-    jsr sPrint
-    .null \str
-    plq
+    .if !DEBUG_RTST_ONLY
+        phq
+        jsr sPrint
+        .null \str
+        plq
+    .endif
 .endmacro
 
 ; Color print (inline): first a color byte, then string — same as M65 cpr
 cpr .macro colour, str
-    phq
-    jsr sCPrint
-    .byte \colour
-    .null \str
-    plq
+    .if !DEBUG_RTST_ONLY
+        phq
+        jsr sCPrint
+        .byte \colour
+        .null \str
+        plq
+    .endif
 .endmacro
 
 .endif
