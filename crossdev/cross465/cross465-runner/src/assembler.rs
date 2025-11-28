@@ -20,6 +20,7 @@ pub struct AssemblerConfig {
     pub tass_path: PathBuf,
     pub include_paths: Vec<PathBuf>,
     pub target: TargetKind,
+    pub extra_sources: Vec<PathBuf>,
     pub defines: Vec<(String, String)>,
     pub extra_args: Vec<String>,
 }
@@ -97,6 +98,9 @@ pub fn assemble_case(
         cmd.arg("-I").arg(include);
     }
     cmd.args(&cfg.extra_args);
+    for extra in &cfg.extra_sources {
+        cmd.arg(extra);
+    }
     cmd.arg(&source_path);
     cmd.arg("-o").arg(&output_path);
 

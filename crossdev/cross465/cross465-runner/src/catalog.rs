@@ -58,6 +58,7 @@ pub struct CiMatrixEntry {
     pub target: TargetKind,
     pub personalities: Vec<Option<String>>,
     pub includes: Vec<PathBuf>,
+    pub extra_sources: Vec<PathBuf>,
     pub defines: Vec<(String, String)>,
     pub tass_args: Vec<String>,
     pub endpoint: Option<CiEndpoint>,
@@ -136,6 +137,7 @@ impl Catalog {
                     target: parsed_target,
                     personalities,
                     includes: entry.include,
+                    extra_sources: entry.extra_sources,
                     defines,
                     tass_args: entry.tass_args,
                     endpoint,
@@ -205,6 +207,8 @@ struct CiMatrixEntryToml {
     personalities: Vec<String>,
     #[serde(default = "Vec::new")]
     include: Vec<PathBuf>,
+    #[serde(default = "Vec::new")]
+    extra_sources: Vec<PathBuf>,
     #[serde(default)]
     define: BTreeMap<String, String>,
     #[serde(default)]
@@ -280,6 +284,8 @@ mod tests {
     fn catalog_parses_ci_matrix() {
         let extra = r#"[ci.matrix.cross465]
 personalities = ["modern-retro", "c64-compat"]
+include = ["include/common", "include/c64"]
+extra_sources = ["src/screen.s", "src/debug.s"]
 "#;
         let tmp = TempCatalog::new(extra);
         let catalog = Catalog::load(tmp.path()).expect("load");
@@ -292,6 +298,17 @@ personalities = ["modern-retro", "c64-compat"]
                 Some("modern-retro".to_string()),
                 Some("c64-compat".to_string())
             ]
+        );
+        assert_eq!(
+            entry.includes,
+            vec![
+                PathBuf::from("include/common"),
+                PathBuf::from("include/c64")
+            ]
+        );
+        assert_eq!(
+            entry.extra_sources,
+            vec![PathBuf::from("src/screen.s"), PathBuf::from("src/debug.s")]
         );
     }
 

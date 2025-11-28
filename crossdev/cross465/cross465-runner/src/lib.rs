@@ -125,6 +125,7 @@ pub struct RunOptions {
     pub asm_override: Option<CaseSource>,
     pub tass_path: PathBuf,
     pub extra_includes: Vec<PathBuf>,
+    pub extra_sources: Vec<PathBuf>,
     pub fixture_dir: Option<PathBuf>,
     pub update_fixtures: bool,
     pub extra_defines: Vec<(String, String)>,
@@ -150,6 +151,7 @@ impl Default for RunOptions {
             asm_override: None,
             tass_path: PathBuf::from("64tass"),
             extra_includes: Vec::new(),
+            extra_sources: Vec::new(),
             fixture_dir: None,
             update_fixtures: false,
             extra_defines: Vec::new(),
@@ -276,6 +278,7 @@ pub fn run_cases(
 
     let mut include_paths = default_include_paths(&config.workspace_root, opts.target);
     include_paths.extend(opts.extra_includes.clone());
+    let mut extra_sources = opts.extra_sources.clone();
     let mut defines = opts.extra_defines.clone();
     if !defines.iter().any(|(k, _)| k == "DEBUG_RTST_ENABLED") {
         defines.push(("DEBUG_RTST_ENABLED".to_string(), "1".to_string()));
@@ -288,6 +291,7 @@ pub fn run_cases(
         tass_path: opts.tass_path.clone(),
         include_paths,
         target: opts.target,
+        extra_sources,
         defines,
         extra_args: opts.tass_args.clone(),
     };
@@ -793,11 +797,15 @@ mod debug_capture_tests {
             .iter()
             .find(|c| c.name == CONSOLE_CASE)
             .expect("case present");
-        let debug = case.debug.as_ref().expect("console debug present");
-        let log = debug.console_log.as_ref().expect("console log captured");
+        let msg = case
+            .logs
+            .iter()
+            .find(|line| line.contains("CONSOLE LOGGING FROM ASM"))
+            .cloned();
         assert!(
-            log.contains("CONSOLE LOGGING FROM ASM"),
-            "console log missing expected text: {log:?}"
+            msg.is_some(),
+            "RTST logs missing expected text: {:?}",
+            case.logs
         );
     }
 

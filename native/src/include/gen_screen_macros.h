@@ -2,6 +2,8 @@ GENSCREENMACROS :?= false
 .if !GENSCREENMACROS
 GENSCREENMACROS := true
 
+DEBUG_RTST_ONLY    :?= 0
+
 SetColour .macro colour
     ldx #\colour
     stx PrtColour
@@ -19,32 +21,26 @@ SetBGBColors .macro bg, b
 .endmacro
 
 nl .macro
-    .if !DEBUG_RTST_ONLY
-        phq
-        jsr printNL
-        plq
-    .endif
+    phq
+    jsr printNL
+    plq
 .endmacro
 
 ; Print raw (inline) string after JSR — same calling as M65 pr
 pr .macro str
-    .if !DEBUG_RTST_ONLY
-        phq
-        jsr sPrint
-        .null \str
-        plq
-    .endif
+    phq
+    jsr sPrint
+    .null \str
+    plq
 .endmacro
 
 ; Color print (inline): first a color byte, then string — same as M65 cpr
 cpr .macro colour, str
-    .if !DEBUG_RTST_ONLY
-        phq
-        jsr sCPrint
-        .byte \colour
-        .null \str
-        plq
-    .endif
+    phq
+    jsr sCPrint
+    .byte \colour
+    .null \str
+    plq
 .endmacro
 
 .endif

@@ -51,6 +51,9 @@ include = [
   "native/src/include",
   "native/src/platform/ultimate64/include"
 ]
+extra_sources = [
+  "native/src/platform/cross465/screen.s"
+]
 tass_args = ["-DREMOTE"]
 remote_failure = "warn"
 

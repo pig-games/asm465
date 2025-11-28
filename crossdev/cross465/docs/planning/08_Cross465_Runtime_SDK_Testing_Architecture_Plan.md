@@ -52,3 +52,4 @@
 - [ ] Provide host-side parsers/expectation helpers for the MMIO trace data (diffing overlays, asserting register access patterns).
 - [x] Surface new CLI flags/documentation so developers can enable MMIO capture locally and in CI, keeping artifact formats aligned with the rest of the cross465-test-runner outputs.
 - [ ] Migrate 'old' test cases (debugtest, screentest, parsertest) to the new unit testing framework.
+- [ ] Add catalog-driven `extra_sources` for targets so 64tass assembles platform helper `.s` files (e.g., screen/debug modules) alongside each case without ad-hoc glue, and teach the runner/CLI to pass multiple source files through to 64tass in order. Validate legacy debug logging (RTST + on-target) under the new pipeline and document the catalog/CLI knobs.

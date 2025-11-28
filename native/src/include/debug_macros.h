@@ -9,6 +9,9 @@ DEBUGMACROS := true
 DEBUG_RTST_ENABLED :?= 0
 DEBUG_RTST_ONLY    :?= 0
 
+DBG_TAG_    :?= ""
+DBG_FILTER_ :?= []
+
 .if DEBUG_RTST_ENABLED
 .include "test_rtst.h"
 .endif
@@ -152,10 +155,15 @@ infoC .macro col, str
             .cpr \col, \str
         .endif
         .if DEBUG_RTST_ENABLED
-msg\@:
+            .ctest.logMsg info_prefix
+            .ctest.logMsg msg
+            jmp end
+msg
             .null \str
-            .rtst.logMsg msg\@
-        .endif
+info_prefix
+            .null "[info] "
+end
+       .endif
     .endif
 .endmacro
 
@@ -174,7 +182,13 @@ infoCPtr .macro col, ptr
             plq
         .endif
         .if DEBUG_RTST_ENABLED
-            .rtst.logMsg \ptr
+            .ctest.logMsg info_prefix
+            .ctest.logMsg \ptr
+            jmp end
+            .null \ptr
+info_prefix
+            .null "[info] "
+end
         .endif
     .endif
 .endmacro
@@ -212,6 +226,16 @@ warning .macro str
     .dbg.infoC 7, \str
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
+        .if DEBUG_RTST_ENABLED
+            .ctest.logMsg warn_prefix
+            .ctest.logMsg warnmsg
+            jmp end
+warnmsg
+            .null \str
+warn_prefix
+            .null "[warn] "
+end
+        .endif
     .endif
 .endmacro
 
@@ -219,6 +243,16 @@ warningPtr .macro ptr
     .dbg.infoCPtr 7, \ptr
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumWarnings
+        .if DEBUG_RTST_ENABLED
+            .ctest.logMsg warnptr_prefix
+            .ctest.logMsg warnptr
+            jmp end
+warnptr
+            .null \ptr
+warnptr_prefix
+            .null "[warn] "
+end
+        .endif
     .endif
 .endmacro
 
@@ -254,6 +288,16 @@ error .macro str
     .dbg.infoC 9, \str
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
+        .if DEBUG_RTST_ENABLED
+            .ctest.logMsg err_prefix
+            .ctest.logMsg errmsg
+            jmp end
+errmsg
+            .null \str
+err_prefix
+            .null "[err] "
+end
+        .endif
     .endif
 .endmacro
 
@@ -261,6 +305,16 @@ errorPtr .macro ptr
     .dbg.infoCPtr 9, \ptr
     .if DEBUG_ && (DBG_TAG_ == "" || (DBG_TAG_ in DBG_FILTER_) || ("all" in DBG_FILTER_))
         inc dbg.NumErrors
+        .if DEBUG_RTST_ENABLED
+            .ctest.logMsg errptr_prefix
+            .ctest.logMsg errptr
+            jmp end
+errptr
+            .null \ptr
+errptr_prefix
+            .null "[err] "
+end
+        .endif
     .endif
 .endmacro
 

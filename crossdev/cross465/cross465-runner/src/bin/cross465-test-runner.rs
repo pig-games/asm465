@@ -140,6 +140,7 @@ fn main() -> Result<()> {
                 asm_override,
                 tass_path: cli.tass.clone().unwrap_or_else(|| PathBuf::from("64tass")),
                 extra_includes,
+                extra_sources: Vec::new(),
                 fixture_dir,
                 update_fixtures: cli.update_fixtures,
                 extra_defines: Vec::new(),
@@ -559,6 +560,8 @@ fn resolve_include_paths(workspace: &Path, includes: &[PathBuf]) -> Vec<PathBuf>
 fn apply_entry_overrides(workspace: &Path, entry: &CiMatrixEntry, opts: &mut RunOptions) {
     let resolved = resolve_include_paths(workspace, &entry.includes);
     opts.extra_includes.extend(resolved);
+    let resolved_sources = resolve_include_paths(workspace, &entry.extra_sources);
+    opts.extra_sources.extend(resolved_sources);
     opts.extra_defines.extend(entry.defines.iter().cloned());
     opts.tass_args.extend(entry.tass_args.iter().cloned());
 }
