@@ -43,15 +43,19 @@ pub(crate) fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::Layo
         for x in 0..snapshot.width {
             let cell = snapshot.cell(x, y);
             let glyph = cell.ch.encode_utf8(&mut buffer);
-            let mut format = egui::text::TextFormat::default();
-            format.font_id = font_id.clone();
-            format.color = palette_color(cell.fg);
+            let format = egui::text::TextFormat {
+                font_id: font_id.clone(),
+                color: palette_color(cell.fg),
+                ..Default::default()
+            };
             job.append(glyph, 0.0, format);
         }
         if y + 1 < snapshot.height {
-            let mut format = egui::text::TextFormat::default();
-            format.font_id = font_id.clone();
-            format.color = palette_color(7);
+            let format = egui::text::TextFormat {
+                font_id: font_id.clone(),
+                color: palette_color(7),
+                ..Default::default()
+            };
             job.append("\n", 0.0, format);
         }
     }

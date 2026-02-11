@@ -1712,6 +1712,7 @@ fn setup_scene(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ui_system(
     mut contexts: EguiContexts,
     #[allow(unused_mut)] mut emulator: NonSendMut<EmulatorState>,
@@ -2462,6 +2463,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_sprite_viewport(
     window_query: Query<&Window, With<PrimaryWindow>>,
     mut viewport: ResMut<SpriteViewport>,

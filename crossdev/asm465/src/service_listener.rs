@@ -117,8 +117,7 @@ fn write_service_response<W: Write>(
     writer: &mut W,
     response: ServiceResponseMessage,
 ) -> std::io::Result<()> {
-    serde_json::to_writer(&mut *writer, &response)
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+    serde_json::to_writer(&mut *writer, &response).map_err(std::io::Error::other)?;
     writer.write_all(b"\n")?;
     writer.flush()
 }

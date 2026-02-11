@@ -244,7 +244,7 @@ pub(crate) fn dump_personality_registers(name: &str) -> Result<(), String> {
             })
             .then(a.module.as_str().cmp(b.module.as_str()))
             .then(a.module_impl_id.cmp(&b.module_impl_id))
-            .then(a.register_name.cmp(&b.register_name))
+            .then(a.register_name.cmp(b.register_name))
             .then(match (&a.mapping, &b.mapping) {
                 (
                     bus::MappingDetail::DirectInstance { instance: ia },

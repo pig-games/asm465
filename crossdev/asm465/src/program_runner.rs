@@ -7,6 +7,7 @@ use runtime_sdk::rtst::{Header, State, HEADER_LEN};
 
 use crate::{ProgramRunReport, RtstMonitorConfig, StartupConfig};
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn run_program_with_config(
     bus: Bus,
     config: &StartupConfig,
@@ -114,8 +115,8 @@ fn run_until_rtst_done(
         if cycles % poll_interval != 0 {
             continue;
         }
-        for i in 0..HEADER_LEN {
-            header_buf[i] = cpu.bus_mut().read(base.wrapping_add(i as u16));
+        for (i, slot) in header_buf.iter_mut().enumerate().take(HEADER_LEN) {
+            *slot = cpu.bus_mut().read(base.wrapping_add(i as u16));
         }
         match Header::parse(&header_buf) {
             Ok(header) => {
