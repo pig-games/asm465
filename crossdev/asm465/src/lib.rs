@@ -42,7 +42,7 @@ use bus::personality::Personality;
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{
     adapters::input::InputBackend, unicode_to_screen, Bus, RasterIrqState, VideoState,
-    RASTER_IRQ_MASK,
+    CONSOLE_CHAR_ADDR, CONSOLE_COMMIT_ADDR, RASTER_IRQ_MASK,
 };
 use core6502::{Cpu, RunLimit, RunOutcome};
 use video_backend::VideoOverlaySignals;
@@ -63,15 +63,17 @@ use cpu_worker::{
 use rfd::FileDialog;
 
 #[cfg(feature = "native-service")]
+use bus::mmio::ModuleKind;
+#[cfg(feature = "native-service")]
+use bus::personality::{self, C64_COMPAT};
+#[cfg(feature = "native-service")]
+use bus::personality_v2::{self, MapDecode};
+#[cfg(feature = "native-service")]
 use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
 use instant::Instant;
 use runtime_sdk::rtst::{Header, State, HEADER_LEN};
-#[cfg(feature = "native-service")]
-use bus::personality::{self, C64_COMPAT, PersonalityMmioKind};
-#[cfg(feature = "native-service")]
-use bus::personality_v2::{self, MapDecode};
 #[cfg(feature = "native-service")]
 use std::fs;
 #[cfg(feature = "native-service")]
@@ -435,13 +437,15 @@ fn format_addr(addr: u16) -> String {
 }
 
 #[cfg(feature = "native-service")]
-fn describe_mmio_kind(kind: PersonalityMmioKind) -> &'static str {
+fn describe_mmio_kind(kind: ModuleKind) -> &'static str {
     match kind {
-        PersonalityMmioKind::Console => "console",
-        PersonalityMmioKind::Display => "display",
-        PersonalityMmioKind::Sprite => "sprite",
-        PersonalityMmioKind::System => "system",
-        PersonalityMmioKind::Input => "input",
+        ModuleKind::Console => "console",
+        ModuleKind::Display => "display",
+        ModuleKind::Sprite => "sprite",
+        ModuleKind::System => "system",
+        ModuleKind::Input => "input",
+        ModuleKind::Video => "video",
+        ModuleKind::Audio => "audio",
     }
 }
 
@@ -2491,7 +2495,7 @@ pub(crate) fn run_program_with_config(
         match run_until_rtst_done(&mut cpu, rtst, config.max_cycles, progress_timeout) {
             Ok(outcome) => outcome,
             Err(message) => {
-                let bus = cpu.bus;
+                let bus = cpu.into_bus();
                 return Err((
                     bus,
                     ProgramRunReport {
@@ -2504,7 +2508,7 @@ pub(crate) fn run_program_with_config(
     } else {
         cpu.run_for(config.max_cycles)
     };
-    let bus = cpu.bus;
+    let bus = cpu.into_bus();
 
     let limit_desc = match outcome.limit {
         RunLimit::CycleBudget => "cycle budget",
@@ -2557,7 +2561,7 @@ fn run_until_rtst_done(
             continue;
         }
         for i in 0..HEADER_LEN {
-            header_buf[i] = cpu.bus.read(base.wrapping_add(i as u16));
+            header_buf[i] = cpu.bus_mut().read(base.wrapping_add(i as u16));
         }
         match Header::parse(&header_buf) {
             Ok(header) => {
@@ -2605,12 +2609,12 @@ pub(crate) fn write_console_line(bus: &mut Bus, line: &str) {
     for ch in line.chars() {
         let screen_code = unicode_to_screen(ch);
         if screen_code == b'\n' {
-            bus.write(0xDF01, 0);
+            bus.write(CONSOLE_COMMIT_ADDR, 0);
         } else {
-            bus.write(0xDF00, screen_code);
+            bus.write(CONSOLE_CHAR_ADDR, screen_code);
         }
     }
-    bus.write(0xDF01, 0);
+    bus.write(CONSOLE_COMMIT_ADDR, 0);
 }
 
 fn sprite_virtual_size() -> Vec2 {

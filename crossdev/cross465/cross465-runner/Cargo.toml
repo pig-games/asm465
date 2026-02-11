@@ -20,3 +20,6 @@ thiserror = "1.0"
 toml = "0.8"
 ureq = "2.9"
 base64 = "0.21"
+
+[lints]
+workspace = true

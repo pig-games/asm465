@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use crate::mmio::{
     InputReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
 };
-use crate::MmioDevice;
 
 /// Maximum number of pads tracked by the shared controller backend.
 pub const CONTROLLER_PAD_COUNT: usize = 4;
@@ -358,9 +357,9 @@ impl InputMmio {
     }
 }
 
-impl MmioDevice for InputMmio {
+impl Module for InputMmio {
     fn read(&mut self, addr: u16) -> u8 {
-        match addr & 0x0004 {
+        match addr & 0x0007 {
             0x0000 => self.read_reg_locked(InputReg::ButtonsLo),
             0x0001 => self.read_reg_locked(InputReg::ButtonsHi),
             0x0002 => self.read_reg_locked(InputReg::PotX),
@@ -371,7 +370,7 @@ impl MmioDevice for InputMmio {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        match addr & 0x0004 {
+        match addr & 0x0007 {
             0x0000 => self.write_reg_locked(InputReg::ButtonsLo, value),
             0x0001 => self.write_reg_locked(InputReg::ButtonsHi, value),
             0x0002 => self.write_reg_locked(InputReg::PotX, value),
@@ -380,9 +379,7 @@ impl MmioDevice for InputMmio {
             _ => {}
         }
     }
-}
 
-impl Module for InputMmio {
     fn kind(&self) -> ModuleKind {
         ModuleKind::Input
     }

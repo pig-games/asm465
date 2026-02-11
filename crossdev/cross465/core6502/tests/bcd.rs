@@ -18,7 +18,8 @@ fn cpu_with_program(code: &[u8], load_addr: u16) -> Cpu {
 
 fn run_until_brk(cpu: &mut Cpu, max_steps: usize) {
     for _ in 0..max_steps {
-        let op = cpu.bus.read(cpu.pc);
+        let pc = cpu.pc;
+        let op = cpu.bus_mut().read(pc);
         if op == 0x00 {
             cpu.step();
             break;

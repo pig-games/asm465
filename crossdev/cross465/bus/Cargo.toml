@@ -11,3 +11,6 @@ console = "0.16.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
+
+[lints]
+workspace = true

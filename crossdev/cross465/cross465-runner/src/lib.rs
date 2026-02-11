@@ -11,8 +11,8 @@ pub use asmtest::{run_asm6502_case, AsmTestBuilder, AsmTestResult};
 pub use assembler::{assemble_case, default_include_paths, AssemblerConfig, AssemblyOutput};
 pub use catalog::{CaseSource, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, CiRemoteFailure};
 pub use executor::{
-    backend_for_target, Cross465Backend, ExecutionConfig, ExecutionOutput, Mega65Backend,
-    TargetBackend, TargetKind, Ultimate64Backend,
+    backend_for_target, BackendOverrides, Cross465Backend, ExecutionConfig, ExecutionOutput,
+    Mega65Backend, TargetBackend, TargetKind, Ultimate64Backend,
 };
 pub use expect::{
     assert_case_failed, assert_case_ok, expect_eq, expect_hash_eq, expect_in, expect_mem_eq,
@@ -139,6 +139,7 @@ pub struct RunOptions {
     pub debug_rtst_only: bool,
     pub progress_timeout_ms: u64,
     pub transport_retries: u32,
+    pub backend_overrides: BackendOverrides,
 }
 
 impl Default for RunOptions {
@@ -165,6 +166,7 @@ impl Default for RunOptions {
             debug_rtst_only: false,
             progress_timeout_ms: 750,
             transport_retries: 3,
+            backend_overrides: BackendOverrides::default(),
         }
     }
 }
@@ -309,7 +311,11 @@ pub fn run_cases(
     );
     let mut reports = Vec::new();
     let personality_label = effective_personality(opts);
-    let backend = executor::backend_for_target(opts.target, Some(config.workspace_root.clone()));
+    let backend = executor::backend_for_target(
+        opts.target,
+        Some(config.workspace_root.clone()),
+        Some(&opts.backend_overrides),
+    );
     let mut debug_warnings = HashSet::new();
     for case in &cases {
         let assembly = assemble_case(case, &assembler_cfg)?;

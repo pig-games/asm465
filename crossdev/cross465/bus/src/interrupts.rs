@@ -129,7 +129,6 @@ impl InterruptController {
 struct LevelLine {
     pending: AtomicU32,
     enabled: AtomicU32,
-    line: AtomicBool,
 }
 
 impl LevelLine {
@@ -137,61 +136,50 @@ impl LevelLine {
         Self {
             pending: AtomicU32::new(0),
             enabled: AtomicU32::new(0),
-            line: AtomicBool::new(false),
         }
     }
 
     fn raise(&self, mask: u32) {
-        let prev = self.pending.fetch_or(mask, Ordering::SeqCst);
-        let new_pending = prev | mask;
-        self.update_line(new_pending);
+        self.pending.fetch_or(mask, Ordering::AcqRel);
     }
 
     fn clear(&self, mask: u32) {
-        let prev = self.pending.fetch_and(!mask, Ordering::SeqCst);
-        let new_pending = prev & !mask;
-        self.update_line(new_pending);
+        self.pending.fetch_and(!mask, Ordering::AcqRel);
     }
 
     fn enable_bits(&self, mask: u32) {
-        let prev = self.enabled.fetch_or(mask, Ordering::SeqCst);
-        let _ = prev;
-        self.update_line(self.pending.load(Ordering::SeqCst));
+        self.enabled.fetch_or(mask, Ordering::AcqRel);
     }
 
     fn disable_bits(&self, mask: u32) {
-        let prev = self.enabled.fetch_and(!mask, Ordering::SeqCst);
-        let _ = prev;
-        self.update_line(self.pending.load(Ordering::SeqCst));
+        self.enabled.fetch_and(!mask, Ordering::AcqRel);
     }
 
     fn set_enable(&self, value: u32) {
-        self.enabled.store(value, Ordering::SeqCst);
-        self.update_line(self.pending.load(Ordering::SeqCst));
+        self.enabled.store(value, Ordering::Release);
     }
 
     fn pending(&self) -> u32 {
-        self.pending.load(Ordering::SeqCst)
+        self.pending.load(Ordering::Acquire)
     }
 
     fn enabled(&self) -> u32 {
-        self.enabled.load(Ordering::SeqCst)
+        self.enabled.load(Ordering::Acquire)
     }
 
+    /// Compute the line state from both atomics on every read rather than
+    /// caching in a separate `AtomicBool`.  This eliminates a TOCTOU race
+    /// where concurrent modifications to `pending` and `enabled` could leave
+    /// a stale cached `line` value.
     fn line(&self) -> bool {
-        self.line.load(Ordering::SeqCst)
-    }
-
-    fn update_line(&self, pending: u32) {
-        let enabled = self.enabled.load(Ordering::SeqCst);
-        let asserted = (pending & enabled) != 0;
-        self.line.store(asserted, Ordering::SeqCst);
+        let p = self.pending.load(Ordering::Acquire);
+        let e = self.enabled.load(Ordering::Acquire);
+        (p & e) != 0
     }
 }
 
 struct EdgeLine {
     pending: AtomicU32,
-    line: AtomicBool,
     edge: AtomicBool,
 }
 
@@ -199,47 +187,46 @@ impl EdgeLine {
     fn new() -> Self {
         Self {
             pending: AtomicU32::new(0),
-            line: AtomicBool::new(false),
             edge: AtomicBool::new(false),
         }
     }
 
+    /// Raise one or more NMI sources.  The return value of `fetch_or` gives
+    /// the pending word *before* the bits were set, so the edge decision is
+    /// based on the atomically-correct previous state.
     fn raise(&self, mask: u32) {
-        let prev = self.pending.fetch_or(mask, Ordering::SeqCst);
-        let new_pending = prev | mask;
-        self.update_line(new_pending);
+        let prev = self.pending.fetch_or(mask, Ordering::AcqRel);
+        // Line transitions from deasserted to asserted → latch the edge.
+        if prev == 0 {
+            self.edge.store(true, Ordering::Release);
+        }
     }
 
+    /// Clear NMI source bits.  If pending drops to zero the line deasserts;
+    /// an unserviced edge latch is cleared (matching original semantics).
     fn clear(&self, mask: u32) {
-        let prev = self.pending.fetch_and(!mask, Ordering::SeqCst);
+        let prev = self.pending.fetch_and(!mask, Ordering::AcqRel);
         let new_pending = prev & !mask;
-        self.update_line(new_pending);
+        if prev != 0 && new_pending == 0 {
+            self.edge.store(false, Ordering::Release);
+        }
     }
 
     fn pending(&self) -> u32 {
-        self.pending.load(Ordering::SeqCst)
+        self.pending.load(Ordering::Acquire)
     }
 
+    /// Compute lazily — no cached `AtomicBool` to go stale.
     fn line(&self) -> bool {
-        self.line.load(Ordering::SeqCst)
+        self.pending.load(Ordering::Acquire) != 0
     }
 
     fn edge_latched(&self) -> bool {
-        self.edge.load(Ordering::SeqCst)
+        self.edge.load(Ordering::Acquire)
     }
 
     fn take_edge(&self) -> bool {
-        self.edge.swap(false, Ordering::SeqCst)
-    }
-
-    fn update_line(&self, pending: u32) {
-        let should_assert = pending != 0;
-        let was_asserted = self.line.swap(should_assert, Ordering::SeqCst);
-        if should_assert && !was_asserted {
-            self.edge.store(true, Ordering::SeqCst);
-        } else if !should_assert && was_asserted {
-            self.edge.store(false, Ordering::SeqCst);
-        }
+        self.edge.swap(false, Ordering::AcqRel)
     }
 }
 

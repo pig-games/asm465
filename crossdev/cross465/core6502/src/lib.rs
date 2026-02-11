@@ -120,7 +120,7 @@ pub struct Cpu {
     pub pc: u16,
     pub p: P,
     pub cycles: u64,
-    pub bus: Bus,
+    bus: Bus,
     pending_nmi: bool,
     pending_irq: bool,
     /// Set to `true` when the CPU hits a `KIL` (jam) opcode.
@@ -168,6 +168,21 @@ impl Cpu {
             pending_irq: false,
             halted: false,
         }
+    }
+
+    /// Borrow the attached bus.
+    pub fn bus(&self) -> &Bus {
+        &self.bus
+    }
+
+    /// Borrow the attached bus mutably.
+    pub fn bus_mut(&mut self) -> &mut Bus {
+        &mut self.bus
+    }
+
+    /// Consume the CPU and return the owned bus.
+    pub fn into_bus(self) -> Bus {
+        self.bus
     }
 
     /// Reset registers to a known state and load `PC` from `$FFFC/$FFFD`.

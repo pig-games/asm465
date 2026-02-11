@@ -18,7 +18,8 @@ fn cpu_with_program(code: &[u8], load_addr: u16) -> Cpu {
 
 fn run_until_brk(cpu: &mut Cpu, max_steps: usize) {
     for _ in 0..max_steps {
-        let op = cpu.bus.read(cpu.pc);
+        let pc = cpu.pc;
+        let op = cpu.bus_mut().read(pc);
         if op == 0x00 {
             cpu.step();
             break;
@@ -76,7 +77,7 @@ fn asl_lsr_rol_ror_acc_and_mem() {
     ];
     let mut cpu = cpu_with_program(&code, 0x8000);
     run_until_brk(&mut cpu, 32);
-    assert_eq!(cpu.bus.mem_mut().data[0xC000], 0x40);
+    assert_eq!(cpu.bus().mem_mut().data[0xC000], 0x40);
 }
 
 #[test]
@@ -168,7 +169,7 @@ fn inc_dec_inx_dex_iny_dey() {
     ];
     let mut cpu = cpu_with_program(&code, 0x8000);
     run_until_brk(&mut cpu, 64);
-    assert_eq!(cpu.bus.mem_mut().data[0xC200], 0x00);
+    assert_eq!(cpu.bus().mem_mut().data[0xC200], 0x00);
     assert_eq!(cpu.x, 0x00);
     assert_eq!(cpu.y, 0x00);
 }
@@ -208,8 +209,8 @@ fn jmp_jsr_rts_rti_php_plp() {
     code.push(0x60);
     code.push(0x00);
     let mut cpu = cpu_with_program(&code, load);
-    cpu.bus.write(0xFFFE, 0x00);
-    cpu.bus.write(0xFFFF, 0x90);
+    cpu.bus_mut().write(0xFFFE, 0x00);
+    cpu.bus_mut().write(0xFFFF, 0x90);
     run_until_brk(&mut cpu, 256);
     assert_eq!(cpu.a, 0xAA);
 }
@@ -235,12 +236,12 @@ fn loads_and_stores_all() {
     ];
     let mut cpu = cpu_with_program(&code, 0x8000);
     run_until_brk(&mut cpu, 64);
-    assert_eq!(cpu.bus.mem_mut().data[0x0010], 0x11);
-    assert_eq!(cpu.bus.mem_mut().data[0x0011], 0x22);
-    assert_eq!(cpu.bus.mem_mut().data[0x0012], 0x33);
-    assert_eq!(cpu.bus.mem_mut().data[0xC300], 0x11);
-    assert_eq!(cpu.bus.mem_mut().data[0xC301], 0x22);
-    assert_eq!(cpu.bus.mem_mut().data[0xC302], 0x33);
+    assert_eq!(cpu.bus().mem_mut().data[0x0010], 0x11);
+    assert_eq!(cpu.bus().mem_mut().data[0x0011], 0x22);
+    assert_eq!(cpu.bus().mem_mut().data[0x0012], 0x33);
+    assert_eq!(cpu.bus().mem_mut().data[0xC300], 0x11);
+    assert_eq!(cpu.bus().mem_mut().data[0xC301], 0x22);
+    assert_eq!(cpu.bus().mem_mut().data[0xC302], 0x33);
 }
 
 #[test]
@@ -289,8 +290,8 @@ fn addressing_modes_indexed() {
         0x00,
     ];
     let mut cpu = cpu_with_program(&code, 0x8000);
-    cpu.bus.mem_mut().data[0x4030] = 0x66;
-    cpu.bus.mem_mut().data[0x4004] = 0x77;
+    cpu.bus().mem_mut().data[0x4030] = 0x66;
+    cpu.bus().mem_mut().data[0x4004] = 0x77;
     run_until_brk(&mut cpu, 128);
     assert_eq!(cpu.a, 0x66);
 }

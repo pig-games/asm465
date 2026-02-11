@@ -8,7 +8,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::{interrupts::InterruptController, Memory, MmioDevice};
+use crate::{interrupts::InterruptController, Memory};
 use toml::value::Table;
 
 /// Logical grouping of a module implementation exposed to the bus.
@@ -327,13 +327,18 @@ impl ModuleDeps {
 }
 
 /// Runtime contract for MMIO modules in the v2 personality system.
-/// Runtime contract for MMIO modules in the v2 personality system.
-pub trait Module: MmioDevice {
+pub trait Module: Any + Send {
     fn kind(&self) -> ModuleKind;
     fn regs(&self) -> &'static [RegisterDesc];
 
     fn read_reg(&mut self, reg: RegId) -> u8;
     fn write_reg(&mut self, reg: RegId, value: u8);
+
+    fn read(&mut self, _addr: u16) -> u8 {
+        0
+    }
+
+    fn write(&mut self, _addr: u16, _value: u8) {}
 
     fn tick(&mut self, _cycles: u32) {}
     fn snapshot(&self) -> ModuleState {
@@ -342,6 +347,16 @@ pub trait Module: MmioDevice {
     fn restore(&mut self, _state: &ModuleState) {}
 
     fn handle_hook(&mut self, _hook: &str, _action: HookAction) {}
+}
+
+impl dyn Module {
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    pub fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 /// Factory for constructing module implementations.

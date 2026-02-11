@@ -6,7 +6,6 @@ use crate::interrupts::InterruptController;
 use crate::mmio::{
     Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc, SystemReg,
 };
-use crate::MmioDevice;
 use std::sync::Arc;
 
 /// MMIO view over the shared interrupt controller, including raster compare
@@ -158,7 +157,7 @@ impl SystemMmio {
     }
 }
 
-impl MmioDevice for SystemMmio {
+impl Module for SystemMmio {
     fn read(&mut self, addr: u16) -> u8 {
         let current = self
             .raster_irq
@@ -244,9 +243,7 @@ impl MmioDevice for SystemMmio {
             _ => {}
         }
     }
-}
 
-impl Module for SystemMmio {
     fn kind(&self) -> ModuleKind {
         ModuleKind::System
     }

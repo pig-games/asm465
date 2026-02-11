@@ -7,7 +7,6 @@
 use crate::mmio::{
     DisplayReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
 };
-use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
 
 /// Immutable snapshot shared with host integrations (Bevy frontend/tests).
@@ -105,7 +104,7 @@ impl DisplayMmio {
     }
 }
 
-impl MmioDevice for DisplayMmio {
+impl Module for DisplayMmio {
     fn read(&mut self, addr: u16) -> u8 {
         match addr & 0x0001 {
             0x00 => self.border_color,
@@ -129,9 +128,7 @@ impl MmioDevice for DisplayMmio {
             _ => {}
         }
     }
-}
 
-impl Module for DisplayMmio {
     fn kind(&self) -> ModuleKind {
         ModuleKind::Display
     }
@@ -189,13 +186,12 @@ impl ModuleFactory for DisplayModuleFactory {
 mod tests {
     use super::*;
     use crate::mmio::{Module, ModuleKind, RegId};
-    use crate::MmioDevice;
 
     #[test]
     fn writes_update_display_colors() {
         let mut mmio = DisplayMmio::new();
-        MmioDevice::write(&mut mmio, 0xDF20, 0x0E);
-        MmioDevice::write(&mut mmio, 0xDF21, 0x05);
+        mmio.write(0xDF20, 0x0E);
+        mmio.write(0xDF21, 0x05);
 
         let snapshot = mmio.output().lock().unwrap().snapshot();
         assert_eq!(snapshot.border_color, 0x0E);

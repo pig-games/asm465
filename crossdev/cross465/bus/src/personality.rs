@@ -5,8 +5,8 @@
 
 use crate::interrupts::InterruptController;
 use crate::{
-    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, input_mmio::InputMmio,
-    sprite_mmio::SpriteMmio, system_mmio::SystemMmio, Memory, MmioDevice,
+    console_mmio::ConsoleMmio, display_mmio::DisplayMmio, input_mmio::InputMmio, mmio::Module,
+    mmio::ModuleKind, sprite_mmio::SpriteMmio, system_mmio::SystemMmio, Memory,
 };
 use core::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
@@ -35,8 +35,8 @@ pub struct DisplayDefaults {
 /// Mapping between an address range and a guest-provided MMIO factory.
 pub struct PersonalityMmio {
     pub range: RangeInclusive<u16>,
-    pub create: fn(&Arc<Mutex<Memory>>, &Arc<InterruptController>) -> Box<dyn MmioDevice>,
-    pub kind: PersonalityMmioKind,
+    pub create: fn(&Arc<Mutex<Memory>>, &Arc<InterruptController>) -> Box<dyn Module>,
+    pub kind: ModuleKind,
 }
 
 /// Metadata describing an interrupt source published by a personality.
@@ -68,16 +68,6 @@ pub enum InterruptTrigger {
     Edge,
 }
 
-/// Enumeration of built-in MMIO module kinds.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PersonalityMmioKind {
-    Console,
-    Display,
-    Sprite,
-    System,
-    Input,
-}
-
 /// Built-in personality mirroring the current “modern retro 2D” setup.
 pub static MODERN_RETRO: Personality = Personality {
     name: "modern-retro",
@@ -86,27 +76,27 @@ pub static MODERN_RETRO: Personality = Personality {
         PersonalityMmio {
             range: RangeInclusive::new(0xDF00, 0xDF1F),
             create: |ram, _| Box::new(ConsoleMmio::new(ram.clone())),
-            kind: PersonalityMmioKind::Console,
+            kind: ModuleKind::Console,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF20, 0xDF21),
             create: |_, _| Box::new(DisplayMmio::new()),
-            kind: PersonalityMmioKind::Display,
+            kind: ModuleKind::Display,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF30, 0xDF37),
             create: |_, _| Box::new(SpriteMmio::new()),
-            kind: PersonalityMmioKind::Sprite,
+            kind: ModuleKind::Sprite,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF40, 0xDF46),
             create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
-            kind: PersonalityMmioKind::System,
+            kind: ModuleKind::System,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDF50, 0xDF53),
             create: |_, _| Box::new(InputMmio::new()),
-            kind: PersonalityMmioKind::Input,
+            kind: ModuleKind::Input,
         },
     ],
     display: DisplayDefaults {
@@ -128,27 +118,27 @@ pub static C64_COMPAT: Personality = Personality {
         PersonalityMmio {
             range: RangeInclusive::new(0xD000, 0xD01F),
             create: |ram, _| Box::new(ConsoleMmio::new(ram.clone())),
-            kind: PersonalityMmioKind::Console,
+            kind: ModuleKind::Console,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xD020, 0xD021),
             create: |_, _| Box::new(DisplayMmio::new()),
-            kind: PersonalityMmioKind::Display,
+            kind: ModuleKind::Display,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xD040, 0xD047),
             create: |_, _| Box::new(SpriteMmio::new()),
-            kind: PersonalityMmioKind::Sprite,
+            kind: ModuleKind::Sprite,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xD048, 0xD04E),
             create: |_, controller| Box::new(SystemMmio::new(controller.clone())),
-            kind: PersonalityMmioKind::System,
+            kind: ModuleKind::System,
         },
         PersonalityMmio {
             range: RangeInclusive::new(0xDC00, 0xDC03),
             create: |_, _| Box::new(InputMmio::new()),
-            kind: PersonalityMmioKind::Input,
+            kind: ModuleKind::Input,
         },
     ],
     display: DisplayDefaults {

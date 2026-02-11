@@ -1,5 +1,5 @@
 use bus::Bus;
-use core6502::{Cpu, P};
+use core6502::Cpu;
 
 fn cpu_with_program(code: &[u8], load: u16) -> Cpu {
     let mut bus = Bus::new();
@@ -38,7 +38,8 @@ fn console_mmio_prints_hi() {
     let mut cpu = cpu_with_program(&code, 0x8000);
     // Run enough steps to hit BRK
     for _ in 0..32 {
-        if cpu.bus.read(cpu.pc) == 0x00 {
+        let pc = cpu.pc;
+        if cpu.bus_mut().read(pc) == 0x00 {
             cpu.step();
             break;
         }

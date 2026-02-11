@@ -9,3 +9,6 @@ bitflags = "2"
 
 [dev-dependencies]
 bus = { path = "../bus", features = ["testhooks"] }
+
+[lints]
+workspace = true

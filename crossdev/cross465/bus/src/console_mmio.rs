@@ -16,7 +16,6 @@ use crate::mmio::{
     ConsoleReg, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
 };
 use crate::Memory;
-use crate::MmioDevice;
 use crate::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii};
 use console::style;
 use console::Term;
@@ -417,9 +416,7 @@ impl ConsoleMmio {
 
     /// Apply the current X/Y cursor registers to both the terminal and buffer.
     pub fn set_location(&mut self) {
-        self.term
-            .move_cursor_to(self.x.into(), self.y.into())
-            .ok();
+        self.term.move_cursor_to(self.x.into(), self.y.into()).ok();
         self.output.lock().unwrap().set_cursor(self.x, self.y);
     }
 
@@ -487,25 +484,22 @@ impl ConsoleMmio {
     }
 }
 
-impl MmioDevice for ConsoleMmio {
-    /// Returns 0 for all addresses; the registers are write‑only in this device.
+impl Module for ConsoleMmio {
+    /// Returns 0 for all addresses; the registers are write-only in this device.
     fn read(&mut self, addr: u16) -> u8 {
-        let val = match addr & 0x001F {
-            0x00 | 0x01 | 0x02 => 0, // write-only registers
+        match addr & 0x001F {
+            0x00 | 0x01 | 0x02 => 0,
             0x04 => self.x,
             0x05 => self.y,
             0x07 => self.color,
             0x08 => self.bg_color,
             0x09 => self.lptr,
-            0x0a => self.hptr,
-            0x0b => self.plength,
+            0x0A => self.hptr,
+            0x0B => self.plength,
             _ => 0,
-        };
-        //println!("ConsoleMmio: read {:#06x} => {}", addr, val);
-        val
+        }
     }
 
-    /// Dispatch writes to the appropriate “register”.
     fn write(&mut self, addr: u16, value: u8) {
         match addr & 0x001F {
             0x00 => self.push_char(value),
@@ -518,14 +512,12 @@ impl MmioDevice for ConsoleMmio {
             0x07 => self.set_color(value),
             0x08 => self.set_bg_color(value),
             0x09 => self.set_lptr(value),
-            0x0a => self.set_hptr(value),
-            0x0b => self.print(value), // only requires previous call to set_lptr(val), the passed value is the high ptr for the text to be printed.
-            _ => { /* reserved for future features (cursor, color, clear, etc.) */ }
+            0x0A => self.set_hptr(value),
+            0x0B => self.print(value),
+            _ => {}
         }
     }
-}
 
-impl Module for ConsoleMmio {
     fn kind(&self) -> ModuleKind {
         ModuleKind::Console
     }

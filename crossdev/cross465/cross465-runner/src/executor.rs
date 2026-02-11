@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use bus::Bus;
 use runtime_sdk::rtst::{
-    Header, BASE_LAYOUT_CROSS465, BASE_LAYOUT_MEGA65, BASE_LAYOUT_ULTIMATE64, HEADER_LEN,
+    Header, RtstError, BASE_LAYOUT_CROSS465, BASE_LAYOUT_MEGA65, BASE_LAYOUT_ULTIMATE64, HEADER_LEN,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -49,6 +49,21 @@ pub struct ExecutionConfig {
     pub capture_overlay: bool,
 }
 
+/// Optional endpoint/runtime overrides threaded from CLI or CI matrix entries.
+#[derive(Clone, Debug, Default)]
+pub struct BackendOverrides {
+    pub ultimate64_host: Option<String>,
+    pub ultimate64_port: Option<u16>,
+    pub asm465_native_host: Option<String>,
+    pub asm465_native_port: Option<u16>,
+    pub asm465_bridge_host: Option<String>,
+    pub asm465_bridge_port: Option<u16>,
+    pub asm465_ws_host: Option<String>,
+    pub asm465_ws_port: Option<u16>,
+    pub asm465_max_cycles: Option<u64>,
+    pub asm465_keep_alive: Option<bool>,
+}
+
 /// Results captured from executing a PRG.
 pub struct ExecutionOutput {
     pub rtst_region: Vec<u8>,
@@ -77,6 +92,126 @@ pub struct OverlaySample {
     pub raster: u16,
     pub sprite_collisions: u8,
     pub background_collisions: u8,
+}
+
+struct RtstProgressTracker {
+    progress_deadline: Option<Duration>,
+    initialized: bool,
+    last_header: Option<Header>,
+    last_wpos: u16,
+    last_progress: Instant,
+}
+
+impl RtstProgressTracker {
+    fn new(progress_deadline: Option<Duration>) -> Self {
+        Self {
+            progress_deadline,
+            initialized: false,
+            last_header: None,
+            last_wpos: 0,
+            last_progress: Instant::now(),
+        }
+    }
+
+    fn state(&self) -> Option<runtime_sdk::rtst::State> {
+        self.last_header.as_ref().map(|header| header.state())
+    }
+
+    fn wpos(&self) -> u16 {
+        self.last_wpos
+    }
+
+    fn enforce_progress_deadline(&self) -> Result<(), RunnerError> {
+        if self.initialized {
+            if let Some(limit) = self.progress_deadline {
+                if self.last_progress.elapsed() >= limit {
+                    return Err(RunnerError::NoProgress {
+                        state: self.state(),
+                        wpos: self.last_wpos,
+                        elapsed_ms: self.last_progress.elapsed().as_millis() as u64,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn observe_header(&mut self, header: Header) {
+        if !self.initialized {
+            self.initialized = true;
+            self.last_progress = Instant::now();
+        }
+
+        if header.write_pos() != self.last_wpos {
+            self.last_wpos = header.write_pos();
+            self.last_progress = Instant::now();
+        } else if self.last_header.as_ref().map(|prev| prev.state()) != Some(header.state()) {
+            self.last_progress = Instant::now();
+        }
+
+        self.last_header = Some(header);
+    }
+
+    fn handle_parse_error(&self, err: RtstError, timed_out: bool) -> Result<(), RunnerError> {
+        if !self.initialized {
+            if let Some(limit) = self.progress_deadline {
+                if self.last_progress.elapsed() >= limit {
+                    return Err(RunnerError::ProtocolInit { source: err });
+                }
+            }
+            if timed_out {
+                return Err(RunnerError::RtstParse(err));
+            }
+            Ok(())
+        } else {
+            Err(RunnerError::RtstParse(err))
+        }
+    }
+}
+
+fn poll_rtst_loop<F>(
+    mut read_header: F,
+    timeout: Option<Duration>,
+    progress_deadline: Option<Duration>,
+    poll_delay: Duration,
+) -> Result<(), RunnerError>
+where
+    F: FnMut() -> Result<Vec<u8>, RunnerError>,
+{
+    let start = Instant::now();
+    let mut tracker = RtstProgressTracker::new(progress_deadline);
+
+    loop {
+        tracker.enforce_progress_deadline()?;
+
+        let header_bytes = read_header()?;
+        match Header::parse(&header_bytes) {
+            Ok(header) => {
+                tracker.observe_header(header);
+                if header.state().is_terminal() {
+                    return Ok(());
+                }
+                if let Some(limit) = timeout {
+                    if start.elapsed() >= limit {
+                        return Err(RunnerError::Timeout {
+                            cycles: 0,
+                            state: tracker.state(),
+                            wpos: tracker.wpos(),
+                            pc: 0,
+                        });
+                    }
+                }
+            }
+            Err(err) => {
+                let timed_out = timeout
+                    .map(|limit| start.elapsed() >= limit)
+                    .unwrap_or(false);
+                tracker.handle_parse_error(err, timed_out)?;
+            }
+        }
+
+        thread::sleep(poll_delay);
+    }
 }
 
 /// Backend contract for running RTST-enabled binaries.
@@ -123,82 +258,48 @@ impl Cross465Backend {
         } else {
             Some(Duration::from_millis(cfg.progress_timeout_ms))
         };
-
-        let mut last_header: Option<Header> = None;
-        let mut last_wpos: u16 = 0;
-        let mut initialized = false;
-        let mut last_progress = Instant::now();
+        let mut tracker = RtstProgressTracker::new(progress_deadline);
 
         loop {
             let step_cycles = cpu.step() as u64;
             cycles = cycles.saturating_add(step_cycles);
             if cycle_budget > 0 && cycles > cycle_budget {
-                let state = last_header.as_ref().map(|h| h.state());
                 return Err(RunnerError::Timeout {
                     cycles,
-                    state,
-                    wpos: last_wpos,
+                    state: tracker.state(),
+                    wpos: tracker.wpos(),
                     pc: cpu.pc,
                 });
             }
-            if initialized {
-                if let Some(limit) = progress_deadline {
-                    if last_progress.elapsed() >= limit {
-                        return Err(RunnerError::NoProgress {
-                            state: last_header.as_ref().map(|h| h.state()),
-                            wpos: last_wpos,
-                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
-                        });
-                    }
-                }
-            }
+            tracker.enforce_progress_deadline()?;
             if cycles % poll_interval != 0 {
                 continue;
             }
-            let header_bytes = read_bytes(&mut cpu.bus, base_addr, HEADER_LEN);
+            let header_bytes = read_bytes(cpu.bus_mut(), base_addr, HEADER_LEN);
             match Header::parse(&header_bytes) {
                 Ok(header) => {
-                    if !initialized {
-                        initialized = true;
-                        last_progress = Instant::now();
-                    }
-                    if header.write_pos() != last_wpos {
-                        last_wpos = header.write_pos();
-                        last_progress = Instant::now();
-                    } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state())
-                    {
-                        last_progress = Instant::now();
-                    }
-                    last_header = Some(header);
-                    if last_header.as_ref().unwrap().state().is_terminal() {
+                    tracker.observe_header(header);
+                    if header.state().is_terminal() {
                         break;
                     }
                 }
                 Err(err) => {
-                    if !initialized {
-                        if let Some(limit) = progress_deadline {
-                            if last_progress.elapsed() >= limit {
-                                return Err(RunnerError::ProtocolInit { source: err });
-                            }
-                        }
-                    } else {
-                        return Err(RunnerError::RtstParse(err));
-                    }
+                    tracker.handle_parse_error(err, false)?;
                 }
             }
         }
 
         let mut region = vec![0u8; base.span.min(0x10000 - base.address as usize)];
         for (offset, byte) in region.iter_mut().enumerate() {
-            *byte = cpu.bus.read(base_addr.wrapping_add(offset as u16));
+            *byte = cpu.bus_mut().read(base_addr.wrapping_add(offset as u16));
         }
 
         let mut debug = ExecutionDebug::default();
         if cfg.capture_console {
-            debug.console_log = cpu.bus.console_buffer();
+            debug.console_log = cpu.bus().console_buffer();
         }
         if cfg.capture_display {
-            if let Some(handle) = cpu.bus.display_output_handle() {
+            if let Some(handle) = cpu.bus().display_output_handle() {
                 if let Ok(output) = handle.lock() {
                     let snapshot = output.snapshot();
                     debug.display = Some(DisplaySample {
@@ -290,6 +391,17 @@ impl Ultimate64BackendConfig {
         }
         cfg
     }
+
+    pub fn from_sources(overrides: &BackendOverrides) -> Self {
+        let mut cfg = Self::from_env();
+        if let Some(host) = &overrides.ultimate64_host {
+            cfg.host = host.clone();
+        }
+        if let Some(port) = overrides.ultimate64_port {
+            cfg.port = port;
+        }
+        cfg
+    }
 }
 
 /// REST backend for Ultimate64 hardware.
@@ -321,76 +433,19 @@ impl Ultimate64Backend {
         } else {
             Some(Duration::from_millis(cfg.progress_timeout_ms))
         };
-        let mut last_progress = Instant::now();
-        let mut initialized = false;
-        let mut last_header: Option<Header> = None;
-        let mut last_wpos: u16 = 0;
-        let start = Instant::now();
         let client = Ultimate64Client::connect(&self.config)?;
         self.retry_transport(|| client.run_program(prg), cfg.transport_retries)?;
-        loop {
-            if initialized {
-                if let Some(limit) = progress_deadline {
-                    if last_progress.elapsed() >= limit {
-                        return Err(RunnerError::NoProgress {
-                            state: last_header.as_ref().map(|h| h.state()),
-                            wpos: last_wpos,
-                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
-                        });
-                    }
-                }
-            }
-            let header_bytes = self.retry_transport(
-                || client.read_memory(layout.address, HEADER_LEN),
-                cfg.transport_retries,
-            )?;
-            let header = match Header::parse(&header_bytes) {
-                Ok(header) => header,
-                Err(err) => {
-                    if !initialized {
-                        if let Some(limit) = progress_deadline {
-                            if last_progress.elapsed() >= limit {
-                                return Err(RunnerError::ProtocolInit { source: err });
-                            }
-                        }
-                        if let Some(limit) = timeout {
-                            if start.elapsed() >= limit {
-                                return Err(RunnerError::RtstParse(err));
-                            }
-                        }
-                    } else {
-                        return Err(RunnerError::RtstParse(err));
-                    }
-                    thread::sleep(self.config.poll_delay);
-                    continue;
-                }
-            };
-            if !initialized {
-                initialized = true;
-                last_progress = Instant::now();
-            }
-            if header.write_pos() != last_wpos {
-                last_wpos = header.write_pos();
-                last_progress = Instant::now();
-            } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state()) {
-                last_progress = Instant::now();
-            }
-            last_header = Some(header);
-            if header.state().is_terminal() {
-                break;
-            }
-            if let Some(limit) = timeout {
-                if start.elapsed() >= limit {
-                    return Err(RunnerError::Timeout {
-                        cycles: 0,
-                        state: Some(header.state()),
-                        wpos: header.write_pos(),
-                        pc: 0,
-                    });
-                }
-            }
-            thread::sleep(self.config.poll_delay);
-        }
+        poll_rtst_loop(
+            || {
+                self.retry_transport(
+                    || client.read_memory(layout.address, HEADER_LEN),
+                    cfg.transport_retries,
+                )
+            },
+            timeout,
+            progress_deadline,
+            self.config.poll_delay,
+        )?;
         let rtst = self.retry_transport(
             || client.read_memory(layout.address, layout.span),
             cfg.transport_retries,
@@ -425,7 +480,9 @@ impl Ultimate64Backend {
 
 impl Default for Ultimate64Backend {
     fn default() -> Self {
-        Self::new(Ultimate64BackendConfig::from_env())
+        Self::new(Ultimate64BackendConfig::from_sources(
+            &BackendOverrides::default(),
+        ))
     }
 }
 
@@ -572,74 +629,17 @@ impl Mega65Backend {
         } else {
             Some(Duration::from_millis(cfg.progress_timeout_ms))
         };
-        let mut last_progress = Instant::now();
-        let mut initialized = false;
-        let mut last_header: Option<Header> = None;
-        let mut last_wpos: u16 = 0;
-        let start = Instant::now();
-        loop {
-            if initialized {
-                if let Some(limit) = progress_deadline {
-                    if last_progress.elapsed() >= limit {
-                        return Err(RunnerError::NoProgress {
-                            state: last_header.as_ref().map(|h| h.state()),
-                            wpos: last_wpos,
-                            elapsed_ms: last_progress.elapsed().as_millis() as u64,
-                        });
-                    }
-                }
-            }
-            let header_bytes = self.retry_transport(
-                || client.read_memory(layout.address, HEADER_LEN),
-                cfg.transport_retries,
-            )?;
-            let header = match Header::parse(&header_bytes) {
-                Ok(header) => header,
-                Err(err) => {
-                    if !initialized {
-                        if let Some(limit) = progress_deadline {
-                            if last_progress.elapsed() >= limit {
-                                return Err(RunnerError::ProtocolInit { source: err });
-                            }
-                        }
-                        if let Some(limit) = timeout {
-                            if start.elapsed() >= limit {
-                                return Err(RunnerError::RtstParse(err));
-                            }
-                        }
-                    } else {
-                        return Err(RunnerError::RtstParse(err));
-                    }
-                    thread::sleep(self.config.poll_delay);
-                    continue;
-                }
-            };
-            if !initialized {
-                initialized = true;
-                last_progress = Instant::now();
-            }
-            if header.write_pos() != last_wpos {
-                last_wpos = header.write_pos();
-                last_progress = Instant::now();
-            } else if last_header.as_ref().map(|prev| prev.state()) != Some(header.state()) {
-                last_progress = Instant::now();
-            }
-            last_header = Some(header);
-            if header.state().is_terminal() {
-                break;
-            }
-            if let Some(limit) = timeout {
-                if start.elapsed() >= limit {
-                    return Err(RunnerError::Timeout {
-                        cycles: 0,
-                        state: Some(header.state()),
-                        wpos: header.write_pos(),
-                        pc: 0,
-                    });
-                }
-            }
-            thread::sleep(self.config.poll_delay);
-        }
+        poll_rtst_loop(
+            || {
+                self.retry_transport(
+                    || client.read_memory(layout.address, HEADER_LEN),
+                    cfg.transport_retries,
+                )
+            },
+            timeout,
+            progress_deadline,
+            self.config.poll_delay,
+        )?;
         let rtst = self.retry_transport(
             || client.read_memory(layout.address, layout.span),
             cfg.transport_retries,
@@ -686,13 +686,17 @@ impl TargetBackend for Mega65Backend {
 pub fn backend_for_target(
     target: TargetKind,
     workspace_root: Option<PathBuf>,
+    overrides: Option<&BackendOverrides>,
 ) -> Box<dyn TargetBackend> {
+    let overrides = overrides.cloned().unwrap_or_default();
     match target {
         TargetKind::Cross465 => Box::new(Cross465Backend::new()),
-        TargetKind::Ultimate64 => Box::new(Ultimate64Backend::default()),
+        TargetKind::Ultimate64 => Box::new(Ultimate64Backend::new(
+            Ultimate64BackendConfig::from_sources(&overrides),
+        )),
         TargetKind::Mega65 => Box::new(Mega65Backend::default()),
         TargetKind::Asm465Native | TargetKind::Asm465Wasm => Box::new(Asm465Backend::new(
-            Asm465BackendConfig::from_env(target, workspace_root),
+            Asm465BackendConfig::from_sources(target, workspace_root, &overrides),
         )),
     }
 }
@@ -953,7 +957,11 @@ struct BridgeServiceConfig {
 }
 
 impl Asm465BackendConfig {
-    pub fn from_env(target: TargetKind, workspace_root: Option<PathBuf>) -> Self {
+    pub fn from_sources(
+        target: TargetKind,
+        workspace_root: Option<PathBuf>,
+        overrides: &BackendOverrides,
+    ) -> Self {
         let max_cycles = env::var("CROSS465_MAX_CYCLES")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1030,6 +1038,43 @@ impl Asm465BackendConfig {
             log_dir,
             keep_alive,
         }
+        .with_overrides(overrides)
+    }
+
+    fn with_overrides(mut self, overrides: &BackendOverrides) -> Self {
+        if let Some(cycles) = overrides.asm465_max_cycles {
+            self.max_cycles = cycles;
+        }
+        if let Some(keep_alive) = overrides.asm465_keep_alive {
+            self.keep_alive = keep_alive;
+        }
+
+        match &mut self.endpoint {
+            Asm465EndpointConfig::Native(endpoint) => {
+                if let Some(host) = &overrides.asm465_native_host {
+                    endpoint.host = host.clone();
+                }
+                if let Some(port) = overrides.asm465_native_port {
+                    endpoint.port = port;
+                }
+            }
+            Asm465EndpointConfig::Bridge(endpoint) => {
+                if let Some(host) = &overrides.asm465_bridge_host {
+                    endpoint.tcp_host = host.clone();
+                }
+                if let Some(port) = overrides.asm465_bridge_port {
+                    endpoint.tcp_port = port;
+                }
+                if let Some(host) = &overrides.asm465_ws_host {
+                    endpoint.ws_host = host.clone();
+                }
+                if let Some(port) = overrides.asm465_ws_port {
+                    endpoint.ws_port = port;
+                }
+            }
+        }
+
+        self
     }
 }
 

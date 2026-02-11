@@ -4,7 +4,6 @@ use crate::mmio::{
     BitField, Module, ModuleDeps, ModuleFactory, ModuleKind, ModuleOptions, RegId, RegisterDesc,
     SpriteReg,
 };
-use crate::MmioDevice;
 use std::sync::{Arc, Mutex};
 
 /// Number of sprite slots available through the MMIO interface.
@@ -166,7 +165,7 @@ impl SpriteMmio {
     }
 }
 
-impl MmioDevice for SpriteMmio {
+impl Module for SpriteMmio {
     fn read(&mut self, addr: u16) -> u8 {
         let slot = (self.spr_select as usize) % SPRITE_SLOTS;
         match addr & 0x000F {
@@ -249,9 +248,7 @@ impl MmioDevice for SpriteMmio {
             _ => {}
         }
     }
-}
 
-impl Module for SpriteMmio {
     fn kind(&self) -> ModuleKind {
         ModuleKind::Sprite
     }

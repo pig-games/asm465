@@ -4,7 +4,7 @@
 //! It contains:
 //!
 //! * [`Memory`] — a 64 KB RAM abstraction shared by all MMIO devices.
-//! * [`MmioDevice`] — a trait for memory-mapped I/O peripherals.
+//! * [`Module`] — a trait for memory-mapped I/O peripherals.
 //! * [`Bus`] — the actual 6502 bus, with RAM and personality-driven MMIO layout.
 //! * [`personality`] — descriptors that define which MMIO modules to map and in
 //!   which address ranges.
@@ -156,7 +156,6 @@ mod tests {
         RegisterDesc, SystemReg,
     };
     use crate::personality;
-    use crate::MmioDevice;
 
     #[test]
     fn builtin_registry_contains_expected_factories() {
@@ -767,7 +766,7 @@ decode = { sparse = [
         value: u8,
     }
 
-    impl MmioDevice for HooksModule {
+    impl Module for HooksModule {
         fn read(&mut self, _addr: u16) -> u8 {
             self.value
         }
@@ -775,9 +774,7 @@ decode = { sparse = [
         fn write(&mut self, _addr: u16, value: u8) {
             self.value = value;
         }
-    }
 
-    impl Module for HooksModule {
         fn kind(&self) -> ModuleKind {
             ModuleKind::System
         }
@@ -828,7 +825,6 @@ decode = { sparse = [
 
 pub use utils::{cmb_color_to_ansi, petscii_to_unicode, screen_to_petscii, unicode_to_screen}; // convenience re-export
 
-use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::ops::RangeInclusive;
@@ -842,13 +838,18 @@ use console_mmio::ConsoleMmio;
 use display_mmio::DisplayMmio;
 use input_mmio::{button_bit, ControllerButton, InputMmio, InputPadSnapshot, CONTROLLER_PAD_COUNT};
 use interrupts::InterruptController;
-use personality::{InterruptLine, Personality, PersonalityMmioKind};
+use personality::{InterruptLine, Personality};
 use personality_v2::{
     CompileError as PersonalityCompileError, ComputeExpr, Condition, InputSignals, InterruptConfig,
     Map, MapDecode, Mirror, OpenBusPolicy, OpenBusRegion, PersonalityDef, PersonalityMetadata,
     Transform, ValueBuilder,
 };
 use sprite_mmio::SpriteMmio;
+
+/// Default console character write register for built-in legacy personalities.
+pub const CONSOLE_CHAR_ADDR: u16 = 0xDF00;
+/// Default console newline/commit register for built-in legacy personalities.
+pub const CONSOLE_COMMIT_ADDR: u16 = 0xDF01;
 
 const CONTROLLER_BUTTONS: [ControllerButton; 16] = [
     ControllerButton::DPadUp,
@@ -939,37 +940,6 @@ impl Default for Memory {
     }
 }
 
-/// Trait for memory-mapped I/O devices.
-///
-/// Devices must implement:
-/// - `read`: called on bus reads from the device's address range.
-/// - `write`: called on bus writes to the device's address range.
-///
-/// ### Trait bounds
-/// - `Any`: so devices can be downcast for inspection/configuration in tests.
-/// - `Send`: so devices can be moved across threads if needed in the future.
-pub trait MmioDevice: Any + Send {
-    /// Read a byte from the device.
-    fn read(&mut self, addr: u16) -> u8;
-
-    /// Write a byte to the device.
-    fn write(&mut self, addr: u16, value: u8);
-}
-
-impl dyn MmioDevice {
-    /// Downcast helper for `&dyn MmioDevice`.
-    #[inline]
-    pub fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    /// Downcast helper for `&mut dyn MmioDevice`.
-    #[inline]
-    pub fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
 /// The main 6502 system bus: RAM plus pluggable MMIO devices.
 ///
 /// The bus owns:
@@ -988,8 +958,8 @@ pub struct Bus {
 
 struct MappedDevice {
     range: RangeInclusive<u16>,
-    device: Box<dyn MmioDevice>,
-    kind: Option<PersonalityMmioKind>,
+    device: Box<dyn Module>,
+    kind: Option<ModuleKind>,
 }
 
 struct PersonalityRuntime {
@@ -1000,7 +970,7 @@ struct PersonalityRuntime {
     maps: Vec<Map>,
     mirrors: Vec<Mirror>,
     open_bus: Vec<OpenBusRegion>,
-    address_table: Vec<Option<AddressSlot>>,
+    address_table: Vec<Option<Arc<AddressSlot>>>,
     conditions: BTreeMap<String, Condition>,
     condition_states: BTreeMap<String, bool>,
     signals: SignalStore,
@@ -1680,7 +1650,7 @@ impl PersonalityRuntime {
             .get(addr as usize)
             .and_then(|cell| cell.as_ref())
         {
-            Some(slot) => slot.clone(),
+            Some(slot) => Arc::clone(slot),
             None => {
                 if let Some(value) = self.open_bus_value(addr) {
                     self.record_last_read(value);
@@ -1690,7 +1660,7 @@ impl PersonalityRuntime {
             }
         };
 
-        let value = match slot.kind {
+        let value = match &slot.kind {
             AddressSlotKind::Direct(direct) => self.read_direct(direct),
             AddressSlotKind::Scatter(scatter) => self.read_scatter(scatter),
         };
@@ -1706,7 +1676,7 @@ impl PersonalityRuntime {
             .get(addr as usize)
             .and_then(|cell| cell.as_ref())
         {
-            Some(slot) => slot.clone(),
+            Some(slot) => Arc::clone(slot),
             None => {
                 return if self.is_open_bus_addr(addr) {
                     true
@@ -1716,13 +1686,13 @@ impl PersonalityRuntime {
             }
         };
 
-        match slot.kind {
+        match &slot.kind {
             AddressSlotKind::Direct(direct) => self.write_direct(value, direct),
             AddressSlotKind::Scatter(scatter) => self.write_scatter(value, scatter),
         }
     }
 
-    fn read_direct(&mut self, slot: DirectSlot) -> Option<u8> {
+    fn read_direct(&mut self, slot: &DirectSlot) -> Option<u8> {
         self.apply_register_sets(&slot.pre_read_sets);
 
         let module_index = slot.module_index;
@@ -1799,9 +1769,9 @@ impl PersonalityRuntime {
         Some(value)
     }
 
-    fn read_scatter(&mut self, slot: ScatterSlot) -> Option<u8> {
+    fn read_scatter(&mut self, slot: &ScatterSlot) -> Option<u8> {
         let mut result = 0u8;
-        for entry in slot.entries {
+        for entry in &slot.entries {
             self.apply_register_sets(&entry.pre_read_sets);
             let module = self.modules.get_mut(entry.module_index)?.module.as_mut();
             let mut value = module.read_reg(entry.reg);
@@ -1827,8 +1797,7 @@ impl PersonalityRuntime {
             return;
         }
 
-        let device: &mut dyn MmioDevice = entry.module.as_mut();
-        let Some(input) = device.as_any_mut().downcast_mut::<InputMmio>() else {
+        let Some(input) = entry.module.as_any_mut().downcast_mut::<InputMmio>() else {
             return;
         };
         let snapshot = input.snapshot();
@@ -1862,7 +1831,7 @@ impl PersonalityRuntime {
             .set_int(format!("{}.pot_y", prefix), snapshot.pot_y as i32);
     }
 
-    fn write_direct(&mut self, value: u8, slot: DirectSlot) -> bool {
+    fn write_direct(&mut self, value: u8, slot: &DirectSlot) -> bool {
         self.apply_register_sets(&slot.pre_write_sets);
 
         let cpu_value = value;
@@ -1936,9 +1905,9 @@ impl PersonalityRuntime {
         true
     }
 
-    fn write_scatter(&mut self, value: u8, slot: ScatterSlot) -> bool {
+    fn write_scatter(&mut self, value: u8, slot: &ScatterSlot) -> bool {
         let mut any = false;
-        for entry in slot.entries {
+        for entry in &slot.entries {
             self.apply_register_sets(&entry.pre_write_sets);
             let module_index = entry.module_index;
             let mut adapter_event = None;
@@ -2138,7 +2107,10 @@ impl PersonalityRuntime {
             &self.mirrors,
             &self.module_lookup,
             &self.condition_states,
-        )?;
+        )?
+        .into_iter()
+        .map(|opt| opt.map(Arc::new))
+        .collect();
         Ok(())
     }
 
@@ -2168,17 +2140,13 @@ impl PersonalityRuntime {
     }
 
     fn module_downcast<T: 'static>(&self, kind: ModuleKind) -> Option<&T> {
-        self.module(kind).and_then(|module| {
-            let device: &dyn crate::MmioDevice = module;
-            device.as_any().downcast_ref::<T>()
-        })
+        self.module(kind)
+            .and_then(|module| module.as_any().downcast_ref::<T>())
     }
 
     fn module_downcast_mut<T: 'static>(&mut self, kind: ModuleKind) -> Option<&mut T> {
-        self.module_mut(kind).and_then(|module| {
-            let device: &mut dyn crate::MmioDevice = module;
-            device.as_any_mut().downcast_mut::<T>()
-        })
+        self.module_mut(kind)
+            .and_then(|module| module.as_any_mut().downcast_mut::<T>())
     }
 
     fn set_raster_irq_state(&mut self, state: Arc<RasterIrqState>) {
@@ -2394,7 +2362,7 @@ impl Bus {
     }
 
     /// Map an MMIO device to a specific address range (inclusive).
-    pub fn map_mmio(&mut self, range: RangeInclusive<u16>, dev: Box<dyn MmioDevice>) {
+    pub fn map_mmio(&mut self, range: RangeInclusive<u16>, dev: Box<dyn Module>) {
         self.map_mmio_internal(range, dev, None);
     }
 
@@ -2472,7 +2440,7 @@ impl Bus {
     pub fn tick(&mut self, _cycles: u32) {}
 
     /// Search for an MMIO device covering `addr`.
-    pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn MmioDevice> {
+    pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn Module> {
         for mapped in self.mmio.iter_mut() {
             if mapped.range.contains(&addr) {
                 return Some(mapped.device.as_mut());
@@ -2495,7 +2463,7 @@ impl Bus {
             return self;
         }
         for mapped in self.mmio.iter_mut() {
-            if mapped.kind == Some(PersonalityMmioKind::Console) {
+            if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.petscii_mode = petscii;
                 }
@@ -2512,7 +2480,7 @@ impl Bus {
             }
         }
         for mapped in self.mmio.iter() {
-            if mapped.kind == Some(PersonalityMmioKind::Console) {
+            if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any().downcast_ref::<ConsoleMmio>() {
                     return Some(c.output());
                 }
@@ -2529,7 +2497,7 @@ impl Bus {
             }
         }
         for mapped in self.mmio.iter() {
-            if mapped.kind == Some(PersonalityMmioKind::Display) {
+            if mapped.kind == Some(ModuleKind::Display) {
                 if let Some(d) = mapped.device.as_any().downcast_ref::<DisplayMmio>() {
                     return Some(d.output());
                 }
@@ -2546,7 +2514,7 @@ impl Bus {
             }
         }
         for mapped in self.mmio.iter() {
-            if mapped.kind == Some(PersonalityMmioKind::Input) {
+            if mapped.kind == Some(ModuleKind::Input) {
                 if let Some(i) = mapped.device.as_any().downcast_ref::<InputMmio>() {
                     return Some(i.output());
                 }
@@ -2563,7 +2531,7 @@ impl Bus {
         }
 
         for mapped in self.mmio.iter_mut() {
-            if mapped.kind == Some(PersonalityMmioKind::System) {
+            if mapped.kind == Some(ModuleKind::System) {
                 if let Some(system) = mapped.device.as_any_mut().downcast_mut::<SystemMmio>() {
                     system.set_raster_irq_state(state.clone());
                 }
@@ -2579,7 +2547,7 @@ impl Bus {
             }
         }
         for mapped in self.mmio.iter() {
-            if mapped.kind == Some(PersonalityMmioKind::Sprite) {
+            if mapped.kind == Some(ModuleKind::Sprite) {
                 if let Some(s) = mapped.device.as_any().downcast_ref::<SpriteMmio>() {
                     return Some(s.output());
                 }
@@ -2601,7 +2569,7 @@ impl Bus {
             return;
         }
         for mapped in self.mmio.iter_mut() {
-            if mapped.kind == Some(PersonalityMmioKind::Console) {
+            if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.clear();
                 }
@@ -2645,8 +2613,8 @@ impl Bus {
     fn map_mmio_internal(
         &mut self,
         range: RangeInclusive<u16>,
-        dev: Box<dyn MmioDevice>,
-        kind: Option<PersonalityMmioKind>,
+        dev: Box<dyn Module>,
+        kind: Option<ModuleKind>,
     ) {
         self.mmio.push(MappedDevice {
             range,

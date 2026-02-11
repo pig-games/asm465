@@ -13,9 +13,9 @@ use serde::Serialize;
 /// Supports `--mode list` and `--mode run` flows so the RTST stream can be
 /// exercised outside of cargo tests.
 use cross465_runner::{
-    default_personality_for_target, list_cases, run_cases, CaseFilter, CaseReport, CaseSource,
-    CaseStatus, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry, CiRemoteFailure, RunOptions,
-    RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,
+    default_personality_for_target, list_cases, run_cases, BackendOverrides, CaseFilter,
+    CaseReport, CaseSource, CaseStatus, Catalog, CatalogCase, CiEndpoint, CiMatrixEntry,
+    CiRemoteFailure, RunOptions, RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,
 };
 
 fn main() -> Result<()> {
@@ -60,36 +60,7 @@ fn main() -> Result<()> {
                 extra_includes.push(path);
             }
             let asm_override = build_override_source(&cli, &workspace)?;
-            if let Some(host) = &cli.ultimate64_host {
-                std::env::set_var("CROSS465_ULTIMATE64_HOST", host);
-            }
-            if let Some(port) = cli.ultimate64_port {
-                std::env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
-            }
-            if let Some(host) = &cli.asm465_host {
-                std::env::set_var("CROSS465_NATIVE_HOST", host);
-            }
-            if let Some(port) = cli.asm465_port {
-                std::env::set_var("CROSS465_NATIVE_PORT", port.to_string());
-            }
-            if let Some(host) = &cli.asm465_bridge_host {
-                std::env::set_var("CROSS465_BRIDGE_HOST", host);
-            }
-            if let Some(port) = cli.asm465_bridge_port {
-                std::env::set_var("CROSS465_BRIDGE_PORT", port.to_string());
-            }
-            if let Some(host) = &cli.asm465_ws_host {
-                std::env::set_var("CROSS465_BRIDGE_WS_HOST", host);
-            }
-            if let Some(port) = cli.asm465_ws_port {
-                std::env::set_var("CROSS465_BRIDGE_WS_PORT", port.to_string());
-            }
-            if let Some(cycles) = cli.asm465_max_cycles {
-                std::env::set_var("CROSS465_MAX_CYCLES", cycles.to_string());
-            }
-            if cli.asm465_keep_alive {
-                std::env::set_var("CROSS465_ASM465_KEEP_ALIVE", "1");
-            }
+            let cli_overrides = cli_backend_overrides(&cli);
             let fixture_dir = cli
                 .fixtures
                 .as_ref()
@@ -154,6 +125,7 @@ fn main() -> Result<()> {
                 debug_rtst_only: cli.debug_rtst_only,
                 progress_timeout_ms: cli.progress_timeout_ms,
                 transport_retries: cli.transport_retries,
+                backend_overrides: cli_overrides,
             };
 
             if cli.ci_matrix {
@@ -197,10 +169,10 @@ fn main() -> Result<()> {
                                 label
                             );
                         }
-                        if let Some(endpoint) = &entry.endpoint {
-                            apply_endpoint(target, endpoint);
-                        }
                         let mut opts = base_opts.clone();
+                        if let Some(endpoint) = &entry.endpoint {
+                            apply_endpoint(target, endpoint, &mut opts.backend_overrides);
+                        }
                         opts.target = target;
                         opts.personality = personality;
                         opts.extra_includes.extend(resolved_includes.clone());
@@ -237,7 +209,7 @@ fn main() -> Result<()> {
                 if let Some(entry) = catalog.ci_matrix().iter().find(|ci| ci.target == target) {
                     apply_entry_overrides(&workspace, entry, &mut base_opts);
                     if let Some(endpoint) = &entry.endpoint {
-                        apply_endpoint(target, endpoint);
+                        apply_endpoint(target, endpoint, &mut base_opts.backend_overrides);
                     }
                     if let Some(mode) = entry.remote_failure {
                         entry_policy = RemoteFailurePolicy::from(mode);
@@ -566,14 +538,29 @@ fn apply_entry_overrides(workspace: &Path, entry: &CiMatrixEntry, opts: &mut Run
     opts.tass_args.extend(entry.tass_args.iter().cloned());
 }
 
-fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint) {
+fn cli_backend_overrides(cli: &Cli) -> BackendOverrides {
+    BackendOverrides {
+        ultimate64_host: cli.ultimate64_host.clone(),
+        ultimate64_port: cli.ultimate64_port,
+        asm465_native_host: cli.asm465_host.clone(),
+        asm465_native_port: cli.asm465_port,
+        asm465_bridge_host: cli.asm465_bridge_host.clone(),
+        asm465_bridge_port: cli.asm465_bridge_port,
+        asm465_ws_host: cli.asm465_ws_host.clone(),
+        asm465_ws_port: cli.asm465_ws_port,
+        asm465_max_cycles: cli.asm465_max_cycles,
+        asm465_keep_alive: cli.asm465_keep_alive.then_some(true),
+    }
+}
+
+fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint, overrides: &mut BackendOverrides) {
     match target {
         TargetKind::Ultimate64 => {
             if let Some(host) = &endpoint.host {
-                env::set_var("CROSS465_ULTIMATE64_HOST", host);
+                overrides.ultimate64_host = Some(host.clone());
             }
             if let Some(port) = endpoint.port {
-                env::set_var("CROSS465_ULTIMATE64_PORT", port.to_string());
+                overrides.ultimate64_port = Some(port);
             }
         }
         TargetKind::Mega65 => {
@@ -581,19 +568,19 @@ fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint) {
         }
         TargetKind::Asm465Native => {
             if let Some(host) = &endpoint.host {
-                env::set_var("CROSS465_NATIVE_HOST", host);
+                overrides.asm465_native_host = Some(host.clone());
             }
             if let Some(port) = endpoint.port {
-                env::set_var("CROSS465_NATIVE_PORT", port.to_string());
+                overrides.asm465_native_port = Some(port);
             }
         }
         TargetKind::Asm465Wasm => {
             if let Some(host) = &endpoint.host {
-                env::set_var("CROSS465_BRIDGE_HOST", host);
-                env::set_var("CROSS465_BRIDGE_WS_HOST", host);
+                overrides.asm465_bridge_host = Some(host.clone());
+                overrides.asm465_ws_host = Some(host.clone());
             }
             if let Some(port) = endpoint.port {
-                env::set_var("CROSS465_BRIDGE_PORT", port.to_string());
+                overrides.asm465_bridge_port = Some(port);
             }
         }
         TargetKind::Cross465 => {}
