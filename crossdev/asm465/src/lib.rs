@@ -6,6 +6,7 @@
 //! wasm build (via [`web::start_web_app`]), so as much logic as possible lives
 //! in platform-neutral modules.
 
+#[cfg(feature = "native-service")]
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -37,8 +38,7 @@ use bus::input_mmio::{
 };
 use bus::interrupts::{InterruptController, InterruptSnapshot};
 use bus::mmio::SystemReg;
-use bus::personality::{self, Personality, PersonalityMmioKind, C64_COMPAT};
-use bus::personality_v2::{self, MapDecode};
+use bus::personality::Personality;
 use bus::sprite_mmio::{SpriteSnapshot, SpriteState, SPRITE_SLOTS};
 use bus::{
     adapters::input::InputBackend, unicode_to_screen, Bus, RasterIrqState, VideoState,
@@ -48,7 +48,11 @@ use core6502::{Cpu, RunLimit, RunOutcome};
 use video_backend::VideoOverlaySignals;
 
 mod cpu_worker;
+mod service;
 mod video_backend;
+
+pub use service::*;
+
 #[cfg(target_arch = "wasm32")]
 use self::web::WebSocketBridgeManager;
 use cpu_worker::{
@@ -58,15 +62,16 @@ use cpu_worker::{
 #[cfg(all(feature = "native-file-dialog", not(target_arch = "wasm32")))]
 use rfd::FileDialog;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use base64::Engine;
 #[cfg(feature = "native-service")]
 use clap::{ArgAction, Parser};
 #[cfg(feature = "native-service")]
 use crossbeam_channel::{Receiver, Sender};
 use instant::Instant;
 use runtime_sdk::rtst::{Header, State, HEADER_LEN};
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "native-service")]
+use bus::personality::{self, C64_COMPAT, PersonalityMmioKind};
+#[cfg(feature = "native-service")]
+use bus::personality_v2::{self, MapDecode};
 #[cfg(feature = "native-service")]
 use std::fs;
 #[cfg(feature = "native-service")]
@@ -78,6 +83,7 @@ use std::thread;
 
 pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
 const CONSOLE_FONT_SIZE: f32 = 16.0;
+#[cfg(feature = "native-service")]
 const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
     ("modern-retro-range", "Modern Retro (Range)"),
     ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
@@ -598,240 +604,6 @@ pub struct Args {
     pub dump_map_registers: Option<String>,
 }
 
-/// Source for a PRG payload that should be executed by the emulator.
-#[derive(Debug, Clone)]
-pub enum ProgramSource {
-    File(PathBuf),
-    Inline { name: Option<String>, data: Vec<u8> },
-}
-
-impl ProgramSource {
-    fn load_bytes(&self) -> Result<Vec<u8>, String> {
-        match self {
-            #[cfg(any(feature = "native-file-dialog", feature = "native-service"))]
-            ProgramSource::File(path) => std::fs::read(path)
-                .map_err(|err| format!("Failed to read {}: {err}", path.display())),
-            #[cfg(not(any(feature = "native-file-dialog", feature = "native-service")))]
-            ProgramSource::File(_) => Err("File sources are not supported on this platform".into()),
-            ProgramSource::Inline { data, .. } => Ok(data.clone()),
-        }
-    }
-
-    fn label(&self) -> String {
-        match self {
-            ProgramSource::File(path) => path.display().to_string(),
-            ProgramSource::Inline { name, data } => name
-                .clone()
-                .unwrap_or_else(|| format!("inline program ({} bytes)", data.len())),
-        }
-    }
-}
-
-/// Configuration used when pre-loading a PRG before the app renders.
-#[derive(Clone)]
-pub struct StartupConfig {
-    pub source: ProgramSource,
-    pub max_cycles: u64,
-    pub start: Option<u16>,
-    pub rtst: Option<RtstMonitorConfig>,
-    pub progress_timeout_ms: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RtstMonitorConfig {
-    pub base: u32,
-    pub span: u32,
-}
-
-/// Details about a bounded CPU run triggered by the host.
-pub(crate) struct ProgramRunReport {
-    pub outcome: Option<RunOutcome>,
-    pub message: String,
-}
-
-/// Command variants exchanged with the external service API.
-#[derive(Debug)]
-pub enum ServiceCommand {
-    RunProgram {
-        source: ProgramSource,
-        max_cycles: Option<u64>,
-        start: Option<u16>,
-        rtst: Option<RtstMonitorConfig>,
-        progress_timeout_ms: Option<u64>,
-    },
-    ReadMemory {
-        address: u32,
-        length: u32,
-    },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ServiceResponseMessage {
-    pub status: ServiceStatus,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bridge_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cycles: Option<u64>,
-}
-
-impl ServiceResponseMessage {
-    pub fn ok(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Ok,
-            message: message.into(),
-            data: None,
-            bridge_id: None,
-            cycles: None,
-        }
-    }
-
-    pub fn ok_with_data(message: impl Into<String>, bytes: &[u8]) -> Self {
-        Self {
-            status: ServiceStatus::Ok,
-            message: message.into(),
-            data: Some(BASE64_STANDARD.encode(bytes)),
-            bridge_id: None,
-            cycles: None,
-        }
-    }
-
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            status: ServiceStatus::Error,
-            message: message.into(),
-            data: None,
-            bridge_id: None,
-            cycles: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ServiceStatus {
-    Ok,
-    Error,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "cmd", rename_all = "snake_case")]
-pub enum ServiceRequestPayload {
-    RunPrg {
-        path: String,
-        #[serde(default)]
-        max_cycles: Option<u64>,
-        #[serde(default)]
-        start: Option<u16>,
-        #[serde(default)]
-        rtst_base: Option<u32>,
-        #[serde(default)]
-        rtst_span: Option<u32>,
-        #[serde(default)]
-        progress_timeout_ms: Option<u64>,
-    },
-    RunPrgData {
-        data: String,
-        #[serde(default)]
-        name: Option<String>,
-        #[serde(default)]
-        max_cycles: Option<u64>,
-        #[serde(default)]
-        start: Option<u16>,
-        #[serde(default)]
-        rtst_base: Option<u32>,
-        #[serde(default)]
-        rtst_span: Option<u32>,
-        #[serde(default)]
-        progress_timeout_ms: Option<u64>,
-    },
-    ReadMem {
-        address: u32,
-        length: u32,
-    },
-}
-
-impl ServiceRequestPayload {
-    pub fn into_command(self) -> Result<ServiceCommand, String> {
-        match self {
-            ServiceRequestPayload::RunPrg {
-                path,
-                max_cycles,
-                start,
-                rtst_base,
-                rtst_span,
-                progress_timeout_ms,
-            } => {
-                if path.is_empty() {
-                    return Err("run_prg requires a non-empty path".into());
-                }
-                let rtst = parse_rtst_config(rtst_base, rtst_span)?;
-                Ok(ServiceCommand::RunProgram {
-                    source: ProgramSource::File(PathBuf::from(path)),
-                    max_cycles,
-                    start,
-                    rtst,
-                    progress_timeout_ms,
-                })
-            }
-            ServiceRequestPayload::RunPrgData {
-                data,
-                name,
-                max_cycles,
-                start,
-                rtst_base,
-                rtst_span,
-                progress_timeout_ms,
-            } => {
-                if data.trim().is_empty() {
-                    return Err("run_prg_data requires a non-empty base64 payload".into());
-                }
-                let decoded = BASE64_STANDARD
-                    .decode(data.as_bytes())
-                    .map_err(|err| format!("invalid base64 payload for run_prg_data: {err}"))?;
-                let rtst = parse_rtst_config(rtst_base, rtst_span)?;
-                Ok(ServiceCommand::RunProgram {
-                    source: ProgramSource::Inline {
-                        name,
-                        data: decoded,
-                    },
-                    max_cycles,
-                    start,
-                    rtst,
-                    progress_timeout_ms,
-                })
-            }
-            ServiceRequestPayload::ReadMem { address, length } => {
-                if length == 0 || length > 0x10000 {
-                    return Err("read_mem length must be between 1 and 65536 bytes".into());
-                }
-                Ok(ServiceCommand::ReadMemory { address, length })
-            }
-        }
-    }
-}
-
-fn parse_rtst_config(
-    base: Option<u32>,
-    span: Option<u32>,
-) -> Result<Option<RtstMonitorConfig>, String> {
-    match (base, span) {
-        (Some(base), Some(span)) => {
-            if span == 0 {
-                return Err("rtst_span must be greater than zero".into());
-            }
-            if base >= 0x1_0000 || base + span > 0x1_0000 {
-                return Err("rtst_base/span must be within the 64 KB address space".into());
-            }
-            Ok(Some(RtstMonitorConfig { base, span }))
-        }
-        (None, None) => Ok(None),
-        _ => Err("rtst_base and rtst_span must be provided together".into()),
-    }
-}
-
 /// Fully-specified viewer configuration used when bootstrapping the Bevy app.
 pub struct AppConfig {
     pub startup: Option<StartupConfig>,
@@ -970,25 +742,33 @@ fn parse_color(value: &str) -> Result<Color, String> {
     Ok(Color::rgb_u8(r, g, b))
 }
 
+/// Shared C64 palette (index 0x00–0x0F) as `(R, G, B)` tuples.
+const C64_PALETTE: [(u8, u8, u8); 16] = [
+    (0x00, 0x00, 0x00), // 0x00 Black
+    (0xFF, 0xFF, 0xFF), // 0x01 White
+    (0x88, 0x00, 0x00), // 0x02 Red
+    (0xAA, 0xFF, 0xEE), // 0x03 Cyan
+    (0xCC, 0x44, 0xCC), // 0x04 Magenta
+    (0x00, 0xCC, 0x55), // 0x05 Green
+    (0x00, 0x00, 0xAA), // 0x06 Blue
+    (0xEE, 0xEE, 0x77), // 0x07 Yellow
+    (0xDD, 0x88, 0x55), // 0x08 Orange
+    (0x66, 0x44, 0x00), // 0x09 Brown
+    (0xFF, 0x77, 0x77), // 0x0A Light red
+    (0xAA, 0xFF, 0xEE), // 0x0B Light cyan
+    (0xFF, 0xAA, 0xFF), // 0x0C Light magenta
+    (0xAA, 0xFF, 0xAA), // 0x0D Light green
+    (0xAA, 0xCC, 0xFF), // 0x0E Light blue
+    (0xCC, 0xCC, 0xCC), // 0x0F Light gray
+];
+
 fn mmio_color(value: u8, fallback: Color) -> Color {
-    match value & 0x0F {
-        0x00 => Color::rgb_u8(0x00, 0x00, 0x00), // Black
-        0x01 => Color::rgb_u8(0xFF, 0xFF, 0xFF), // White
-        0x02 => Color::rgb_u8(0x88, 0x00, 0x00), // Red
-        0x03 => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Cyan
-        0x04 => Color::rgb_u8(0xCC, 0x44, 0xCC), // Magenta
-        0x05 => Color::rgb_u8(0x00, 0xCC, 0x55), // Green
-        0x06 => Color::rgb_u8(0x00, 0x00, 0xAA), // Blue
-        0x07 => Color::rgb_u8(0xEE, 0xEE, 0x77), // Yellow
-        0x08 => Color::rgb_u8(0xDD, 0x88, 0x55), // Orange
-        0x09 => Color::rgb_u8(0x66, 0x44, 0x00), // Brown
-        0x0A => Color::rgb_u8(0xFF, 0x77, 0x77), // Light red
-        0x0B => Color::rgb_u8(0xAA, 0xFF, 0xEE), // Light cyan
-        0x0C => Color::rgb_u8(0xFF, 0xAA, 0xFF), // Light magenta
-        0x0D => Color::rgb_u8(0xAA, 0xFF, 0xAA), // Light green
-        0x0E => Color::rgb_u8(0xAA, 0xCC, 0xFF), // Light blue
-        0x0F => Color::rgb_u8(0xCC, 0xCC, 0xCC), // Light gray
-        _ => fallback,
+    let idx = (value & 0x0F) as usize;
+    if idx < C64_PALETTE.len() {
+        let (r, g, b) = C64_PALETTE[idx];
+        Color::rgb_u8(r, g, b)
+    } else {
+        fallback
     }
 }
 
@@ -1521,6 +1301,7 @@ impl InterruptBindings {
 }
 
 const CONTROLLER_PADS: usize = CONTROLLER_PAD_COUNT;
+#[allow(dead_code)]
 const CONTROLLER_BUTTON_ORDER: [ControllerButton; 16] = [
     ControllerButton::DPadUp,
     ControllerButton::DPadDown,
@@ -1993,6 +1774,7 @@ fn controller_button_label(button: ControllerButton) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn button_list(mask: u16) -> String {
     let mut labels: Vec<&'static str> = Vec::new();
     for button in CONTROLLER_BUTTON_ORDER {
@@ -2727,6 +2509,7 @@ pub(crate) fn run_program_with_config(
     let limit_desc = match outcome.limit {
         RunLimit::CycleBudget => "cycle budget",
         RunLimit::Brk => "BRK",
+        RunLimit::Halted => "halted (illegal opcode)",
     };
 
     let summary = format!(
@@ -2759,6 +2542,9 @@ fn run_until_rtst_done(
     let base = monitor.base as u16;
 
     loop {
+        if cpu.halted {
+            return Err("CPU halted (illegal opcode)".into());
+        }
         let step_cycles = cpu.step() as u64;
         cycles = cycles.saturating_add(step_cycles);
         if cycles >= max_cycles {
@@ -3452,24 +3238,8 @@ fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::LayoutJob {
 }
 
 fn palette_color(index: u8) -> egui::Color32 {
-    match index & 0x0F {
-        0x00 => egui::Color32::from_rgb(0x00, 0x00, 0x00), // Black
-        0x01 => egui::Color32::from_rgb(0xFF, 0xFF, 0xFF), // White
-        0x02 => egui::Color32::from_rgb(0x88, 0x00, 0x00), // Red
-        0x03 => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Cyan
-        0x04 => egui::Color32::from_rgb(0xCC, 0x44, 0xCC), // Magenta
-        0x05 => egui::Color32::from_rgb(0x00, 0xCC, 0x55), // Green
-        0x06 => egui::Color32::from_rgb(0x00, 0x00, 0xAA), // Blue
-        0x07 => egui::Color32::from_rgb(0xEE, 0xEE, 0x77), // Yellow
-        0x08 => egui::Color32::from_rgb(0xDD, 0x88, 0x55), // Orange
-        0x09 => egui::Color32::from_rgb(0x66, 0x44, 0x00), // Brown
-        0x0A => egui::Color32::from_rgb(0xFF, 0x77, 0x77), // Light red
-        0x0B => egui::Color32::from_rgb(0xAA, 0xFF, 0xEE), // Light cyan
-        0x0C => egui::Color32::from_rgb(0xFF, 0xAA, 0xFF), // Light magenta
-        0x0D => egui::Color32::from_rgb(0xAA, 0xFF, 0xAA), // Light green
-        0x0E => egui::Color32::from_rgb(0xAA, 0xCC, 0xFF), // Light blue
-        _ => egui::Color32::from_rgb(0xCC, 0xCC, 0xCC),    // Light gray
-    }
+    let (r, g, b) = C64_PALETTE[(index & 0x0F) as usize];
+    egui::Color32::from_rgb(r, g, b)
 }
 
 #[cfg(feature = "native-service")]

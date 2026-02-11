@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bus::adapters::video::{VideoBackend, VideoState};
@@ -11,7 +11,6 @@ pub struct VideoOverlaySignals {
     raster: AtomicU16,
     sprite_collisions: AtomicU8,
     background_collisions: AtomicU8,
-    dirty: AtomicBool,
 }
 
 impl VideoOverlaySignals {
@@ -20,22 +19,18 @@ impl VideoOverlaySignals {
         Self::default()
     }
 
-    /// Store the current raster line and mark the snapshot as dirty.
     pub fn record_raster(&self, value: u16) {
         self.raster.store(value, Ordering::Relaxed);
-        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// Store the latest sprite collision bits observed by the backend.
     pub fn record_sprite_collisions(&self, value: u8) {
         self.sprite_collisions.store(value, Ordering::Relaxed);
-        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// Store the latest background collision bits observed by the backend.
     pub fn record_background_collisions(&self, value: u8) {
         self.background_collisions.store(value, Ordering::Relaxed);
-        self.dirty.store(true, Ordering::Relaxed);
     }
 
     /// Produce a snapshot suitable for presenting in the UI.
@@ -44,7 +39,6 @@ impl VideoOverlaySignals {
             raster: self.raster.load(Ordering::Relaxed),
             sprite_collisions: self.sprite_collisions.load(Ordering::Relaxed),
             background_collisions: self.background_collisions.load(Ordering::Relaxed),
-            //dirty: self.dirty.swap(false, Ordering::Relaxed),
         }
     }
 }

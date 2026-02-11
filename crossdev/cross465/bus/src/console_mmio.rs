@@ -375,7 +375,7 @@ impl ConsoleMmio {
                     .bg(cmb_color_to_ansi(self.bg_color))
             )
         )
-        .unwrap();
+        .ok();
         self.output
             .lock()
             .unwrap()
@@ -384,14 +384,14 @@ impl ConsoleMmio {
 
     /// Print a newline (also pushes '\n' to the buffer).
     fn newline(&mut self) {
-        self.term.write_line("").unwrap();
+        self.term.write_line("").ok();
         self.output.lock().unwrap().newline();
     }
 
     /// Print a byte as two hexadecimal digits (debugging helper).
     fn push_hex(&mut self, b: u8) {
         let s = format!("{b:02X}");
-        self.term.write(&s.as_bytes()).unwrap();
+        self.term.write(&s.as_bytes()).ok();
         self.output
             .lock()
             .unwrap()
@@ -400,7 +400,7 @@ impl ConsoleMmio {
 
     /// Clear the internal output buffer (handy for test setup/teardown).
     pub fn clear(&mut self) {
-        self.term.clear_screen().unwrap();
+        self.term.clear_screen().ok();
         let mut output = self.output.lock().unwrap();
         output.clear();
     }
@@ -419,7 +419,7 @@ impl ConsoleMmio {
     pub fn set_location(&mut self) {
         self.term
             .move_cursor_to(self.x.into(), self.y.into())
-            .unwrap();
+            .ok();
         self.output.lock().unwrap().set_cursor(self.x, self.y);
     }
 

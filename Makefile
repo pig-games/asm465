@@ -47,6 +47,7 @@ WASM_HTTP_HOST ?= 127.0.0.1
 WASM_HTTP_PORT ?= 8000
 WASM_HTTP_PID_FILE ?= native/build/wasm_http_server.pid
 WASM_HTTP_LOG ?= native/build/wasm_http_server.log
+CROSS465_MEGA65_M65_PATH ?= /Users/erik/Documents/MEGA65/Tools/m65tools-develo-935-238312-macos
 
 ifeq ($(origin CROSS465_MODE),undefined)
   ifeq ($(TARGET),cross465)

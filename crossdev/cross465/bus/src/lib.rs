@@ -2439,6 +2439,15 @@ impl Bus {
         value
     }
 
+    /// Peek at a byte from the bus without triggering MMIO side effects.
+    ///
+    /// Falls back to reading raw RAM. Used by the CPU to inspect the
+    /// opcode at PC without causing a second bus read.
+    pub fn peek(&self, addr: u16) -> u8 {
+        let mem = self.ram.lock().unwrap();
+        mem.read(addr)
+    }
+
     /// Write a byte to the bus (MMIO devices intercept their ranges).
     pub fn write(&mut self, addr: u16, value: u8) {
         if let Some(runtime) = self.runtime_v2.as_mut() {

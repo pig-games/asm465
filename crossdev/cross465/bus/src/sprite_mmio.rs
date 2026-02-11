@@ -367,9 +367,3 @@ impl ModuleFactory for SpriteModuleFactory {
         SPRITE_REGS
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mmio::{Module, ModuleKind, RegId};
-    use crate::MmioDevice;
-}

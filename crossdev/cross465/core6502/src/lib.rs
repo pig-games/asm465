@@ -123,6 +123,10 @@ pub struct Cpu {
     pub bus: Bus,
     pending_nmi: bool,
     pending_irq: bool,
+    /// Set to `true` when the CPU hits a `KIL` (jam) opcode.
+    /// Once halted, [`step`](Cpu::step) becomes a no-op and
+    /// [`run_for`](Cpu::run_for) exits immediately.
+    pub halted: bool,
 }
 
 /// Reason why a bounded CPU run ended.
@@ -132,6 +136,8 @@ pub enum RunLimit {
     CycleBudget,
     /// Execution encountered a `BRK` instruction.
     Brk,
+    /// Execution hit an illegal/KIL opcode that jammed the CPU.
+    Halted,
 }
 
 /// Summary of a bounded CPU run, including the number of cycles executed and
@@ -160,6 +166,7 @@ impl Cpu {
             bus,
             pending_nmi: false,
             pending_irq: false,
+            halted: false,
         }
     }
 
@@ -170,6 +177,7 @@ impl Cpu {
     pub fn reset(&mut self) {
         self.sp = 0xFD;
         self.p = P::from_bits_truncate(0x24);
+        self.halted = false;
         self.pc = self.read16(0xFFFC);
     }
 
@@ -438,6 +446,9 @@ impl Cpu {
     /// Page-cross penalties are accounted for via the decode table’s
     /// `add_page_cycle` bit.
     pub fn step(&mut self) -> u32 {
+        if self.halted {
+            return 0;
+        }
         use AddrMode::*;
         use Op::*;
         self.poll_interrupts();
@@ -834,8 +845,15 @@ impl Cpu {
                 }
             }
 
-            (KIL, _) => { /* jam */ }
-            _ => todo!(),
+            (KIL, _) => {
+                // Jam / halt: the real 6502 locks up permanently.
+                // We set a flag so run_for() can exit cleanly.
+                self.halted = true;
+            }
+            // Treat any unhandled opcode/mode combo the same as KIL.
+            _ => {
+                self.halted = true;
+            }
         }
 
         let cyc = (e.cycles as u32) + extra;
@@ -854,11 +872,21 @@ impl Cpu {
         let mut limit = RunLimit::CycleBudget;
         let start_cycles = self.cycles;
         while spent < max_cycles {
+            if self.halted {
+                limit = RunLimit::Halted;
+                break;
+            }
             self.poll_interrupts();
-            let opcode = self.bus.read(self.pc);
+            // Peek at the opcode *without* a bus read so we avoid the
+            // double-read problem on MMIO addresses with side effects.
+            let opcode = self.bus.peek(self.pc);
             let c = self.step() as u64;
             spent += c;
             self.cycles += c;
+            if self.halted {
+                limit = RunLimit::Halted;
+                break;
+            }
             if opcode == 0x00 {
                 limit = RunLimit::Brk;
                 break;
@@ -911,7 +939,7 @@ impl Cpu {
     }
 }
 
-// Build the full official 6502 opcode table (undocumented opcodes default to NOP).
+// Build the full official 6502 opcode table (undocumented opcodes default to KIL/jam).
 const TABLE: [Entry; 256] = build_table();
 const fn e(op: Op, mode: AddrMode, cycles: u8, add_page_cycle: bool) -> Entry {
     Entry {
@@ -925,8 +953,9 @@ const fn e(op: Op, mode: AddrMode, cycles: u8, add_page_cycle: bool) -> Entry {
 const fn build_table() -> [Entry; 256] {
     use AddrMode::*;
     use Op::*;
-    let N = e(NOP, Imp, 2, false);
-    let mut t = [N; 256];
+    // Unassigned opcodes jam the CPU (like the real NMOS 6502).
+    let jam = e(KIL, Imp, 2, false);
+    let mut t = [jam; 256];
 
     // 0x00-0x0F
     t[0x00] = e(BRK, Imp, 7, false);

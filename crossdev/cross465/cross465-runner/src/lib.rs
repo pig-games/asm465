@@ -278,7 +278,7 @@ pub fn run_cases(
 
     let mut include_paths = default_include_paths(&config.workspace_root, opts.target);
     include_paths.extend(opts.extra_includes.clone());
-    let mut extra_sources = opts.extra_sources.clone();
+    let extra_sources = opts.extra_sources.clone();
     let mut defines = opts.extra_defines.clone();
     if !defines.iter().any(|(k, _)| k == "DEBUG_RTST_ENABLED") {
         defines.push(("DEBUG_RTST_ENABLED".to_string(), "1".to_string()));
