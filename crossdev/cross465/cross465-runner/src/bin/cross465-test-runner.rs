@@ -18,6 +18,7 @@ use cross465_runner::{
     CiRemoteFailure, RunOptions, RunReport, RunSummary, RunnerConfig, RunnerError, TargetKind,
 };
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut workspace = resolve_workspace_arg(cli.workspace.as_ref())?;
@@ -25,7 +26,7 @@ fn main() -> Result<()> {
     let mut catalog_for_cli = Catalog::load(&catalog_path).map_err(to_anyhow)?;
     if cli.workspace.is_none() {
         if let Some(ws_override) = catalog_for_cli.workspace_override() {
-            workspace = ws_override.clone();
+            workspace.clone_from(ws_override);
             catalog_path = resolve_catalog_path(&workspace, cli.catalog.as_ref());
             catalog_for_cli = Catalog::load(&catalog_path).map_err(to_anyhow)?;
         }
@@ -64,13 +65,15 @@ fn main() -> Result<()> {
             let fixture_dir = cli
                 .fixtures
                 .as_ref()
-                .and_then(|opt| match opt {
-                    Some(path) => Some(if path.is_absolute() {
-                        path.clone()
-                    } else {
-                        workspace.join(path)
-                    }),
-                    None => Some(workspace.join("tests/fixtures")),
+                .map(|opt| match opt {
+                    Some(path) => {
+                        if path.is_absolute() {
+                            path.clone()
+                        } else {
+                            workspace.join(path)
+                        }
+                    }
+                    None => workspace.join("tests/fixtures"),
                 })
                 .or_else(|| {
                     if cli.update_fixtures {
@@ -158,8 +161,7 @@ fn main() -> Result<()> {
                     let resolved_includes = resolve_include_paths(&workspace, &entry.includes);
                     let entry_policy = entry
                         .remote_failure
-                        .map(RemoteFailurePolicy::from)
-                        .unwrap_or(cli.remote_failure);
+                        .map_or(cli.remote_failure, RemoteFailurePolicy::from);
                     for personality in entry.personalities.iter().cloned() {
                         let label = describe_personality(target, personality.as_deref());
                         if cli.format == FormatArg::Text {
@@ -191,12 +193,10 @@ fn main() -> Result<()> {
                                 total_failed += report.summary.failed;
                             }
                             Err(err) => {
-                                if downgrade_remote_failure(entry_policy, &err) {
-                                    warn_remote_failure(opts.target, &label, &err);
-                                    continue;
-                                } else {
+                                if !downgrade_remote_failure(entry_policy, &err) {
                                     return Err(to_anyhow(err));
                                 }
+                                warn_remote_failure(opts.target, &label, &err);
                             }
                         }
                     }
@@ -235,9 +235,8 @@ fn main() -> Result<()> {
                         if downgrade_remote_failure(entry_policy, &err) {
                             warn_remote_failure(base_opts.target, &label, &err);
                             return Ok(());
-                        } else {
-                            return Err(to_anyhow(err));
                         }
+                        return Err(to_anyhow(err));
                     }
                 }
             }
@@ -248,6 +247,7 @@ fn main() -> Result<()> {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Cross465 Runtime SDK Test Runner")]
+#[allow(clippy::struct_excessive_bools, clippy::option_option)]
 struct Cli {
     #[arg(long, value_enum, default_value = "run")]
     mode: ModeArg,
@@ -433,7 +433,7 @@ fn render_list_json(cases: &[CatalogCase]) -> Result<()> {
     Ok(())
 }
 
-fn render_run_text(report: &RunReport, duration: std::time::Duration) -> Result<()> {
+fn render_run_text(report: &RunReport, duration: std::time::Duration) {
     println!("running {} tests", report.summary.total);
     for case in &report.cases {
         let status = match case.status {
@@ -444,10 +444,10 @@ fn render_run_text(report: &RunReport, duration: std::time::Duration) -> Result<
         println!("test {:<48} ... {}", case.name, status);
         if case.status.is_failed() {
             if let Some(msg) = &case.message {
-                println!("    message: {}", msg);
+                println!("    message: {msg}");
             }
             for assert in &case.asserts {
-                println!("    assert: {}", assert);
+                println!("    assert: {assert}");
             }
         }
     }
@@ -461,8 +461,7 @@ fn render_run_text(report: &RunReport, duration: std::time::Duration) -> Result<
         "test result: {status}. {} passed; {} failed; 0 ignored; 0 measured; 0 filtered out",
         report.summary.passed, report.summary.failed
     );
-    println!("finished in {:.2?}", duration);
-    Ok(())
+    println!("finished in {duration:.2?}");
 }
 
 fn render_run_json(
@@ -480,7 +479,7 @@ fn render_run_json(
         cases: &'a [CaseReport],
     }
     let payload = Payload {
-        target: target.to_string().to_string(),
+        target: target.to_string().into(),
         personality,
         duration_ms: duration.as_millis(),
         summary: &report.summary,
@@ -499,7 +498,10 @@ fn render_for_format(
     duration: Duration,
 ) -> Result<()> {
     match format {
-        FormatArg::Text => render_run_text(report, duration),
+        FormatArg::Text => {
+            render_run_text(report, duration);
+            Ok(())
+        }
         FormatArg::Json => render_run_json(report, target, personality, duration),
     }
 }
@@ -563,7 +565,7 @@ fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint, overrides: &mut Bac
                 overrides.ultimate64_port = Some(port);
             }
         }
-        TargetKind::Mega65 => {
+        TargetKind::Mega65 | TargetKind::Cross465 => {
             // Future: add serial endpoint support.
         }
         TargetKind::Asm465Native => {
@@ -583,7 +585,6 @@ fn apply_endpoint(target: TargetKind, endpoint: &CiEndpoint, overrides: &mut Bac
                 overrides.asm465_bridge_port = Some(port);
             }
         }
-        TargetKind::Cross465 => {}
     }
 }
 
@@ -608,12 +609,11 @@ fn resolve_workspace_arg(arg: Option<&PathBuf>) -> Result<PathBuf> {
 }
 
 fn resolve_catalog_path(workspace: &Path, cli_path: Option<&PathBuf>) -> PathBuf {
-    let path = match cli_path {
+    match cli_path {
         Some(path) if path.is_absolute() => path.clone(),
         Some(path) => workspace.join(path),
         None => workspace.join("crossdev/cross465/tests/catalog.toml"),
-    };
-    path
+    }
 }
 
 fn downgrade_remote_failure(policy: RemoteFailurePolicy, err: &RunnerError) -> bool {

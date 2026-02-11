@@ -65,6 +65,7 @@ pub struct BackendOverrides {
 }
 
 /// Results captured from executing a PRG.
+#[derive(Debug)]
 pub struct ExecutionOutput {
     pub rtst_region: Vec<u8>,
     pub cycles: u64,
@@ -221,6 +222,7 @@ pub trait TargetBackend {
 }
 
 /// Cross465 emulator backend using the in-process CPU implementation.
+#[derive(Debug)]
 pub struct Cross465Backend;
 
 impl Cross465Backend {
@@ -405,6 +407,7 @@ impl Ultimate64BackendConfig {
 }
 
 /// REST backend for Ultimate64 hardware.
+#[derive(Debug)]
 pub struct Ultimate64Backend {
     config: Ultimate64BackendConfig,
 }
@@ -565,6 +568,7 @@ impl Mega65BackendConfig {
 }
 
 /// Backend implementation that shells out to the `m65` CLI.
+#[derive(Debug)]
 pub struct Mega65Backend {
     config: Mega65BackendConfig,
 }
@@ -1569,9 +1573,8 @@ mod tests {
 
     #[test]
     fn cross465_backend_executes_sample_case() {
-        let prg = match assemble_sample("crossdev/cross465/tests/cases/math_add_basic.s") {
-            Some(prg) => prg,
-            None => return,
+        let Some(prg) = assemble_sample("crossdev/cross465/tests/cases/math_add_basic.s") else {
+            return;
         };
         let backend = Cross465Backend::new();
         let exec = backend

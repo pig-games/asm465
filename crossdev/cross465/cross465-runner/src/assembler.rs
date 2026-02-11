@@ -15,6 +15,7 @@ use crate::catalog::{CaseSource, CatalogCase};
 use crate::{RunnerError, TargetKind};
 
 /// Configuration for invoking 64tass when assembling a case.
+#[derive(Debug)]
 pub struct AssemblerConfig {
     pub workspace_root: PathBuf,
     pub tass_path: PathBuf,
@@ -26,6 +27,7 @@ pub struct AssemblerConfig {
 }
 
 /// Resulting PRG bytes from assembling a case.
+#[derive(Debug)]
 pub struct AssemblyOutput {
     pub prg: Vec<u8>,
 }

@@ -4,12 +4,13 @@ use crate::{run_cases, CaseFilter, CaseReport, RunOptions, RunnerConfig, RunnerE
 use std::env;
 use std::path::PathBuf;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum AsmSource {
     Inline(String),
     Path(PathBuf),
 }
 
+#[derive(Debug)]
 pub struct AsmTestBuilder {
     name: Option<String>,
     personality: Option<String>,
@@ -32,7 +33,7 @@ impl AsmTestBuilder {
             personality: None,
             target: None,
             timeout_ms: None,
-            seed: 0xDEADBEEF,
+            seed: 0xDEAD_BEEF,
             asm: None,
             workspace: None,
             include_paths: Vec::new(),
@@ -113,6 +114,7 @@ impl AsmTestBuilder {
     }
 }
 
+#[derive(Debug)]
 pub struct AsmTestResult {
     case: CaseReport,
 }

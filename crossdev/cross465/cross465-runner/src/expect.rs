@@ -96,6 +96,7 @@ pub enum AssertError {
 }
 
 /// Convenience view over a case's actual values.
+#[derive(Debug)]
 pub struct CaseActuals<'a> {
     case: &'a str,
     actuals: &'a BTreeMap<String, ActualValue>,
@@ -390,7 +391,7 @@ mod tests {
         groups.insert("score".into(), &scalar);
         actuals.insert("score".into(), scalar);
 
-        let hash = ActualValue::Hash { hash: 0xDEADBEEF };
+        let hash = ActualValue::Hash { hash: 0xDEAD_BEEF };
         groups.insert("fb_hash".into(), &hash);
         actuals.insert("fb_hash".into(), hash);
 

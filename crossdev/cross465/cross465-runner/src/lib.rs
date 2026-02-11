@@ -117,6 +117,7 @@ impl CaseFilter {
 /// Runtime options for `run` mode.
 #[derive(Clone, Debug)]
 /// Runtime options for running assemblable RTST cases.
+#[allow(clippy::struct_excessive_bools)]
 pub struct RunOptions {
     pub target: TargetKind,
     pub personality: Option<String>,
@@ -148,7 +149,7 @@ impl Default for RunOptions {
             target: TargetKind::Cross465,
             personality: Some("modern-retro".to_string()),
             timeout_ms: Some(2_000),
-            seed: 0xDEADBEEF,
+            seed: 0xDEAD_BEEF,
             asm_override: None,
             tass_path: PathBuf::from("64tass"),
             extra_includes: Vec::new(),
@@ -250,6 +251,7 @@ pub fn list_cases(
 }
 
 /// Run cases and return the parsed RTST report.
+#[allow(clippy::too_many_lines)]
 pub fn run_cases(
     config: &RunnerConfig,
     filter: &CaseFilter,
@@ -260,7 +262,7 @@ pub fn run_cases(
         Some(override_input) => vec![CatalogCase::adhoc(
             filter
                 .names
-                .get(0)
+                .first()
                 .cloned()
                 .unwrap_or_else(|| "adhoc::inline".to_string()),
             override_input.clone(),
@@ -401,6 +403,7 @@ pub fn run_cases(
     Ok(RunReport::from_cases(reports))
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_rtst(exec: &ExecutionOutput) -> Result<(Vec<CaseReport>, CaseMetrics), RunnerError> {
     let stream = Stream::parse(&exec.rtst_region)?;
     let metrics = CaseMetrics {
@@ -440,7 +443,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<(Vec<CaseReport>, CaseMetrics), 
                     if let Some(entry) = cases.get_mut(&name) {
                         entry.status = CaseStatus::Passed;
                         entry.status_code = Some(outcome.status_code);
-                        entry.message = outcome.message.map(|s| s.to_string());
+                        entry.message = outcome.message.map(ToString::to_string);
                     }
                 }
             }
@@ -450,7 +453,7 @@ fn parse_rtst(exec: &ExecutionOutput) -> Result<(Vec<CaseReport>, CaseMetrics), 
                     if let Some(entry) = cases.get_mut(&name) {
                         entry.status = CaseStatus::Failed;
                         entry.status_code = Some(outcome.status_code);
-                        entry.message = outcome.message.map(|s| s.to_string());
+                        entry.message = outcome.message.map(ToString::to_string);
                     }
                 }
             }
@@ -591,7 +594,7 @@ fn log_case_metrics(report: &CaseReport) {
 fn effective_personality(opts: &RunOptions) -> String {
     opts.personality
         .clone()
-        .or_else(|| default_personality_for_target(opts.target).map(|s| s.to_string()))
+        .or_else(|| default_personality_for_target(opts.target).map(ToString::to_string))
         .unwrap_or_else(|| format!("{}-builtin", opts.target.to_string()))
 }
 
@@ -672,6 +675,7 @@ enum DebugFeature {
 }
 
 /// Default MMIO personality associated with a target (if any).
+#[must_use]
 pub fn default_personality_for_target(target: TargetKind) -> Option<&'static str> {
     match target {
         TargetKind::Cross465 | TargetKind::Asm465Native | TargetKind::Asm465Wasm => {
@@ -709,18 +713,14 @@ mod report_tests {
 
     fn mem_payload(key: &str, bytes: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
-        body.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+        let len = u16::try_from(bytes.len()).expect("memory payload length exceeds u16");
+        body.extend_from_slice(&len.to_le_bytes());
         body.extend_from_slice(bytes);
         payload_with_key(key, body)
     }
 
     fn regs_payload(key: &str, regs: (u8, u8, u8, u8, u8, u16)) -> Vec<u8> {
-        let mut body = Vec::new();
-        body.push(regs.0);
-        body.push(regs.1);
-        body.push(regs.2);
-        body.push(regs.3);
-        body.push(regs.4);
+        let mut body = vec![regs.0, regs.1, regs.2, regs.3, regs.4];
         body.extend_from_slice(&regs.5.to_le_bytes());
         payload_with_key(key, body)
     }
@@ -731,7 +731,7 @@ mod report_tests {
         enc.push_record(RecordId::CaseStart, b"demo\0").unwrap();
         enc.push_record(RecordId::ActualKeyValue, kv_payload("score", 0x10))
             .unwrap();
-        enc.push_record(RecordId::ActualHash, hash_payload("frame", 0xDEADBEEF))
+        enc.push_record(RecordId::ActualHash, hash_payload("frame", 0xDEAD_BEEF))
             .unwrap();
         enc.push_record(
             RecordId::ActualMem,
@@ -745,8 +745,8 @@ mod report_tests {
         .unwrap();
         enc.push_record(RecordId::ActualTime, time_payload("elapsed", 500))
             .unwrap();
-        enc.push_record(RecordId::CaseOk, &[0]).unwrap();
-        enc.push_record(RecordId::End, &[]).unwrap();
+        enc.push_record(RecordId::CaseOk, [0]).unwrap();
+        enc.push_record(RecordId::End, []).unwrap();
         enc.set_counts(1, 1, 0).set_state(State::Done);
         let buffer = enc.finish();
         let exec = ExecutionOutput {
@@ -758,9 +758,9 @@ mod report_tests {
         assert_eq!(cases.len(), 1);
         let case = &cases[0];
         assert_eq!(case.actual_groups.scalars.get("score"), Some(&0x10));
-        assert_eq!(case.actual_groups.hashes.get("frame"), Some(&0xDEADBEEF));
+        assert_eq!(case.actual_groups.hashes.get("frame"), Some(&0xDEAD_BEEF));
         assert_eq!(
-            case.actual_groups.memory.get("dump").map(|v| v.as_slice()),
+            case.actual_groups.memory.get("dump").map(Vec::as_slice),
             Some(&[0x00, 0x01, 0x02][..])
         );
         assert_eq!(
@@ -785,14 +785,16 @@ mod debug_capture_tests {
     #[test]
     fn captures_console_log_when_requested() {
         let workspace = workspace_root();
-        let mut opts = RunOptions::default();
-        opts.target = TargetKind::Cross465;
-        opts.personality = Some("modern-retro".to_string());
-        opts.timeout_ms = Some(2_000);
-        opts.asm_override = Some(CaseSource::File(
-            workspace.join("crossdev/cross465/tests/cases/logging_console_output.s"),
-        ));
-        opts.log_console = true;
+        let opts = RunOptions {
+            target: TargetKind::Cross465,
+            personality: Some("modern-retro".to_string()),
+            timeout_ms: Some(2_000),
+            asm_override: Some(CaseSource::File(
+                workspace.join("crossdev/cross465/tests/cases/logging_console_output.s"),
+            )),
+            log_console: true,
+            ..RunOptions::default()
+        };
         let config = RunnerConfig::new(workspace.clone(), None);
         let filter = CaseFilter {
             names: vec![CONSOLE_CASE.to_string()],
