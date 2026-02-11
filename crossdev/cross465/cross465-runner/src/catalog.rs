@@ -124,11 +124,7 @@ impl Catalog {
                         .map(|p| if p.trim().is_empty() { None } else { Some(p) })
                         .collect()
                 };
-                let defines = entry
-                    .define
-                    .into_iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<Vec<_>>();
+                let defines = entry.define.into_iter().collect::<Vec<_>>();
                 let endpoint = entry.endpoint.map(|ep| CiEndpoint {
                     host: ep.host,
                     port: ep.port,

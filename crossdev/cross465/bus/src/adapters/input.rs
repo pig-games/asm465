@@ -190,10 +190,10 @@ impl ModuleAdapter for InputAdapter {
                 let pad = write.instance.unwrap_or(0) as usize;
                 match write.reg.input() {
                     Some(InputReg::ButtonsLo) => {
-                        self.backend.write_buttons_lo(pad, write.module_value)
+                        self.backend.write_buttons_lo(pad, write.module_value);
                     }
                     Some(InputReg::ButtonsHi) => {
-                        self.backend.write_buttons_hi(pad, write.module_value)
+                        self.backend.write_buttons_hi(pad, write.module_value);
                     }
                     Some(InputReg::PotX) => self.backend.write_pot_x(pad, write.module_value),
                     Some(InputReg::PotY) => self.backend.write_pot_y(pad, write.module_value),
@@ -212,7 +212,7 @@ impl InputAdapter {
     fn handle_scatter(&self, write: ScatterWriteEvent) {
         let pad = write.instance.unwrap_or(0) as usize;
         let snapshot = self.backend.snapshot();
-        let pad_snapshot = snapshot.pads.get(pad).cloned().unwrap_or_default();
+        let pad_snapshot = snapshot.pads.get(pad).copied().unwrap_or_default();
         match write.reg.input() {
             Some(InputReg::ButtonsLo) => {
                 let mut value = pad_snapshot.buttons as u8;
@@ -272,7 +272,7 @@ impl ModernInputState {
     fn write_buttons_lo(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
         let state = self.pads.get_mut(pad)?;
         let current = state.digital_mask;
-        let new_mask = (current & 0xFF00) | value as u16;
+        let new_mask = (current & 0xFF00) | u16::from(value);
         state.apply_digital_mask(new_mask);
         Some(PadPublish::new(pad, state.pad_snapshot()))
     }
@@ -280,7 +280,7 @@ impl ModernInputState {
     fn write_buttons_hi(&mut self, pad: usize, value: u8) -> Option<PadPublish> {
         let state = self.pads.get_mut(pad)?;
         let current = state.digital_mask;
-        let new_mask = (current & 0x00FF) | ((value as u16) << 8);
+        let new_mask = (current & 0x00FF) | (u16::from(value) << 8);
         state.apply_digital_mask(new_mask);
         Some(PadPublish::new(pad, state.pad_snapshot()))
     }
@@ -541,11 +541,11 @@ impl ControllerPadState {
 
 fn axis_to_pot(value: f32) -> u8 {
     let clamped = value.clamp(-1.0, 1.0);
-    ((clamped + 1.0) * 0.5 * POT_MAX as f32).round() as u8
+    ((clamped + 1.0) * 0.5 * f32::from(POT_MAX)).round() as u8
 }
 
 fn pot_to_axis(value: u8) -> f32 {
-    (value as f32 / POT_MAX as f32) * 2.0 - 1.0
+    (f32::from(value) / f32::from(POT_MAX)) * 2.0 - 1.0
 }
 
 #[cfg(test)]

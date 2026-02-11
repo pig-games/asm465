@@ -30,6 +30,7 @@ pub struct BaseAddress {
 
 impl BaseAddress {
     /// Construct a new base definition.
+    #[must_use]
     pub const fn new(name: &'static str, address: u32, span: usize) -> Self {
         Self {
             name,
@@ -39,11 +40,13 @@ impl BaseAddress {
     }
 
     /// Range covering the 16-byte header.
+    #[must_use]
     pub const fn header_range(&self) -> Range<u32> {
         self.address..self.address + HEADER_LEN as u32
     }
 
     /// Range covering the record payload area immediately after the header.
+    #[must_use]
     pub const fn records_range(&self) -> Range<u32> {
         let start = self.address + HEADER_LEN as u32;
         start..self.address + self.span as u32
@@ -78,6 +81,7 @@ pub enum State {
 
 impl State {
     /// Whether the state represents a terminal condition.
+    #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(self, State::Done | State::Aborted)
     }
@@ -116,6 +120,7 @@ pub struct Header {
 
 impl Header {
     /// Construct a header with default values (pending state, zero counts).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             version: VERSION,
@@ -174,6 +179,7 @@ impl Header {
     }
 
     /// State stored in the header.
+    #[must_use]
     pub fn state(&self) -> State {
         self.state
     }
@@ -184,6 +190,7 @@ impl Header {
     }
 
     /// Number of bytes written into the record area.
+    #[must_use]
     pub fn write_pos(&self) -> u16 {
         self.write_pos
     }
@@ -194,16 +201,19 @@ impl Header {
     }
 
     /// Total cases announced via `TEST_CASE_BEGIN`.
+    #[must_use]
     pub fn total_cases(&self) -> u16 {
         self.total_cases
     }
 
     /// Cases marked as passed.
+    #[must_use]
     pub fn passed_cases(&self) -> u16 {
         self.passed_cases
     }
 
     /// Cases marked as failed.
+    #[must_use]
     pub fn failed_cases(&self) -> u16 {
         self.failed_cases
     }
@@ -244,6 +254,7 @@ pub enum RecordId {
 
 impl RecordId {
     /// Whether the record terminates the stream.
+    #[must_use]
     pub const fn is_terminator(self) -> bool {
         matches!(self, RecordId::End)
     }
@@ -319,7 +330,7 @@ impl fmt::Display for RtstError {
                 write!(f, "header requires {HEADER_LEN} bytes (got {got})")
             }
             RtstError::BadMagic { found } => {
-                write!(f, "unexpected magic bytes: {:02X?}", found)
+                write!(f, "unexpected magic bytes: {found:02X?}")
             }
             RtstError::UnsupportedVersion { found } => {
                 write!(f, "unsupported RTST version {found}")
@@ -395,33 +406,36 @@ impl<'a> Record<'a> {
     }
 
     /// Record identifier without enforcing that it is known.
+    #[must_use]
     pub fn raw_id(&self) -> u8 {
         self.raw_id
     }
 
     /// Known record identifier, if the ID is recognized.
+    #[must_use]
     pub fn kind(&self) -> Option<RecordId> {
         RecordId::try_from(self.raw_id).ok()
     }
 
     /// Underlying payload bytes.
+    #[must_use]
     pub fn payload(&self) -> &'a [u8] {
         self.payload
     }
 
-    /// Parse a CASE_START record payload.
+    /// Parse a `CASE_START` record payload.
     pub fn case_start(&self) -> Result<CaseStart<'a>, RtstError> {
         self.ensure_kind(RecordId::CaseStart)?;
         let (name, _, _) = split_cstring(self.payload, self.payload_offset)?;
         Ok(CaseStart { name })
     }
 
-    /// Parse a CASE_OK record payload.
+    /// Parse a `CASE_OK` record payload.
     pub fn case_ok(&self) -> Result<CaseOutcome<'a>, RtstError> {
         self.read_case_outcome(RecordId::CaseOk)
     }
 
-    /// Parse a CASE_FAIL record payload.
+    /// Parse a `CASE_FAIL` record payload.
     pub fn case_fail(&self) -> Result<CaseOutcome<'a>, RtstError> {
         self.read_case_outcome(RecordId::CaseFail)
     }
@@ -440,7 +454,7 @@ impl<'a> Record<'a> {
         Ok(MessageRecord { message })
     }
 
-    /// Parse an ACT_KV record payload.
+    /// Parse an `ACT_KV` record payload.
     pub fn actual_kv(&self) -> Result<ActualKeyValue<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualKeyValue)?;
         let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
@@ -449,7 +463,7 @@ impl<'a> Record<'a> {
         Ok(ActualKeyValue { key, value })
     }
 
-    /// Parse an ACT_TIME record payload.
+    /// Parse an `ACT_TIME` record payload.
     pub fn actual_time(&self) -> Result<ActualTime<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualTime)?;
         let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
@@ -458,7 +472,7 @@ impl<'a> Record<'a> {
         Ok(ActualTime { key, cycles })
     }
 
-    /// Parse an ACT_HASH record payload.
+    /// Parse an `ACT_HASH` record payload.
     pub fn actual_hash(&self) -> Result<ActualHash<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualHash)?;
         let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
@@ -467,7 +481,7 @@ impl<'a> Record<'a> {
         Ok(ActualHash { key, hash })
     }
 
-    /// Parse an ACT_MEM record payload.
+    /// Parse an `ACT_MEM` record payload.
     pub fn actual_mem(&self) -> Result<ActualMem<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualMem)?;
         let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
@@ -482,7 +496,7 @@ impl<'a> Record<'a> {
         Ok(ActualMem { key, bytes: body })
     }
 
-    /// Parse an ACT_REGS record payload.
+    /// Parse an `ACT_REGS` record payload.
     pub fn actual_regs(&self) -> Result<ActualRegs<'a>, RtstError> {
         self.ensure_kind(RecordId::ActualRegs)?;
         let (key, rest, rest_offset) = split_cstring(self.payload, self.payload_offset)?;
@@ -529,13 +543,13 @@ impl<'a> Record<'a> {
     }
 }
 
-/// CASE_START payload.
+/// `CASE_START` payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaseStart<'a> {
     pub name: &'a str,
 }
 
-/// CASE_OK / CASE_FAIL payload.
+/// `CASE_OK` / `CASE_FAIL` payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaseOutcome<'a> {
     pub status_code: u8,
@@ -635,11 +649,13 @@ impl<'a> Stream<'a> {
     }
 
     /// Parsed header reference.
+    #[must_use]
     pub fn header(&self) -> &Header {
         &self.header
     }
 
     /// Iterator over decoded records.
+    #[must_use]
     pub fn iter(&self) -> RecordIter<'a> {
         RecordIter {
             buf: self.records,
@@ -698,6 +714,7 @@ pub struct StreamEncoder {
 
 impl StreamEncoder {
     /// Create an empty stream encoder.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -742,6 +759,7 @@ impl StreamEncoder {
     }
 
     /// Finalize and return the concatenated header+record buffer.
+    #[must_use]
     pub fn finish(self) -> Vec<u8> {
         let mut out = vec![0u8; HEADER_LEN + self.records.len()];
         self.header.encode(&mut out[..HEADER_LEN]).unwrap();
@@ -750,10 +768,7 @@ impl StreamEncoder {
     }
 }
 
-fn split_cstring<'a>(
-    bytes: &'a [u8],
-    offset: usize,
-) -> Result<(&'a str, &'a [u8], usize), RtstError> {
+fn split_cstring(bytes: &[u8], offset: usize) -> Result<(&str, &[u8], usize), RtstError> {
     let Some(pos) = bytes.iter().position(|b| *b == 0) else {
         return Err(RtstError::MissingCStringTerminator { offset });
     };

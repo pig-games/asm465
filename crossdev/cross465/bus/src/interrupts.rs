@@ -26,8 +26,15 @@ pub struct InterruptController {
     nmi: EdgeLine,
 }
 
+impl Default for InterruptController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InterruptController {
     /// Create a new controller with all sources disabled and no pending events.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             irq: LevelLine::new(),

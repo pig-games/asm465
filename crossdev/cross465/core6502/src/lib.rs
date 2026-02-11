@@ -39,6 +39,7 @@ enum AddrMode {
 }
 
 #[derive(Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
 enum Op {
     ADC,
     AND,
@@ -154,6 +155,7 @@ impl Cpu {
     /// The core immediately owns the bus; call [`reset`](Cpu::reset) before
     /// executing instructions so the program counter is initialised from the
     /// reset vector.
+    #[must_use]
     pub fn new(bus: Bus) -> Self {
         Self {
             a: 0,
@@ -171,6 +173,7 @@ impl Cpu {
     }
 
     /// Borrow the attached bus.
+    #[must_use]
     pub fn bus(&self) -> &Bus {
         &self.bus
     }
@@ -181,6 +184,7 @@ impl Cpu {
     }
 
     /// Consume the CPU and return the owned bus.
+    #[must_use]
     pub fn into_bus(self) -> Bus {
         self.bus
     }
@@ -202,12 +206,12 @@ impl Cpu {
     }
     #[inline]
     fn write(&mut self, a: u16, v: u8) {
-        self.bus.write(a, v)
+        self.bus.write(a, v);
     }
     #[inline]
     fn read16(&mut self, a: u16) -> u16 {
-        let lo = self.read(a) as u16;
-        let hi = self.read(a.wrapping_add(1)) as u16;
+        let lo = u16::from(self.read(a));
+        let hi = u16::from(self.read(a.wrapping_add(1)));
         (hi << 8) | lo
     }
 
@@ -216,20 +220,20 @@ impl Cpu {
     /// **page-wrap bug**: when the low byte is at `$xxFF`, the high byte is
     /// read from `$xx00` rather than `$xy00`.
     fn read16_bug(&mut self, a: u16) -> u16 {
-        let lo = self.read(a) as u16;
-        let hi = self.read((a & 0xFF00) | ((a + 1) & 0x00FF)) as u16;
+        let lo = u16::from(self.read(a));
+        let hi = u16::from(self.read((a & 0xFF00) | ((a + 1) & 0x00FF)));
         (hi << 8) | lo
     }
     #[inline]
     fn push(&mut self, v: u8) {
-        let a = 0x0100u16 | self.sp as u16;
+        let a = 0x0100u16 | u16::from(self.sp);
         self.write(a, v);
         self.sp = self.sp.wrapping_sub(1);
     }
     #[inline]
     fn pop(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        let a = 0x0100u16 | self.sp as u16;
+        let a = 0x0100u16 | u16::from(self.sp);
         self.read(a)
     }
     #[inline]
@@ -265,7 +269,7 @@ impl Cpu {
     /// | `IndY`   | Indirect Indexed, Y (a.k.a. `(zp),Y`)                                   | Read 16‑bit base from ZP, then add Y; sets page‑cross if high byte changes.                | maybe       |
     /// | `Rel`    | Relative (branches)                                                     | Returns sign‑extended 8‑bit offset; branch code adds it to PC and sets page‑cross there.   | `false`     |
     fn addr(&mut self, mode: AddrMode) -> (u16, bool) {
-        use AddrMode::*;
+        use AddrMode::{Abs, AbsX, AbsY, Acc, Imm, Imp, Ind, IndX, IndY, Rel, Zp, ZpX, ZpY};
         match mode {
             // Implied / Accumulator: no memory operand.
             Imp | Acc => (0, false),
@@ -279,21 +283,21 @@ impl Cpu {
 
             // Zero Page: fetch 8-bit address and use it as $00xx.
             Zp => {
-                let a = self.read(self.pc) as u16;
+                let a = u16::from(self.read(self.pc));
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
 
             // Zero Page,X: add X with wrap in zero page.
             ZpX => {
-                let a = self.read(self.pc).wrapping_add(self.x) as u16;
+                let a = u16::from(self.read(self.pc).wrapping_add(self.x));
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
 
             // Zero Page,Y: add Y with wrap in zero page (used by a few ops like LDX).
             ZpY => {
-                let a = self.read(self.pc).wrapping_add(self.y) as u16;
+                let a = u16::from(self.read(self.pc).wrapping_add(self.y));
                 self.pc = self.pc.wrapping_add(1);
                 (a, false)
             }
@@ -309,7 +313,7 @@ impl Cpu {
             AbsX => {
                 let base = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
-                let a = base.wrapping_add(self.x as u16);
+                let a = base.wrapping_add(u16::from(self.x));
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
 
@@ -317,7 +321,7 @@ impl Cpu {
             AbsY => {
                 let base = self.read16(self.pc);
                 self.pc = self.pc.wrapping_add(2);
-                let a = base.wrapping_add(self.y as u16);
+                let a = base.wrapping_add(u16::from(self.y));
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
 
@@ -332,8 +336,8 @@ impl Cpu {
             IndX => {
                 let zp = self.read(self.pc).wrapping_add(self.x);
                 self.pc = self.pc.wrapping_add(1);
-                let lo = self.read(zp as u16) as u16;
-                let hi = self.read(zp.wrapping_add(1) as u16) as u16;
+                let lo = u16::from(self.read(u16::from(zp)));
+                let hi = u16::from(self.read(u16::from(zp.wrapping_add(1))));
                 ((hi << 8) | lo, false)
             }
 
@@ -341,10 +345,10 @@ impl Cpu {
             IndY => {
                 let zp = self.read(self.pc);
                 self.pc = self.pc.wrapping_add(1);
-                let lo = self.read(zp as u16) as u16;
-                let hi = self.read(zp.wrapping_add(1) as u16) as u16;
+                let lo = u16::from(self.read(u16::from(zp)));
+                let hi = u16::from(self.read(u16::from(zp.wrapping_add(1))));
                 let base = (hi << 8) | lo;
-                let a = base.wrapping_add(self.y as u16);
+                let a = base.wrapping_add(u16::from(self.y));
                 (a, (base & 0xFF00) != (a & 0xFF00))
             }
 
@@ -352,15 +356,15 @@ impl Cpu {
             Rel => {
                 let off = self.read(self.pc) as i8;
                 self.pc = self.pc.wrapping_add(1);
-                (off as i16 as u16, false)
+                (i16::from(off) as u16, false)
             }
         }
     }
 
     fn adc_bin(&mut self, v: u8) {
         let a = self.a;
-        let c = if self.p.contains(P::C) { 1 } else { 0 };
-        let sum = a as u16 + v as u16 + c as u16;
+        let c = i32::from(self.p.contains(P::C));
+        let sum = u16::from(a) + u16::from(v) + c as u16;
         let res = (sum & 0xFF) as u8;
         let carry = sum > 0xFF;
         let overflow = ((a ^ res) & (v ^ res) & 0x80) != 0;
@@ -377,8 +381,8 @@ impl Cpu {
     fn adc_bcd(&mut self, v: u8) {
         // Do binary add first, then BCD adjust; keep V from binary add (NMOS behavior).
         let a = self.a;
-        let c = if self.p.contains(P::C) { 1 } else { 0 };
-        let sum = a as u16 + v as u16 + c as u16;
+        let c = i32::from(self.p.contains(P::C));
+        let sum = u16::from(a) + u16::from(v) + c as u16;
         let mut res = (sum & 0xFF) as u8;
         let mut carry = sum > 0xFF;
         let overflow = ((a ^ res) & (v ^ res) & 0x80) != 0;
@@ -407,8 +411,8 @@ impl Cpu {
     fn sbc_bin(&mut self, v: u8) {
         // Implement as A + (~v) + C
         let a = self.a;
-        let c = if self.p.contains(P::C) { 1 } else { 0 };
-        let sum = a as u16 + (!v) as u16 + c as u16;
+        let c = i32::from(self.p.contains(P::C));
+        let sum = u16::from(a) + u16::from(!v) + c as u16;
         let res = (sum & 0xFF) as u8;
         let carry = sum > 0xFF; // Carry set means no borrow
         let overflow = ((a ^ res) & (a ^ v) & 0x80) != 0;
@@ -424,14 +428,14 @@ impl Cpu {
     fn sbc_bcd(&mut self, v: u8) {
         // Binary path for V, then decimal adjust; Carry indicates no borrow.
         let a = self.a;
-        let c = if self.p.contains(P::C) { 1 } else { 0 };
-        let bin_sum = a as u16 + (!v) as u16 + c as u16;
+        let c = i32::from(self.p.contains(P::C));
+        let bin_sum = u16::from(a) + u16::from(!v) + c as u16;
         let mut res = (bin_sum & 0xFF) as u8;
         let overflow = ((a ^ res) & (a ^ v) & 0x80) != 0;
 
         // Decimal subtract per BCD: do digit-wise with borrow.
-        let mut lo = (a & 0x0F) as i16 - (v & 0x0F) as i16 - (1 - c) as i16;
-        let mut hi = (a >> 4) as i16 - (v >> 4) as i16;
+        let mut lo = i16::from(a & 0x0F) - i16::from(v & 0x0F) - (1 - c) as i16;
+        let mut hi = i16::from(a >> 4) - i16::from(v >> 4);
         if lo < 0 {
             lo += 10;
             hi -= 1;
@@ -464,8 +468,13 @@ impl Cpu {
         if self.halted {
             return 0;
         }
-        use AddrMode::*;
-        use Op::*;
+        use AddrMode::{Abs, Acc, Ind, Rel};
+        use Op::{
+            ADC, AND, ASL, BCC, BCS, BEQ, BIT, BMI, BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV,
+            CMP, CPX, CPY, DEC, DEX, DEY, EOR, INC, INX, INY, JMP, JSR, KIL, LDA, LDX, LDY, LSR,
+            NOP, ORA, PHA, PHP, PLA, PLP, ROL, ROR, RTI, RTS, SBC, SEC, SED, SEI, STA, STX, STY,
+            TAX, TAY, TSX, TXA, TXS, TYA,
+        };
         self.poll_interrupts();
         if let Some(cycles) = self.service_pending_interrupt() {
             return cycles;
@@ -492,15 +501,15 @@ impl Cpu {
                 self.pc = target;
             }
             (RTS, _) => {
-                let lo = self.pop() as u16;
-                let hi = self.pop() as u16;
+                let lo = u16::from(self.pop());
+                let hi = u16::from(self.pop());
                 self.pc = ((hi << 8) | lo).wrapping_add(1);
             }
             (RTI, _) => {
                 let st = self.pop();
                 self.p = P::from_bits_truncate((st & !P::B.bits()) | P::U.bits());
-                let lo = self.pop() as u16;
-                let hi = self.pop() as u16;
+                let lo = u16::from(self.pop());
+                let hi = u16::from(self.pop());
                 self.pc = (hi << 8) | lo;
             }
             (JMP, Abs) => {
@@ -737,7 +746,7 @@ impl Cpu {
                 self.set_zn(r);
             }
             (ROL, Acc) => {
-                let c = self.p.contains(P::C) as u8;
+                let c = u8::from(self.p.contains(P::C));
                 let newc = (self.a & 0x80) != 0;
                 self.a = (self.a << 1) | c;
                 self.p.set(P::C, newc);
@@ -746,7 +755,7 @@ impl Cpu {
             (ROL, mode) => {
                 let (addr, _) = self.addr(mode);
                 let v = self.read(addr);
-                let c = self.p.contains(P::C) as u8;
+                let c = u8::from(self.p.contains(P::C));
                 let newc = (v & 0x80) != 0;
                 let r = (v << 1) | c;
                 self.write(addr, r);
@@ -754,18 +763,18 @@ impl Cpu {
                 self.set_zn(r);
             }
             (ROR, Acc) => {
-                let c = self.p.contains(P::C) as u8;
+                let c = u8::from(self.p.contains(P::C));
                 let newc = (self.a & 0x01) != 0;
-                self.a = (self.a >> 1) | ((c as u8) << 7);
+                self.a = (self.a >> 1) | (c << 7);
                 self.p.set(P::C, newc);
                 self.set_zn(self.a);
             }
             (ROR, mode) => {
                 let (addr, _) = self.addr(mode);
                 let v = self.read(addr);
-                let c = self.p.contains(P::C) as u8;
+                let c = u8::from(self.p.contains(P::C));
                 let newc = (v & 0x01) != 0;
-                let r = (v >> 1) | ((c as u8) << 7);
+                let r = (v >> 1) | (c << 7);
                 self.write(addr, r);
                 self.p.set(P::C, newc);
                 self.set_zn(r);
@@ -775,7 +784,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if !self.p.contains(P::C) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -786,7 +795,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if self.p.contains(P::C) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -797,7 +806,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if self.p.contains(P::Z) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -808,7 +817,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if self.p.contains(P::N) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -819,7 +828,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if !self.p.contains(P::Z) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -830,7 +839,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if !self.p.contains(P::N) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -841,7 +850,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if !self.p.contains(P::V) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -852,7 +861,7 @@ impl Cpu {
                 let off = self.addr(Rel).0 as i8;
                 if self.p.contains(P::V) {
                     let old = self.pc;
-                    self.pc = self.pc.wrapping_add(off as i16 as u16);
+                    self.pc = self.pc.wrapping_add(i16::from(off) as u16);
                     if (old & 0xFF00) != (self.pc & 0xFF00) {
                         extra += 1;
                     }
@@ -871,7 +880,7 @@ impl Cpu {
             }
         }
 
-        let cyc = (e.cycles as u32) + extra;
+        let cyc = u32::from(e.cycles) + extra;
         self.bus.tick(cyc);
         cyc
     }
@@ -895,7 +904,7 @@ impl Cpu {
             // Peek at the opcode *without* a bus read so we avoid the
             // double-read problem on MMIO addresses with side effects.
             let opcode = self.bus.peek(self.pc);
-            let c = self.step() as u64;
+            let c = u64::from(self.step());
             spent += c;
             self.cycles += c;
             if self.halted {
@@ -966,8 +975,13 @@ const fn e(op: Op, mode: AddrMode, cycles: u8, add_page_cycle: bool) -> Entry {
 }
 
 const fn build_table() -> [Entry; 256] {
-    use AddrMode::*;
-    use Op::*;
+    use AddrMode::{Abs, AbsX, AbsY, Acc, Imm, Imp, Ind, IndX, IndY, Rel, Zp, ZpX, ZpY};
+    use Op::{
+        ADC, AND, ASL, BCC, BCS, BEQ, BIT, BMI, BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV, CMP,
+        CPX, CPY, DEC, DEX, DEY, EOR, INC, INX, INY, JMP, JSR, KIL, LDA, LDX, LDY, LSR, NOP, ORA,
+        PHA, PHP, PLA, PLP, ROL, ROR, RTI, RTS, SBC, SEC, SED, SEI, STA, STX, STY, TAX, TAY, TSX,
+        TXA, TXS, TYA,
+    };
     // Unassigned opcodes jam the CPU (like the real NMOS 6502).
     let jam = e(KIL, Imp, 2, false);
     let mut t = [jam; 256];
@@ -1196,10 +1210,11 @@ mod tests {
 
         let sp_after = cpu.sp;
         assert_eq!(sp_after, initial_sp.wrapping_sub(3));
-        let status_addr = 0x0100u16 | sp_after.wrapping_add(1) as u16;
-        let pcl_addr = 0x0100u16 | sp_after.wrapping_add(2) as u16;
-        let pch_addr = 0x0100u16 | sp_after.wrapping_add(3) as u16;
-        let stored_pc = ((cpu.bus.read(pch_addr) as u16) << 8) | cpu.bus.read(pcl_addr) as u16;
+        let status_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(1));
+        let pcl_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(2));
+        let pch_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(3));
+        let stored_pc =
+            (u16::from(cpu.bus.read(pch_addr)) << 8) | u16::from(cpu.bus.read(pcl_addr));
         let status_pushed = cpu.bus.read(status_addr);
         assert_eq!(status_pushed & P::U.bits(), P::U.bits());
         if i_before {
@@ -1234,10 +1249,11 @@ mod tests {
 
         let sp_after = cpu.sp;
         assert_eq!(sp_after, initial_sp.wrapping_sub(3));
-        let status_addr = 0x0100u16 | sp_after.wrapping_add(1) as u16;
-        let pcl_addr = 0x0100u16 | sp_after.wrapping_add(2) as u16;
-        let pch_addr = 0x0100u16 | sp_after.wrapping_add(3) as u16;
-        let stored_pc = ((cpu.bus.read(pch_addr) as u16) << 8) | cpu.bus.read(pcl_addr) as u16;
+        let status_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(1));
+        let pcl_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(2));
+        let pch_addr = 0x0100u16 | u16::from(sp_after.wrapping_add(3));
+        let stored_pc =
+            (u16::from(cpu.bus.read(pch_addr)) << 8) | u16::from(cpu.bus.read(pcl_addr));
         let status_pushed = cpu.bus.read(status_addr);
         assert_eq!(status_pushed & P::U.bits(), P::U.bits());
         assert_eq!(status_pushed & P::I.bits(), 0);

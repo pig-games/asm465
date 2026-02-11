@@ -201,11 +201,11 @@ fn jmp_jsr_rts_rti_php_plp() {
     let load = 0x8000;
     let irq = 0x9000;
     let pad = irq - load - (code.len() as u16);
-    code.extend(std::iter::repeat(0xEA).take(pad as usize));
+    code.extend(std::iter::repeat_n(0xEA, pad as usize));
     code.extend_from_slice(&[0x28, 0x40]);
     code.extend_from_slice(&[0x20, 0x10, 0x90]);
     let pad2 = 0x9010 - load - (code.len() as u16);
-    code.extend(std::iter::repeat(0xEA).take(pad2 as usize));
+    code.extend(std::iter::repeat_n(0xEA, pad2 as usize));
     code.push(0x60);
     code.push(0x00);
     let mut cpu = cpu_with_program(&code, load);

@@ -20,6 +20,7 @@ pub struct RasterIrqState {
 
 impl RasterIrqState {
     /// Construct a new raster IRQ state block.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -34,15 +35,17 @@ impl RasterIrqState {
     }
 
     pub fn set_compare_low(&self, value: u8) {
-        Self::update_atomic(&self.compare, |old| (old & 0xFF00) | value as u16);
+        Self::update_atomic(&self.compare, |old| (old & 0xFF00) | u16::from(value));
     }
 
     pub fn set_compare_high(&self, value: u8) {
-        Self::update_atomic(&self.compare, |old| ((value as u16) << 8) | (old & 0x00FF));
+        Self::update_atomic(&self.compare, |old| {
+            (u16::from(value) << 8) | (old & 0x00FF)
+        });
     }
 
     pub fn set_compare_high_bit(&self, bit: bool) {
-        let high = if bit { 1u8 } else { 0u8 };
+        let high = u8::from(bit);
         self.set_compare_high(high);
     }
 
@@ -57,11 +60,13 @@ impl RasterIrqState {
     }
 
     pub fn set_current_low(&self, value: u8) {
-        Self::update_atomic(&self.current, |old| (old & 0xFF00) | value as u16);
+        Self::update_atomic(&self.current, |old| (old & 0xFF00) | u16::from(value));
     }
 
     pub fn set_current_high(&self, value: u8) {
-        Self::update_atomic(&self.current, |old| ((value as u16) << 8) | (old & 0x00FF));
+        Self::update_atomic(&self.current, |old| {
+            (u16::from(value) << 8) | (old & 0x00FF)
+        });
     }
 
     /// Return the last recorded raster line.
@@ -219,6 +224,7 @@ pub struct VideoState {
 }
 
 impl VideoState {
+    #[must_use]
     pub fn register_value(&self, reg: SystemReg) -> Option<u8> {
         self.registers.get(&reg).copied()
     }
@@ -235,6 +241,7 @@ impl VideoStateBackend {
         Self { state }
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> VideoState {
         self.state.lock().unwrap().clone()
     }

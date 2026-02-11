@@ -35,6 +35,7 @@ pub struct SpriteSnapshot {
 
 impl SpriteSnapshot {
     #[inline]
+    #[must_use]
     pub fn sprite(&self, index: usize) -> Option<&SpriteState> {
         self.sprites.get(index)
     }
@@ -54,13 +55,15 @@ impl Default for SpriteOutput {
 }
 
 impl SpriteOutput {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> SpriteSnapshot {
         SpriteSnapshot {
-            sprites: self.sprites.iter().copied().collect(),
+            sprites: self.sprites.to_vec(),
         }
     }
 
@@ -135,7 +138,14 @@ const SPRITE_REGS: &[RegisterDesc] = &[
     ),
 ];
 
+impl Default for SpriteMmio {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpriteMmio {
+    #[must_use]
     pub fn new() -> Self {
         let output = Arc::new(Mutex::new(SpriteOutput::new()));
         Self {
@@ -145,6 +155,7 @@ impl SpriteMmio {
         }
     }
 
+    #[must_use]
     pub fn output(&self) -> Arc<Mutex<SpriteOutput>> {
         Arc::clone(&self.output)
     }
@@ -177,7 +188,7 @@ impl Module for SpriteMmio {
             0x05 => (self.sprites[slot].y >> 8) as u8,
             0x06 => (self.sprites[slot].y & 0x00FF) as u8,
             0x07 => (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F),
-            0x08 => self.sprites[slot].enabled as u8,
+            0x08 => u8::from(self.sprites[slot].enabled),
             _ => 0,
         }
     }
@@ -203,25 +214,25 @@ impl Module for SpriteMmio {
             }
             0x03 => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.x = (sprite.x & 0x00FF) | ((value as u16) << 8);
+                    sprite.x = (sprite.x & 0x00FF) | (u16::from(value) << 8);
                     log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
                 });
             }
             0x04 => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.x = (sprite.x & 0xFF00) | value as u16;
+                    sprite.x = (sprite.x & 0xFF00) | u16::from(value);
                     log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
                 });
             }
             0x05 => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.y = (sprite.y & 0x00FF) | ((value as u16) << 8);
+                    sprite.y = (sprite.y & 0x00FF) | (u16::from(value) << 8);
                     log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
                 });
             }
             0x06 => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.y = (sprite.y & 0xFF00) | value as u16;
+                    sprite.y = (sprite.y & 0xFF00) | u16::from(value);
                     log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
                 });
             }
@@ -231,18 +242,13 @@ impl Module for SpriteMmio {
                 self.sprites[slot].scale_x = scale_x;
                 self.sprites[slot].scale_y = scale_y;
                 self.publish_sprite(slot);
-                log::trace!(
-                    "SpriteMmio: spr_scale slot {} => x={}, y={}",
-                    slot,
-                    scale_x,
-                    scale_y
-                );
+                log::trace!("SpriteMmio: spr_scale slot {slot} => x={scale_x}, y={scale_y}");
             }
             0x08 => {
                 let enabled = value & 1 != 0;
                 self.with_selected_sprite(|index, sprite| {
                     sprite.enabled = enabled;
-                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                    log::trace!("SpriteMmio: spr_enable slot {index} => {enabled}");
                 });
             }
             _ => {}
@@ -270,7 +276,7 @@ impl Module for SpriteMmio {
             RegId::Sprite(SpriteReg::Scale) => {
                 (self.sprites[slot].scale_x << 4) | (self.sprites[slot].scale_y & 0x0F)
             }
-            RegId::Sprite(SpriteReg::Enable) => self.sprites[slot].enabled as u8,
+            RegId::Sprite(SpriteReg::Enable) => u8::from(self.sprites[slot].enabled),
             _ => 0,
         }
     }
@@ -296,25 +302,25 @@ impl Module for SpriteMmio {
             }
             RegId::Sprite(SpriteReg::XHi) => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.x = (sprite.x & 0x00FF) | ((value as u16) << 8);
+                    sprite.x = (sprite.x & 0x00FF) | (u16::from(value) << 8);
                     log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
                 });
             }
             RegId::Sprite(SpriteReg::XLo) => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.x = (sprite.x & 0xFF00) | value as u16;
+                    sprite.x = (sprite.x & 0xFF00) | u16::from(value);
                     log::trace!("SpriteMmio: spr_x slot {} => {:04X}", index, sprite.x);
                 });
             }
             RegId::Sprite(SpriteReg::YHi) => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.y = (sprite.y & 0x00FF) | ((value as u16) << 8);
+                    sprite.y = (sprite.y & 0x00FF) | (u16::from(value) << 8);
                     log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
                 });
             }
             RegId::Sprite(SpriteReg::YLo) => {
                 self.with_selected_sprite(|index, sprite| {
-                    sprite.y = (sprite.y & 0xFF00) | value as u16;
+                    sprite.y = (sprite.y & 0xFF00) | u16::from(value);
                     log::trace!("SpriteMmio: spr_y slot {} => {:04X}", index, sprite.y);
                 });
             }
@@ -324,18 +330,13 @@ impl Module for SpriteMmio {
                 self.sprites[slot].scale_x = scale_x;
                 self.sprites[slot].scale_y = scale_y;
                 self.publish_sprite(slot);
-                log::trace!(
-                    "SpriteMmio: spr_scale slot {} => x={}, y={}",
-                    slot,
-                    scale_x,
-                    scale_y
-                );
+                log::trace!("SpriteMmio: spr_scale slot {slot} => x={scale_x}, y={scale_y}");
             }
             RegId::Sprite(SpriteReg::Enable) => {
                 let enabled = value & 1 != 0;
                 self.with_selected_sprite(|index, sprite| {
                     sprite.enabled = enabled;
-                    log::trace!("SpriteMmio: spr_enable slot {} => {}", index, enabled);
+                    log::trace!("SpriteMmio: spr_enable slot {index} => {enabled}");
                 });
             }
             _ => {}

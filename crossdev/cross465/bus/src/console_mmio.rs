@@ -61,6 +61,7 @@ pub struct ConsoleSnapshot {
 
 impl ConsoleSnapshot {
     #[inline]
+    #[must_use]
     pub fn cell(&self, x: usize, y: usize) -> &ConsoleCell {
         &self.cells[y * self.width + x]
     }
@@ -88,6 +89,7 @@ impl Default for ConsoleOutput {
 
 impl ConsoleOutput {
     /// Create a new surface with the supplied character dimensions.
+    #[must_use]
     pub fn new(width: usize, height: usize) -> Self {
         let mut output = Self {
             width,
@@ -114,7 +116,7 @@ impl ConsoleOutput {
     fn scroll_up(&mut self) {
         self.cells.drain(0..self.width);
         self.cells
-            .extend(std::iter::repeat(ConsoleCell::default()).take(self.width));
+            .extend(std::iter::repeat_n(ConsoleCell::default(), self.width));
         self.cursor_y = self.height.saturating_sub(1);
     }
 
@@ -171,6 +173,7 @@ impl ConsoleOutput {
     }
 
     /// Produce an immutable snapshot of the current surface.
+    #[must_use]
     pub fn snapshot(&self) -> ConsoleSnapshot {
         ConsoleSnapshot {
             width: self.width,
@@ -180,6 +183,7 @@ impl ConsoleOutput {
     }
 
     /// Render the surface to a simple monochrome text representation.
+    #[must_use]
     pub fn to_plain_string(&self) -> String {
         let mut out = String::new();
         for row in 0..self.height {
@@ -349,16 +353,14 @@ impl ConsoleMmio {
     fn push_char(&mut self, b: u8) {
         let ch = if self.petscii_mode {
             petscii_to_unicode(screen_to_petscii(b))
+        } else if (0x20..=0x7E).contains(&b) {
+            b as char
+        } else if b == 0x0D {
+            // Treat CR as newline for convenience.
+            '\n'
         } else {
-            if (0x20..=0x7E).contains(&b) {
-                b as char
-            } else if b == 0x0D {
-                // Treat CR as newline for convenience.
-                '\n'
-            } else {
-                // Placeholder for non‑printables/high bytes in ASCII-ish mode.
-                '·'
-            }
+            // Placeholder for non‑printables/high bytes in ASCII-ish mode.
+            '·'
         };
         if ch == '\n' {
             self.newline();
@@ -390,7 +392,7 @@ impl ConsoleMmio {
     /// Print a byte as two hexadecimal digits (debugging helper).
     fn push_hex(&mut self, b: u8) {
         let s = format!("{b:02X}");
-        self.term.write(&s.as_bytes()).ok();
+        self.term.write_all(s.as_bytes()).ok();
         self.output
             .lock()
             .unwrap()
@@ -444,7 +446,7 @@ impl ConsoleMmio {
     pub fn print(&mut self, high: u8) {
         // Compose 16-bit pointer from high/low registers
         self.set_hptr(high);
-        let mut addr = (((self.hptr as u16) << 8) | (self.lptr as u16)) as u16;
+        let mut addr = (u16::from(self.hptr) << 8) | u16::from(self.lptr);
         let start = addr;
         loop {
             // limit RAM lock scope so we don't hold an immutable borrow across
@@ -479,6 +481,7 @@ impl ConsoleMmio {
     }
 
     /// Shared output buffer handle for host integrations.
+    #[must_use]
     pub fn output(&self) -> Arc<Mutex<ConsoleOutput>> {
         Arc::clone(&self.output)
     }
@@ -488,7 +491,7 @@ impl Module for ConsoleMmio {
     /// Returns 0 for all addresses; the registers are write-only in this device.
     fn read(&mut self, addr: u16) -> u8 {
         match addr & 0x001F {
-            0x00 | 0x01 | 0x02 => 0,
+            0x00..=0x02 => 0,
             0x04 => self.x,
             0x05 => self.y,
             0x07 => self.color,
@@ -528,11 +531,13 @@ impl Module for ConsoleMmio {
 
     fn read_reg(&mut self, reg: RegId) -> u8 {
         match reg {
-            RegId::Console(ConsoleReg::WriteChar)
-            | RegId::Console(ConsoleReg::Newline)
-            | RegId::Console(ConsoleReg::WriteHex)
-            | RegId::Console(ConsoleReg::Clear)
-            | RegId::Console(ConsoleReg::CursorApply) => 0,
+            RegId::Console(
+                ConsoleReg::WriteChar
+                | ConsoleReg::Newline
+                | ConsoleReg::WriteHex
+                | ConsoleReg::Clear
+                | ConsoleReg::CursorApply,
+            ) => 0,
             RegId::Console(ConsoleReg::CursorX) => self.x,
             RegId::Console(ConsoleReg::CursorY) => self.y,
             RegId::Console(ConsoleReg::Foreground) => self.color,

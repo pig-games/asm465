@@ -6,6 +6,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use crate::{interrupts::InterruptController, Memory};
@@ -25,6 +26,7 @@ pub enum ModuleKind {
 
 impl ModuleKind {
     /// Return the lowercase string identifier used in TOML/personality files.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             ModuleKind::Console => "console",
@@ -38,7 +40,8 @@ impl ModuleKind {
     }
 
     /// Parse a module kind from its string representation.
-    pub fn from_str(kind: &str) -> Option<Self> {
+    #[must_use]
+    pub fn from_name(kind: &str) -> Option<Self> {
         match kind {
             "console" => Some(ModuleKind::Console),
             "display" => Some(ModuleKind::Display),
@@ -49,6 +52,14 @@ impl ModuleKind {
             "audio" => Some(ModuleKind::Audio),
             _ => None,
         }
+    }
+}
+
+impl FromStr for ModuleKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_name(s).ok_or(())
     }
 }
 
@@ -64,6 +75,7 @@ pub enum RegId {
 
 impl RegId {
     /// If this register is a console register, return it.
+    #[must_use]
     pub fn console(self) -> Option<ConsoleReg> {
         match self {
             RegId::Console(reg) => Some(reg),
@@ -72,6 +84,7 @@ impl RegId {
     }
 
     /// If this register is a display register, return it.
+    #[must_use]
     pub fn display(self) -> Option<DisplayReg> {
         match self {
             RegId::Display(reg) => Some(reg),
@@ -80,6 +93,7 @@ impl RegId {
     }
 
     /// If this register is a sprite register, return it.
+    #[must_use]
     pub fn sprite(self) -> Option<SpriteReg> {
         match self {
             RegId::Sprite(reg) => Some(reg),
@@ -88,6 +102,7 @@ impl RegId {
     }
 
     /// If this register is an input register, return it.
+    #[must_use]
     pub fn input(self) -> Option<InputReg> {
         match self {
             RegId::Input(reg) => Some(reg),
@@ -96,6 +111,7 @@ impl RegId {
     }
 
     /// If this register is a system register, return it.
+    #[must_use]
     pub fn system(self) -> Option<SystemReg> {
         match self {
             RegId::System(reg) => Some(reg),
@@ -182,6 +198,7 @@ pub struct RegisterDesc {
 }
 
 impl RegisterDesc {
+    #[must_use]
     pub const fn new(
         id: RegId,
         name: &'static str,
@@ -202,6 +219,7 @@ impl RegisterDesc {
         }
     }
 
+    #[must_use]
     pub fn matches_name(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name)
     }
@@ -218,6 +236,7 @@ pub struct BitField {
 }
 
 impl BitField {
+    #[must_use]
     pub const fn new(name: &'static str, lsb: u8, width: u8) -> Self {
         Self {
             name,
@@ -244,6 +263,7 @@ pub struct BackendHandles {
 
 impl BackendHandles {
     /// Create an empty set of backend handles.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -251,6 +271,7 @@ impl BackendHandles {
     }
 
     /// Return `true` when no handles have been registered.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -274,6 +295,7 @@ impl BackendHandles {
     }
 
     /// Retrieve a handle by type, cloning the `Arc`.
+    #[must_use]
     pub fn get<T>(&self) -> Option<Arc<T>>
     where
         T: Any + Send + Sync + 'static,
@@ -284,6 +306,7 @@ impl BackendHandles {
     }
 
     /// Returns `true` if a handle of the given type is registered.
+    #[must_use]
     pub fn contains<T>(&self) -> bool
     where
         T: Any + Send + Sync + 'static,
@@ -318,6 +341,7 @@ impl ModuleDeps {
     }
 
     /// Retrieve a backend handle of type `T`, if one is registered.
+    #[must_use]
     pub fn backend<T>(&self) -> Option<Arc<T>>
     where
         T: Any + Send + Sync + 'static,
@@ -429,6 +453,7 @@ pub trait ModuleAdapter: Send {
 }
 
 impl ModuleRegistry {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             builders: Vec::new(),
@@ -439,10 +464,12 @@ impl ModuleRegistry {
         self.builders.push(factory);
     }
 
+    #[must_use]
     pub fn all(&self) -> &[&'static dyn ModuleFactory] {
         &self.builders
     }
 
+    #[must_use]
     pub fn by_id(&self, id: &str) -> Option<&'static dyn ModuleFactory> {
         self.builders
             .iter()

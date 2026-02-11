@@ -239,10 +239,9 @@ impl Cross465Backend {
             TargetKind::Mega65 => BASE_LAYOUT_MEGA65,
         };
         if base.address > 0xFFFF {
-            return Err(RunnerError::UnsupportedTarget(format!(
-                "{}",
-                cfg.target.to_string()
-            )));
+            return Err(RunnerError::UnsupportedTarget(
+                cfg.target.to_string().into(),
+            ));
         }
         let (load_addr, body) = parse_prg(prg)?;
         let mut bus = Bus::new();
@@ -253,7 +252,7 @@ impl Cross465Backend {
 
         let mut cycles: u64 = 0;
         let poll_interval: u64 = 1024;
-        let cycle_budget = cfg.timeout_ms.saturating_mul(1_000) as u64;
+        let cycle_budget = cfg.timeout_ms.saturating_mul(1_000);
         let base_addr = base.address as u16;
         let progress_deadline = if cfg.progress_timeout_ms == 0 {
             None
@@ -707,8 +706,8 @@ pub fn backend_for_target(
 
 fn read_bytes(bus: &mut Bus, base: u16, len: usize) -> Vec<u8> {
     let mut buf = vec![0u8; len];
-    for i in 0..len {
-        buf[i] = bus.read(base.wrapping_add(i as u16));
+    for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = bus.read(base.wrapping_add(i as u16));
     }
     buf
 }
@@ -1309,7 +1308,7 @@ impl TargetBackend for Asm465Backend {
                 }
             }
             let header_bytes = self.retry_transport(
-                || client.read_memory(layout.address as u32, HEADER_LEN),
+                || client.read_memory(layout.address, HEADER_LEN),
                 cfg.transport_retries,
             )?;
             let header = match Header::parse(&header_bytes) {
@@ -1360,7 +1359,7 @@ impl TargetBackend for Asm465Backend {
             thread::sleep(self.config.poll_delay);
         }
         let rtst = self.retry_transport(
-            || client.read_memory(layout.address as u32, layout.span),
+            || client.read_memory(layout.address, layout.span),
             cfg.transport_retries,
         )?;
         Ok(ExecutionOutput {
@@ -1401,7 +1400,7 @@ fn try_connect(host: &str, port: u16) -> std::io::Result<()> {
     let addr = (host, port)
         .to_socket_addrs()?
         .next()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "invalid address"))?;
+        .ok_or_else(|| std::io::Error::other("invalid address"))?;
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).map(|_| ())
 }
 

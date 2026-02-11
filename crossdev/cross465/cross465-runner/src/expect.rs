@@ -25,7 +25,7 @@ impl CaseAccessor for CaseReport {
     }
 }
 
-impl<'a> CaseAccessor for &'a CaseReport {
+impl CaseAccessor for &CaseReport {
     fn case_report(&self) -> &CaseReport {
         self
     }

@@ -32,10 +32,12 @@ impl Default for DisplayOutput {
 }
 
 impl DisplayOutput {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> DisplaySnapshot {
         DisplaySnapshot {
             border_color: self.border_color,
@@ -80,8 +82,15 @@ const DISPLAY_REGS: &[RegisterDesc] = &[
     ),
 ];
 
+impl Default for DisplayMmio {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DisplayMmio {
     /// Construct the display MMIO device with fresh output state.
+    #[must_use]
     pub fn new() -> Self {
         let output = Arc::new(Mutex::new(DisplayOutput::new()));
         Self {
@@ -92,6 +101,7 @@ impl DisplayMmio {
     }
 
     /// Access the shared output buffer for adapters and viewers.
+    #[must_use]
     pub fn output(&self) -> Arc<Mutex<DisplayOutput>> {
         Arc::clone(&self.output)
     }

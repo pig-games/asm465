@@ -162,13 +162,11 @@ impl Module for SystemMmio {
         let current = self
             .raster_irq
             .as_ref()
-            .map(|state| state.current())
-            .unwrap_or(self.raster_current);
+            .map_or(self.raster_current, |state| state.current());
         let compare = self
             .raster_irq
             .as_ref()
-            .map(|state| state.compare())
-            .unwrap_or(self.raster_compare);
+            .map_or(self.raster_compare, |state| state.compare());
         match addr & 0x000F {
             0x00 => self.irq_pending(),
             0x01 => self.irq_enabled(),
@@ -207,7 +205,7 @@ impl Module for SystemMmio {
     }
 
     fn write(&mut self, addr: u16, value: u8) {
-        let mask = value as u32;
+        let mask = u32::from(value);
         match addr & 0x000F {
             0x01 => {
                 self.controller.set_irq_enable(mask);
@@ -223,19 +221,19 @@ impl Module for SystemMmio {
                 }
             }
             0x07 => {
-                self.raster_current = (self.raster_current & 0xFF00) | value as u16;
+                self.raster_current = (self.raster_current & 0xFF00) | u16::from(value);
                 if let Some(state) = &self.raster_irq {
                     state.set_current_low(value);
                 }
             }
             0x08 => {
-                self.raster_compare = (self.raster_compare & 0xFF00) | value as u16;
+                self.raster_compare = (self.raster_compare & 0xFF00) | u16::from(value);
                 if let Some(state) = &self.raster_irq {
                     state.set_compare_low(value);
                 }
             }
             0x09 => {
-                self.raster_compare = ((value as u16) << 8) | (self.raster_compare & 0x00FF);
+                self.raster_compare = (u16::from(value) << 8) | (self.raster_compare & 0x00FF);
                 if let Some(state) = &self.raster_irq {
                     state.set_compare_high(value);
                 }
@@ -256,13 +254,11 @@ impl Module for SystemMmio {
         let current = self
             .raster_irq
             .as_ref()
-            .map(|state| state.current())
-            .unwrap_or(self.raster_current);
+            .map_or(self.raster_current, |state| state.current());
         let compare = self
             .raster_irq
             .as_ref()
-            .map(|state| state.compare())
-            .unwrap_or(self.raster_compare);
+            .map_or(self.raster_compare, |state| state.compare());
         match reg {
             RegId::System(SystemReg::IrqPending) => self.irq_pending(),
             RegId::System(SystemReg::IrqEnable) => self.irq_enabled(),
@@ -294,14 +290,13 @@ impl Module for SystemMmio {
             RegId::System(SystemReg::RasterLo) => (current & 0x00FF) as u8,
             RegId::System(SystemReg::RasterCompareLo) => (compare & 0x00FF) as u8,
             RegId::System(SystemReg::RasterCompareHi) => (compare >> 8) as u8,
-            RegId::System(SystemReg::SpriteCollisions)
-            | RegId::System(SystemReg::BackgroundCollisions) => 0,
+            RegId::System(SystemReg::SpriteCollisions | SystemReg::BackgroundCollisions) => 0,
             _ => 0xFF,
         }
     }
 
     fn write_reg(&mut self, reg: RegId, value: u8) {
-        let mask = value as u32;
+        let mask = u32::from(value);
         match reg {
             RegId::System(SystemReg::IrqEnable) => {
                 self.controller.set_irq_enable(mask);
@@ -317,19 +312,19 @@ impl Module for SystemMmio {
                 }
             }
             RegId::System(SystemReg::RasterLo) => {
-                self.raster_current = (self.raster_current & 0xFF00) | value as u16;
+                self.raster_current = (self.raster_current & 0xFF00) | u16::from(value);
                 if let Some(state) = &self.raster_irq {
                     state.set_current_low(value);
                 }
             }
             RegId::System(SystemReg::RasterCompareLo) => {
-                self.raster_compare = (self.raster_compare & 0xFF00) | value as u16;
+                self.raster_compare = (self.raster_compare & 0xFF00) | u16::from(value);
                 if let Some(state) = &self.raster_irq {
                     state.set_compare_low(value);
                 }
             }
             RegId::System(SystemReg::RasterCompareHi) => {
-                self.raster_compare = ((value as u16) << 8) | (self.raster_compare & 0x00FF);
+                self.raster_compare = (u16::from(value) << 8) | (self.raster_compare & 0x00FF);
                 if let Some(state) = &self.raster_irq {
                     state.set_compare_high(value);
                 }

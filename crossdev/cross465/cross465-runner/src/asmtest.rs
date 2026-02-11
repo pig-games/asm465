@@ -114,6 +114,12 @@ impl AsmTestBuilder {
     }
 }
 
+impl Default for AsmTestBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct AsmTestResult {
     case: CaseReport,
@@ -187,18 +193,20 @@ pub fn run_asm6502_case(builder: AsmTestBuilder) -> Result<AsmTestResult, Runner
         }
     });
 
-    let mut run_opts = RunOptions::default();
-    run_opts.target = target;
-    run_opts.personality = Some(personality);
-    run_opts.timeout_ms = builder.timeout_ms;
-    run_opts.seed = builder.seed;
-    run_opts.asm_override = Some(case_source);
-    run_opts.extra_includes = include_paths;
-    run_opts.fixture_dir = fixture_dir;
-    run_opts.update_fixtures = builder.update_fixtures;
-    run_opts.extra_defines = builder.defines.clone();
-    run_opts.tass_args = builder.tass_args.clone();
-    run_opts.artifact_dir = Some(workspace.join("target/cross465-runner"));
+    let run_opts = RunOptions {
+        target,
+        personality: Some(personality),
+        timeout_ms: builder.timeout_ms,
+        seed: builder.seed,
+        asm_override: Some(case_source),
+        extra_includes: include_paths,
+        fixture_dir,
+        update_fixtures: builder.update_fixtures,
+        extra_defines: builder.defines.clone(),
+        tass_args: builder.tass_args.clone(),
+        artifact_dir: Some(workspace.join("target/cross465-runner")),
+        ..RunOptions::default()
+    };
 
     let config = RunnerConfig::new(workspace.clone(), None);
     let filter = CaseFilter {

@@ -11,6 +11,8 @@ use crate::{
 use core::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
+type ModuleCreateFn = fn(&Arc<Mutex<Memory>>, &Arc<InterruptController>) -> Box<dyn Module>;
+
 /// Describes the MMIO layout and defaults for a given configuration.
 pub struct Personality {
     /// Short identifier for the personality (e.g. `modern-retro`).
@@ -35,7 +37,7 @@ pub struct DisplayDefaults {
 /// Mapping between an address range and a guest-provided MMIO factory.
 pub struct PersonalityMmio {
     pub range: RangeInclusive<u16>,
-    pub create: fn(&Arc<Mutex<Memory>>, &Arc<InterruptController>) -> Box<dyn Module>,
+    pub create: ModuleCreateFn,
     pub kind: ModuleKind,
 }
 
@@ -190,16 +192,19 @@ const MODERN_RETRO_INTERRUPTS: &[PersonalityInterrupt] = &[
 static PERSONALITIES: &[&Personality] = &[&MODERN_RETRO, &C64_COMPAT];
 
 /// Return the built-in personalities.
+#[must_use]
 pub fn all() -> &'static [&'static Personality] {
     PERSONALITIES
 }
 
 /// Personality used by default when constructing a [`Bus`](crate::Bus).
+#[must_use]
 pub fn default() -> &'static Personality {
     &MODERN_RETRO
 }
 
 /// Look up a personality by `name` (case-sensitive).
+#[must_use]
 pub fn find(name: &str) -> Option<&'static Personality> {
     PERSONALITIES.iter().copied().find(|p| p.name == name)
 }

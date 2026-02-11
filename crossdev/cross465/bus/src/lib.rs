@@ -138,6 +138,7 @@ impl fmt::Display for AdapterError {
 impl std::error::Error for AdapterError {}
 
 /// Build a registry populated with the built-in module implementations.
+#[must_use]
 pub fn builtin_module_registry() -> mmio::ModuleRegistry {
     let mut registry = mmio::ModuleRegistry::new();
     registry.register(&console_mmio::CONSOLE_FACTORY);
@@ -905,6 +906,7 @@ pub struct Memory {
 
 impl Memory {
     /// Create a new zero-initialized memory.
+    #[must_use]
     pub fn new() -> Self {
         Self { data: [0; 0x10000] }
     }
@@ -923,6 +925,7 @@ impl Memory {
 
     /// Read a byte from memory at `addr`.
     #[inline]
+    #[must_use]
     pub fn read(&self, addr: u16) -> u8 {
         self.data[addr as usize]
     }
@@ -999,6 +1002,7 @@ struct AddressSlot {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum AddressSlotKind {
     Direct(DirectSlot),
     Scatter(ScatterSlot),
@@ -1161,11 +1165,11 @@ fn compile_address_table(
 
 fn apply_mirrors(table: &mut [Option<AddressSlot>], mirrors: &[Mirror]) {
     for mirror in mirrors {
-        let period = mirror.period as u32;
+        let period = u32::from(mirror.period);
         if period == 0 {
             continue;
         }
-        let span = (mirror.range.end - mirror.range.start) as u32;
+        let span = u32::from(mirror.range.end - mirror.range.start);
         for offset in 0..=span {
             let addr = mirror.range.start + offset as u16;
             if table[addr as usize].is_some() {
@@ -1173,7 +1177,10 @@ fn apply_mirrors(table: &mut [Option<AddressSlot>], mirrors: &[Mirror]) {
             }
             let base_offset = (offset % period) as u16;
             let base_addr = mirror.range.start + base_offset;
-            if let Some(base_slot) = table.get(base_addr as usize).and_then(|slot| slot.clone()) {
+            if let Some(base_slot) = table
+                .get(base_addr as usize)
+                .and_then(std::clone::Clone::clone)
+            {
                 table[addr as usize] = Some(base_slot);
             }
         }
@@ -1193,7 +1200,7 @@ fn compile_range_map(
     let stride = if range.stride == 0 { 1 } else { range.stride };
     for (idx, register) in range.order.iter().enumerate() {
         let offset = (idx as u32)
-            .checked_mul(stride as u32)
+            .checked_mul(u32::from(stride))
             .and_then(|v| u16::try_from(v).ok())
             .ok_or(PersonalityCompileError::AddressOutOfRange {
                 addr: range.range.start,
@@ -1304,7 +1311,7 @@ fn compile_instance_map(
 
     for instance in 0..map.count {
         let index_u32 = instance as u32;
-        if index_u32 > u8::MAX as u32 {
+        if index_u32 > u32::from(u8::MAX) {
             return Err(PersonalityCompileError::AddressOutOfRange { addr: 0 });
         }
         let selector_value = index_u32 as u8;
@@ -1314,7 +1321,7 @@ fn compile_instance_map(
                     let value = expr
                         .evaluate(index_u32)
                         .map_err(|_| PersonalityCompileError::AddressOutOfRange { addr: 0 })?;
-                    if value > u16::MAX as u32 {
+                    if value > u32::from(u16::MAX) {
                         return Err(PersonalityCompileError::AddressOutOfRange { addr: u16::MAX });
                     }
                     value as u16
@@ -1561,7 +1568,7 @@ fn insert_slot(
 }
 
 impl PersonalityRuntime {
-    fn dispatch_adapter_event<'a>(&mut self, module_index: usize, event: ModuleAdapterEvent<'a>) {
+    fn dispatch_adapter_event(&mut self, module_index: usize, event: ModuleAdapterEvent<'_>) {
         if let Some(entry) = self.modules.get_mut(module_index) {
             if let Some(adapter) = entry.adapter.as_deref_mut() {
                 adapter.handle_event(event);
@@ -1645,19 +1652,18 @@ impl PersonalityRuntime {
     }
 
     fn read(&mut self, addr: u16) -> Option<u8> {
-        let slot = match self
+        let slot = if let Some(slot) = self
             .address_table
             .get(addr as usize)
             .and_then(|cell| cell.as_ref())
         {
-            Some(slot) => Arc::clone(slot),
-            None => {
-                if let Some(value) = self.open_bus_value(addr) {
-                    self.record_last_read(value);
-                    return Some(value);
-                }
-                return None;
+            Arc::clone(slot)
+        } else {
+            if let Some(value) = self.open_bus_value(addr) {
+                self.record_last_read(value);
+                return Some(value);
             }
+            return None;
         };
 
         let value = match &slot.kind {
@@ -1678,11 +1684,7 @@ impl PersonalityRuntime {
         {
             Some(slot) => Arc::clone(slot),
             None => {
-                return if self.is_open_bus_addr(addr) {
-                    true
-                } else {
-                    false
-                };
+                return self.is_open_bus_addr(addr);
             }
         };
 
@@ -1699,8 +1701,7 @@ impl PersonalityRuntime {
         if self
             .modules
             .get(module_index)
-            .map(|entry| entry.kind == ModuleKind::Input)
-            .unwrap_or(false)
+            .is_some_and(|entry| entry.kind == ModuleKind::Input)
         {
             self.populate_input_signals(module_index);
         }
@@ -1717,7 +1718,7 @@ impl PersonalityRuntime {
         } else if let Some(builder) = slot.value_builder.as_ref() {
             builder
                 .build(&mut self.signals)
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(0)
         } else {
@@ -1780,7 +1781,7 @@ impl PersonalityRuntime {
             if entry.transform.wo_mask != 0 {
                 value &= !entry.transform.wo_mask;
             }
-            let bit = (value.wrapping_shr(entry.source_bit as u32) & 1) as u8;
+            let bit = value.wrapping_shr(u32::from(entry.source_bit)) & 1;
             if bit != 0 {
                 result |= 1u8 << entry.target_bit;
             }
@@ -1812,23 +1813,22 @@ impl PersonalityRuntime {
     }
 
     fn emit_pad_signals(&mut self, pad: usize, snapshot: InputPadSnapshot) {
-        let prefix = format!("p{}", pad);
+        let prefix = format!("p{pad}");
         let buttons = snapshot.buttons;
         self.signals
-            .set_int(format!("{}.buttons_mask", prefix), buttons as i32);
+            .set_int(format!("{prefix}.buttons_mask"), i32::from(buttons));
 
         for button in CONTROLLER_BUTTONS {
             let pressed = (buttons & button_bit(button)) != 0;
             for alias in controller_button_aliases(button) {
-                self.signals
-                    .set_bool(format!("{}.{}", prefix, alias), pressed);
+                self.signals.set_bool(format!("{prefix}.{alias}"), pressed);
             }
         }
 
         self.signals
-            .set_int(format!("{}.pot_x", prefix), snapshot.pot_x as i32);
+            .set_int(format!("{prefix}.pot_x"), i32::from(snapshot.pot_x));
         self.signals
-            .set_int(format!("{}.pot_y", prefix), snapshot.pot_y as i32);
+            .set_int(format!("{prefix}.pot_y"), i32::from(snapshot.pot_y));
     }
 
     fn write_direct(&mut self, value: u8, slot: &DirectSlot) -> bool {
@@ -1920,7 +1920,7 @@ impl PersonalityRuntime {
                     if entry.transform.wo_mask != 0 {
                         cpu_value &= !entry.transform.wo_mask;
                     }
-                    let bit_value = (value.wrapping_shr(entry.target_bit as u32) & 1) != 0;
+                    let bit_value = (value.wrapping_shr(u32::from(entry.target_bit)) & 1) != 0;
                     let mask = 1u8 << entry.source_bit;
                     if bit_value {
                         cpu_value |= mask;
@@ -2092,9 +2092,9 @@ impl PersonalityRuntime {
                 .ok_or(PersonalityCompileError::MissingModule(cond.module))?;
             let module = &mut self.modules[module_index].module;
             let value = module.read_reg(cond.register.id);
-            let satisfied = (value as i32) == cond.equals;
+            let satisfied = i32::from(value) == cond.equals;
             let previous = self.condition_states.insert(name.clone(), satisfied);
-            if previous.map(|prev| prev != satisfied).unwrap_or(true) {
+            if previous != Some(satisfied) {
                 changed = true;
             }
         }
@@ -2118,14 +2118,11 @@ impl PersonalityRuntime {
         match self.update_condition_states() {
             Ok(true) => {
                 if let Err(err) = self.rebuild_address_table() {
-                    panic!(
-                        "failed to rebuild address table after condition update: {}",
-                        err
-                    );
+                    panic!("failed to rebuild address table after condition update: {err}");
                 }
             }
             Ok(false) => {}
-            Err(err) => panic!("failed to update condition states: {}", err),
+            Err(err) => panic!("failed to update condition states: {err}"),
         }
     }
 
@@ -2157,22 +2154,22 @@ impl PersonalityRuntime {
 
     fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
         self.module_downcast::<ConsoleMmio>(ModuleKind::Console)
-            .map(|console| console.output())
+            .map(console_mmio::ConsoleMmio::output)
     }
 
     fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
         self.module_downcast::<DisplayMmio>(ModuleKind::Display)
-            .map(|display| display.output())
+            .map(display_mmio::DisplayMmio::output)
     }
 
     fn input_output_handle(&self) -> Option<Arc<Mutex<input_mmio::InputOutput>>> {
         self.module_downcast::<InputMmio>(ModuleKind::Input)
-            .map(|input| input.output())
+            .map(input_mmio::InputMmio::output)
     }
 
     fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
         self.module_downcast::<SpriteMmio>(ModuleKind::Sprite)
-            .map(|sprite| sprite.output())
+            .map(sprite_mmio::SpriteMmio::output)
     }
 
     fn clear_console_buffer(&mut self) {
@@ -2291,18 +2288,27 @@ fn reverse_shift(value: u8, shift: i8) -> u8 {
     }
 }
 
+impl Default for Bus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Bus {
     /// Active personality descriptor backing this bus.
+    #[must_use]
     pub fn personality(&self) -> Option<&'static Personality> {
         self.personality_legacy
     }
 
     /// Create a RAM-only bus and map a default [`ConsoleMmio`] at `$DF00–$DF1F`.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_personality(personality::default())
     }
 
     /// Construct the bus using the specified personality.
+    #[must_use]
     pub fn with_personality(personality: &'static Personality) -> Self {
         let ram = Arc::new(Mutex::new(Memory::new()));
         let controller = Arc::new(InterruptController::new());
@@ -2385,13 +2391,7 @@ impl Bus {
                 return value;
             }
         }
-        if let Some(value) = {
-            if let Some(dev) = self.find_mmio(addr) {
-                Some(dev.read(addr))
-            } else {
-                None
-            }
-        } {
+        if let Some(value) = { self.find_mmio(addr).map(|dev| dev.read(addr)) } {
             if let Some(runtime) = self.runtime_v2.as_mut() {
                 runtime.record_last_read(value);
             }
@@ -2411,6 +2411,7 @@ impl Bus {
     ///
     /// Falls back to reading raw RAM. Used by the CPU to inspect the
     /// opcode at PC without causing a second bus read.
+    #[must_use]
     pub fn peek(&self, addr: u16) -> u8 {
         let mem = self.ram.lock().unwrap();
         mem.read(addr)
@@ -2432,6 +2433,7 @@ impl Bus {
     }
 
     /// Access the shared interrupt controller.
+    #[must_use]
     pub fn interrupt_controller(&self) -> Arc<InterruptController> {
         self.controller.clone()
     }
@@ -2441,7 +2443,7 @@ impl Bus {
 
     /// Search for an MMIO device covering `addr`.
     pub fn find_mmio(&mut self, addr: u16) -> Option<&mut dyn Module> {
-        for mapped in self.mmio.iter_mut() {
+        for mapped in &mut self.mmio {
             if mapped.range.contains(&addr) {
                 return Some(mapped.device.as_mut());
             }
@@ -2457,12 +2459,13 @@ impl Bus {
     // ===== Helpers for tests / host integration =====
 
     /// Enable/disable PETSCII translation on the default console device.
+    #[must_use]
     pub fn with_console_petscii(mut self, petscii: bool) -> Self {
         if let Some(runtime) = self.runtime_v2.as_mut() {
             runtime.set_console_petscii(petscii);
             return self;
         }
-        for mapped in self.mmio.iter_mut() {
+        for mapped in &mut self.mmio {
             if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.petscii_mode = petscii;
@@ -2473,13 +2476,14 @@ impl Bus {
     }
 
     /// Expose the console device's shared output buffer.
+    #[must_use]
     pub fn console_output_handle(&self) -> Option<Arc<Mutex<console_mmio::ConsoleOutput>>> {
         if let Some(runtime) = &self.runtime_v2 {
             if let Some(handle) = runtime.console_output_handle() {
                 return Some(handle);
             }
         }
-        for mapped in self.mmio.iter() {
+        for mapped in &self.mmio {
             if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any().downcast_ref::<ConsoleMmio>() {
                     return Some(c.output());
@@ -2490,13 +2494,14 @@ impl Bus {
     }
 
     /// Expose the display device's shared output buffer (border/background).
+    #[must_use]
     pub fn display_output_handle(&self) -> Option<Arc<Mutex<display_mmio::DisplayOutput>>> {
         if let Some(runtime) = &self.runtime_v2 {
             if let Some(handle) = runtime.display_output_handle() {
                 return Some(handle);
             }
         }
-        for mapped in self.mmio.iter() {
+        for mapped in &self.mmio {
             if mapped.kind == Some(ModuleKind::Display) {
                 if let Some(d) = mapped.device.as_any().downcast_ref::<DisplayMmio>() {
                     return Some(d.output());
@@ -2507,13 +2512,14 @@ impl Bus {
     }
 
     /// Expose the input device's shared snapshot buffer.
+    #[must_use]
     pub fn input_output_handle(&self) -> Option<Arc<Mutex<input_mmio::InputOutput>>> {
         if let Some(runtime) = &self.runtime_v2 {
             if let Some(handle) = runtime.input_output_handle() {
                 return Some(handle);
             }
         }
-        for mapped in self.mmio.iter() {
+        for mapped in &self.mmio {
             if mapped.kind == Some(ModuleKind::Input) {
                 if let Some(i) = mapped.device.as_any().downcast_ref::<InputMmio>() {
                     return Some(i.output());
@@ -2530,7 +2536,7 @@ impl Bus {
             runtime.set_raster_irq_state(state.clone());
         }
 
-        for mapped in self.mmio.iter_mut() {
+        for mapped in &mut self.mmio {
             if mapped.kind == Some(ModuleKind::System) {
                 if let Some(system) = mapped.device.as_any_mut().downcast_mut::<SystemMmio>() {
                     system.set_raster_irq_state(state.clone());
@@ -2540,13 +2546,14 @@ impl Bus {
     }
 
     /// Expose the sprite device's shared output buffer.
+    #[must_use]
     pub fn sprite_output_handle(&self) -> Option<Arc<Mutex<sprite_mmio::SpriteOutput>>> {
         if let Some(runtime) = &self.runtime_v2 {
             if let Some(handle) = runtime.sprite_output_handle() {
                 return Some(handle);
             }
         }
-        for mapped in self.mmio.iter() {
+        for mapped in &self.mmio {
             if mapped.kind == Some(ModuleKind::Sprite) {
                 if let Some(s) = mapped.device.as_any().downcast_ref::<SpriteMmio>() {
                     return Some(s.output());
@@ -2557,6 +2564,7 @@ impl Bus {
     }
 
     /// Read back the console buffer (if present) as a snapshot string.
+    #[must_use]
     pub fn console_buffer(&self) -> Option<String> {
         self.console_output_handle()
             .and_then(|handle| handle.lock().ok().map(|guard| guard.to_plain_string()))
@@ -2568,7 +2576,7 @@ impl Bus {
             runtime.clear_console_buffer();
             return;
         }
-        for mapped in self.mmio.iter_mut() {
+        for mapped in &mut self.mmio {
             if mapped.kind == Some(ModuleKind::Console) {
                 if let Some(c) = mapped.device.as_any_mut().downcast_mut::<ConsoleMmio>() {
                     c.clear();
@@ -2602,10 +2610,11 @@ impl Bus {
     }
 
     /// Snapshot the resolved address table for the active TOML personality.
+    #[must_use]
     pub fn address_mappings(&self) -> Option<Vec<AddressMapping>> {
         self.runtime_v2
             .as_ref()
-            .map(|runtime| runtime.address_mappings())
+            .map(PersonalityRuntime::address_mappings)
     }
 }
 
@@ -2631,8 +2640,7 @@ fn register_name(instance: &ModuleInstance, reg: RegId) -> &'static str {
         .regs()
         .iter()
         .find(|desc| desc.id == reg)
-        .map(|desc| desc.name)
-        .unwrap_or("<unknown>")
+        .map_or("<unknown>", |desc| desc.name)
 }
 
 fn extract_fanout_value(cpu_value: u8, action: &WriteFanoutAction) -> u8 {

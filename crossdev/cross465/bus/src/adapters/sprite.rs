@@ -116,16 +116,16 @@ impl SpriteAdapter {
             SpriteReg::Number => state.number = event.module_value,
             SpriteReg::Anim => state.anim = event.module_value,
             SpriteReg::XLo => {
-                state.x = (state.x & 0xFF00) | event.module_value as u16;
+                state.x = (state.x & 0xFF00) | u16::from(event.module_value);
             }
             SpriteReg::XHi => {
-                state.x = (state.x & 0x00FF) | ((event.module_value as u16) << 8);
+                state.x = (state.x & 0x00FF) | (u16::from(event.module_value) << 8);
             }
             SpriteReg::YLo => {
-                state.y = (state.y & 0xFF00) | event.module_value as u16;
+                state.y = (state.y & 0xFF00) | u16::from(event.module_value);
             }
             SpriteReg::YHi => {
-                state.y = (state.y & 0x00FF) | ((event.module_value as u16) << 8);
+                state.y = (state.y & 0x00FF) | (u16::from(event.module_value) << 8);
             }
             SpriteReg::Scale => {
                 state.scale_x = (event.module_value >> 4) & 0x0F;
@@ -159,11 +159,11 @@ impl SpriteAdapter {
                 } else {
                     low &= !mask;
                 }
-                state.x = (state.x & 0xFF00) | low as u16;
+                state.x = (state.x & 0xFF00) | u16::from(low);
             }
             SpriteReg::XHi => {
                 // Treat the register value as the full high byte (typically only bit 0 is used).
-                state.x = (state.x & 0x00FF) | ((event.module_value as u16) << 8);
+                state.x = (state.x & 0x00FF) | (u16::from(event.module_value) << 8);
             }
             SpriteReg::Enable => {
                 let bit = (event.module_value >> event.source_bit) & 0x01;
@@ -188,10 +188,10 @@ impl SpriteAdapter {
             SpriteReg::Enable => state.enabled = (event.value & 0x01) != 0,
             SpriteReg::Number => state.number = event.value,
             SpriteReg::Anim => state.anim = event.value,
-            SpriteReg::XLo => state.x = (state.x & 0xFF00) | event.value as u16,
-            SpriteReg::XHi => state.x = (state.x & 0x00FF) | ((event.value as u16) << 8),
-            SpriteReg::YLo => state.y = (state.y & 0xFF00) | event.value as u16,
-            SpriteReg::YHi => state.y = (state.y & 0x00FF) | ((event.value as u16) << 8),
+            SpriteReg::XLo => state.x = (state.x & 0xFF00) | u16::from(event.value),
+            SpriteReg::XHi => state.x = (state.x & 0x00FF) | (u16::from(event.value) << 8),
+            SpriteReg::YLo => state.y = (state.y & 0xFF00) | u16::from(event.value),
+            SpriteReg::YHi => state.y = (state.y & 0x00FF) | (u16::from(event.value) << 8),
             SpriteReg::Scale => {
                 state.scale_x = (event.value >> 4) & 0x0F;
                 state.scale_y = event.value & 0x0F;
@@ -199,19 +199,16 @@ impl SpriteAdapter {
             SpriteReg::Select => {}
         };
 
-        match event.target_instance {
-            Some(index) => {
-                let state = self.ensure_state(index);
+        if let Some(index) = event.target_instance {
+            let state = self.ensure_state(index);
+            apply(state);
+            self.flush(index);
+        } else {
+            self.ensure_len(SPRITE_SLOTS);
+            for idx in 0..self.sprites.len() {
+                let state = &mut self.sprites[idx];
                 apply(state);
-                self.flush(index);
-            }
-            None => {
-                self.ensure_len(SPRITE_SLOTS);
-                for idx in 0..self.sprites.len() {
-                    let state = &mut self.sprites[idx];
-                    apply(state);
-                    self.backend.update_sprite(idx as u8, *state);
-                }
+                self.backend.update_sprite(idx as u8, *state);
             }
         }
     }

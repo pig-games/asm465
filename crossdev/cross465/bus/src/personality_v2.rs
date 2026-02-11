@@ -83,6 +83,7 @@ pub struct AddressRange {
 
 impl AddressRange {
     /// Returns `true` if the given address lies inside this range.
+    #[must_use]
     pub fn contains(&self, addr: u16) -> bool {
         addr >= self.start && addr <= self.end
     }
@@ -330,11 +331,10 @@ impl std::fmt::Display for CompileError {
                 new_priority,
             } => write!(
                 f,
-                "address {:#06X} already mapped at priority {}; new priority {} conflicts",
-                addr, existing_priority, new_priority
+                "address {addr:#06X} already mapped at priority {existing_priority}; new priority {new_priority} conflicts"
             ),
             CompileError::AddressOutOfRange { addr } => {
-                write!(f, "map writes past declared range at address {:#06X}", addr)
+                write!(f, "map writes past declared range at address {addr:#06X}")
             }
             CompileError::FanoutMissingInstance => {
                 write!(
@@ -409,7 +409,7 @@ fn resolve_modules(
 ) -> Result<BTreeMap<ModuleKind, ModuleConfig>, LoaderError> {
     let mut modules = BTreeMap::new();
     for (kind_str, module) in raw {
-        let kind = ModuleKind::from_str(&kind_str).ok_or_else(|| LoaderError {
+        let kind = ModuleKind::from_name(&kind_str).ok_or_else(|| LoaderError {
             message: format!("unknown module kind `{kind_str}`"),
             line: None,
             column: None,
@@ -458,7 +458,7 @@ fn resolve_conditions(
 ) -> Result<BTreeMap<String, Condition>, LoaderError> {
     let mut conditions = BTreeMap::new();
     for (name, cond) in raw {
-        let kind = ModuleKind::from_str(&cond.kind).ok_or_else(|| LoaderError {
+        let kind = ModuleKind::from_name(&cond.kind).ok_or_else(|| LoaderError {
             message: format!(
                 "condition `{name}` references unknown module kind `{}`",
                 cond.kind
@@ -539,10 +539,7 @@ fn resolve_maps(
                             .as_deref()
                             .map(|expr| {
                                 parse_compute_expr(expr).map_err(|msg| LoaderError {
-                                    message: format!(
-                                        "invalid compute expression `{}`: {}",
-                                        expr, msg
-                                    ),
+                                    message: format!("invalid compute expression `{expr}`: {msg}"),
                                     line: None,
                                     column: None,
                                 })
@@ -551,8 +548,7 @@ fn resolve_maps(
                         if value_builder.is_some() && compute.is_some() {
                             return Err(LoaderError {
                                 message: format!(
-                                    "map entry at {:#06X} specifies both value_builder and compute",
-                                    addr
+                                    "map entry at {addr:#06X} specifies both value_builder and compute"
                                 ),
                                 line: None,
                                 column: None,
@@ -658,7 +654,7 @@ fn resolve_open_bus(raws: Vec<RawOpenBus>) -> Result<Vec<OpenBusRegion>, LoaderE
             }
             other => {
                 return Err(LoaderError {
-                    message: format!("unknown open_bus policy `{}`", other),
+                    message: format!("unknown open_bus policy `{other}`"),
                     line: None,
                     column: None,
                 });
@@ -720,7 +716,7 @@ fn resolve_instance_map(
             .as_deref()
             .map(|expr| {
                 parse_compute_expr(expr).map_err(|msg| LoaderError {
-                    message: format!("invalid compute expression `{}`: {}", expr, msg),
+                    message: format!("invalid compute expression `{expr}`: {msg}"),
                     line: None,
                     column: None,
                 })
@@ -828,7 +824,7 @@ fn module_for_kind<'a>(
     kind_str: &str,
     modules: &'a BTreeMap<ModuleKind, ModuleConfig>,
 ) -> Result<(ModuleKind, &'a ModuleConfig), LoaderError> {
-    let kind = ModuleKind::from_str(kind_str).ok_or_else(|| LoaderError {
+    let kind = ModuleKind::from_name(kind_str).ok_or_else(|| LoaderError {
         message: format!("unknown module kind `{kind_str}`"),
         line: None,
         column: None,
@@ -905,7 +901,7 @@ fn resolve_register_sets(
 ) -> Result<Vec<RegisterSet>, LoaderError> {
     let mut sets = Vec::with_capacity(raws.len());
     for raw in raws {
-        let kind = ModuleKind::from_str(&raw.kind).ok_or_else(|| LoaderError {
+        let kind = ModuleKind::from_name(&raw.kind).ok_or_else(|| LoaderError {
             message: format!("register set references unknown module kind `{}`", raw.kind),
             line: None,
             column: None,
@@ -984,8 +980,7 @@ fn resolve_write_fanouts(
             Some(value) => {
                 let idx = value.parse::<u8>().map_err(|_| LoaderError {
                     message: format!(
-                        "write_fanout instance `{}` must be numeric, `*`, or `self`",
-                        value
+                        "write_fanout instance `{value}` must be numeric, `*`, or `self`"
                     ),
                     line: None,
                     column: None,
@@ -1016,9 +1011,9 @@ fn resolve_write_fanouts(
         }
 
         fanouts.push(WriteFanout {
-            source_lsb: source_lsb as u8,
-            target_lsb: target_lsb as u8,
-            width: width as u8,
+            source_lsb,
+            target_lsb,
+            width,
             module: module_kind,
             register: target_register,
             instance,
@@ -1041,8 +1036,8 @@ fn parse_bit_range(range: &str) -> Result<(u8, u8), LoaderError> {
     let trimmed = range.trim();
     if let Some(pos) = trimmed.find("..") {
         let (start_str, end_str) = trimmed.split_at(pos);
-        let end_part = if end_str.starts_with("..=") {
-            &end_str[3..]
+        let end_part = if let Some(stripped) = end_str.strip_prefix("..=") {
+            stripped
         } else {
             &end_str[2..]
         };
@@ -1061,7 +1056,7 @@ fn parse_bit_range(range: &str) -> Result<(u8, u8), LoaderError> {
         }
         if end < start {
             return Err(LoaderError {
-                message: format!("bit range end {} is less than start {}", end, start),
+                message: format!("bit range end {end} is less than start {start}"),
                 line: None,
                 column: None,
             });
@@ -1069,7 +1064,7 @@ fn parse_bit_range(range: &str) -> Result<(u8, u8), LoaderError> {
         Ok((start, end))
     } else {
         let bit = trimmed.parse::<u8>().map_err(|_| LoaderError {
-            message: format!("invalid bit index `{}`", trimmed),
+            message: format!("invalid bit index `{trimmed}`"),
             line: None,
             column: None,
         })?;
@@ -1239,7 +1234,7 @@ fn parse_bit_bindings(value: &Value, width: usize) -> Result<Vec<BitBinding>, Lo
 
         if !(0..=7).contains(&bit) {
             return Err(LoaderError {
-                message: format!("value_builder bit position {} is out of range (0..=7)", bit),
+                message: format!("value_builder bit position {bit} is out of range (0..=7)"),
                 line: None,
                 column: None,
             });
@@ -1268,8 +1263,7 @@ fn parse_bit_bindings(value: &Value, width: usize) -> Result<Vec<BitBinding>, Lo
         if byte_index < 0 || byte_index as usize >= width {
             return Err(LoaderError {
                 message: format!(
-                    "value_builder.bit byte_index {} is out of range (width {})",
-                    byte_index, width
+                    "value_builder.bit byte_index {byte_index} is out of range (width {width})"
                 ),
                 line: None,
                 column: None,
@@ -1474,17 +1468,17 @@ impl ComputeParser {
                 let node = self.parse_expression(0)?;
                 match self.next() {
                     ComputeToken::RParen => Ok(node),
-                    other => Err(format!("expected ')', found {:?}", other)),
+                    other => Err(format!("expected ')', found {other:?}")),
                 }
             }
-            token => Err(format!("unexpected token {:?}", token)),
+            token => Err(format!("unexpected token {token:?}")),
         }
     }
 
     fn ensure_end(&mut self) -> Result<(), String> {
         match self.next() {
             ComputeToken::End => Ok(()),
-            other => Err(format!("unexpected token {:?} after expression", other)),
+            other => Err(format!("unexpected token {other:?} after expression")),
         }
     }
 
@@ -1527,7 +1521,7 @@ fn lex_compute_tokens(expr: &str) -> Result<Vec<ComputeToken>, String> {
                             }
                         }
                         let value = i64::from_str_radix(&literal[2..], 16)
-                            .map_err(|_| format!("invalid hex literal `{}`", literal))?;
+                            .map_err(|_| format!("invalid hex literal `{literal}`"))?;
                         tokens.push(ComputeToken::Number(value));
                         continue;
                     }
@@ -1546,7 +1540,7 @@ fn lex_compute_tokens(expr: &str) -> Result<Vec<ComputeToken>, String> {
             }
             let value = literal
                 .parse::<i64>()
-                .map_err(|_| format!("invalid number literal `{}`", literal))?;
+                .map_err(|_| format!("invalid number literal `{literal}`"))?;
             tokens.push(ComputeToken::Number(value));
             continue;
         }
@@ -1616,7 +1610,7 @@ fn lex_compute_tokens(expr: &str) -> Result<Vec<ComputeToken>, String> {
                 tokens.push(ComputeToken::RParen);
             }
             _ => {
-                return Err(format!("unexpected character '{}'", ch));
+                return Err(format!("unexpected character '{ch}'"));
             }
         }
     }
@@ -1632,6 +1626,7 @@ impl ComputeExpr {
         (value & 0xFF) as u8
     }
 
+    #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -1669,10 +1664,10 @@ impl ComputeNode {
 
 fn signal_value(name: &str, signals: &mut dyn InputSignals) -> i64 {
     if let Some(value) = signals.get_int(name) {
-        return value as i64;
+        return i64::from(value);
     }
     if let Some(flag) = signals.get_bool(name) {
-        return if flag { 1 } else { 0 };
+        return i64::from(flag);
     }
     if let Some(value) = signals.get_f32(name) {
         return value as i64;
@@ -1682,6 +1677,7 @@ fn signal_value(name: &str, signals: &mut dyn InputSignals) -> i64 {
 
 impl InstanceExpr {
     /// Convenience constructor that yields a constant expression.
+    #[must_use]
     pub fn constant(value: u32) -> Self {
         Self {
             source: format!("{value}"),
@@ -1704,6 +1700,7 @@ impl InstanceExpr {
         eval_rpn(&output)
     }
 
+    #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -1725,7 +1722,7 @@ fn eval_rpn(tokens: &[ValueOrOp]) -> Result<u32, LoaderError> {
     let mut stack: Vec<i64> = Vec::new();
     for token in tokens {
         match token {
-            ValueOrOp::Value(v) => stack.push(*v as i64),
+            ValueOrOp::Value(v) => stack.push(i64::from(*v)),
             ValueOrOp::Op(op) => {
                 if stack.len() < 2 {
                     return Err(LoaderError {
@@ -1837,17 +1834,15 @@ fn tokenize_expr(expr: &str, index_var: &str) -> Result<Vec<Token>, LoaderError>
                                 let value =
                                     u32::from_str_radix(&literal, 16).map_err(|_| LoaderError {
                                         message: format!(
-                                            "invalid literal `0x{}` in expression `{expr}`",
-                                            literal
+                                            "invalid literal `0x{literal}` in expression `{expr}`"
                                         ),
                                         line: None,
                                         column: None,
                                     })?;
                                 tokens.push(Token::Number(value));
                                 continue;
-                            } else {
-                                literal.push('0');
                             }
+                            literal.push('0');
                         } else {
                             literal.push('0');
                         }
@@ -1864,7 +1859,7 @@ fn tokenize_expr(expr: &str, index_var: &str) -> Result<Vec<Token>, LoaderError>
                         }
                     }
                     let value = u32::from_str_radix(&literal, 16).map_err(|_| LoaderError {
-                        message: format!("invalid literal `{}` in expression `{expr}`", literal),
+                        message: format!("invalid literal `{literal}` in expression `{expr}`"),
                         line: None,
                         column: None,
                     })?;
@@ -1883,17 +1878,14 @@ fn tokenize_expr(expr: &str, index_var: &str) -> Result<Vec<Token>, LoaderError>
                         tokens.push(Token::Var);
                     } else {
                         return Err(LoaderError {
-                            message: format!(
-                                "unknown identifier `{}` in expression `{expr}`",
-                                ident
-                            ),
+                            message: format!("unknown identifier `{ident}` in expression `{expr}`"),
                             line: None,
                             column: None,
                         });
                     }
                 } else {
                     return Err(LoaderError {
-                        message: format!("unexpected character `{}` in expression `{expr}`", ch),
+                        message: format!("unexpected character `{ch}` in expression `{expr}`"),
                         line: None,
                         column: None,
                     });
@@ -1913,10 +1905,10 @@ fn shunting_yard(tokens: &[Token]) -> Result<Vec<ExprToken>, LoaderError> {
             Token::Var => output.push(ExprToken::Var),
             Token::Op(op) => {
                 while let Some(top) = ops.last() {
-                    let push = match (top, op) {
-                        (Token::Op(prev), op) if precedence(prev) >= precedence(op) => true,
-                        _ => false,
-                    };
+                    let push = matches!(
+                        (top, op),
+                        (Token::Op(prev), op) if precedence(prev) >= precedence(op)
+                    );
                     if push {
                         let popped = ops.pop().unwrap();
                         if let Token::Op(o) = popped {
@@ -2312,8 +2304,7 @@ impl = "console.text"
         };
         assert!(
             err.message.contains("unknown module kind `unknown`"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 }

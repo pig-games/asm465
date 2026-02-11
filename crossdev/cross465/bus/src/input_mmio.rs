@@ -40,6 +40,7 @@ pub enum ControllerButton {
 
 impl ControllerButton {
     /// Bit position inside the 16-bit button mask.
+    #[must_use]
     pub fn index(self) -> u8 {
         match self {
             ControllerButton::DPadUp => 0,
@@ -71,6 +72,7 @@ pub enum ControllerAxis {
 
 /// Bit mask helper for a controller button.
 #[inline]
+#[must_use]
 pub fn button_bit(button: ControllerButton) -> u16 {
     1u16 << button.index()
 }
@@ -167,6 +169,7 @@ impl Default for InputOutput {
 
 impl InputOutput {
     /// Construct a new shared controller state block.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -222,6 +225,7 @@ impl InputOutput {
     }
 
     /// Snapshot a specific pad, returning defaults for out-of-range indices.
+    #[must_use]
     pub fn pad_snapshot(&self, pad: usize) -> InputPadSnapshot {
         if pad < CONTROLLER_PAD_COUNT {
             self.pads[pad].as_snapshot()
@@ -284,8 +288,15 @@ const INPUT_REGS: &[RegisterDesc] = &[
     ),
 ];
 
+impl Default for InputMmio {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputMmio {
     /// Construct the input MMIO module with empty controller state.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             select: 0,
@@ -294,11 +305,13 @@ impl InputMmio {
     }
 
     /// Access the shared controller state handle used by adapters.
+    #[must_use]
     pub fn output(&self) -> Arc<Mutex<InputOutput>> {
         Arc::clone(&self.state)
     }
 
     /// Produce a snapshot of the entire controller state.
+    #[must_use]
     pub fn snapshot(&self) -> InputSnapshot {
         self.state
             .lock()
@@ -341,12 +354,12 @@ impl InputMmio {
             match reg {
                 InputReg::ButtonsLo => {
                     let snapshot = state.pad_snapshot(pad);
-                    let combined = (snapshot.buttons & 0xFF00) | value as u16;
+                    let combined = (snapshot.buttons & 0xFF00) | u16::from(value);
                     state.set_pad_buttons(pad, combined);
                 }
                 InputReg::ButtonsHi => {
                     let snapshot = state.pad_snapshot(pad);
-                    let combined = (snapshot.buttons & 0x00FF) | ((value as u16) << 8);
+                    let combined = (snapshot.buttons & 0x00FF) | (u16::from(value) << 8);
                     state.set_pad_buttons(pad, combined);
                 }
                 InputReg::PotX => state.set_pad_pot_x(pad, value),
