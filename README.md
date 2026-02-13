@@ -11,7 +11,7 @@ A cross-development GUI IDE for 65xx-based retro computers, featuring a built-in
 ## Requirements
 
 - Rust (stable)
-- [opFoundryCore](https://github.com/<user>/opFoundryCore) — 6502 emulator core (path: `../opFoundryCore`)
+- [opFoundryCore](https://github.com/pig-games/opFoundryCore) — 6502 emulator core (path: `../opFoundryCore`)
 
 ## Building
 
@@ -38,7 +38,7 @@ cargo run --manifest-path opfoundry-server/Cargo.toml -- --tcp-port 7465 --ws-po
 
 ## Related Projects
 
-- [opFoundryCore](https://github.com/<user>/opFoundryCore) — 6502 emulator and runtime SDK
+- [opFoundryCore](https://github.com/pig-games/opFoundryCore) — 6502 emulator and runtime SDK
 - [opForge465](https://github.com/<user>/opForge465) — Native 6502 assembler/editor
 
 ## License
