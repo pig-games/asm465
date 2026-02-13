@@ -38,8 +38,8 @@ cargo run --manifest-path opfoundry-server/Cargo.toml -- --tcp-port 7465 --ws-po
 
 ## Related Projects
 
-- [opFoundryCore](https://github.com/pig-games/opFoundryCore) — 6502 emulator and runtime SDK
-- [opForge465](https://github.com/<user>/opForge465) — Native 6502 assembler/editor
+- [opFoundryCore](https://github.com/pig-games/opFoundryCore) — Runtime SDK, emulator cores, personality system, execution infrastructure.
+- [opForge465](https://github.com/pig-games/opForge465) — Native 6502 assembler/editor
 
 ## License
 
