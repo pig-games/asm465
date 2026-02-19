@@ -6,7 +6,10 @@
 //! wasm build (via [`web::start_web_app`]), so as much logic as possible lives
 //! in platform-neutral modules.
 
+#![allow(clippy::items_after_test_module)]
+
 use std::convert::TryFrom;
+#[cfg(feature = "native-service")]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -587,8 +590,16 @@ pub fn run_app(config: AppConfig) {
 
 /// Viewer state that proxies CPU execution to the background worker.
 struct EmulatorState {
+    #[cfg_attr(
+        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
     cpu: CpuWorker,
     outputs: CpuWorkerOutputs,
+    #[cfg_attr(
+        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
     default_max_cycles: u64,
     status_message: Option<String>,
     last_outcome: Option<RunOutcome>,
@@ -627,6 +638,10 @@ impl EmulatorState {
     }
 
     /// Append a host message to the shared console surface (best-effort).
+    #[cfg_attr(
+        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
     fn log_console(&self, line: &str) {
         if let Ok(mut console) = self.outputs.console.lock() {
             console.write_str(line, 1, 0);
@@ -652,6 +667,10 @@ impl EmulatorState {
     }
 
     /// Ask the worker to load and execute a program, returning the status text.
+    #[cfg_attr(
+        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
     fn run_program(
         &mut self,
         source: ProgramSource,
@@ -737,6 +756,10 @@ impl EmulatorState {
         self.outputs.video_overlay.clone()
     }
 
+    #[cfg_attr(
+        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        allow(dead_code)
+    )]
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
         match command {
             ServiceCommand::RunProgram {
@@ -2125,7 +2148,174 @@ fn sprite_world_transform(
     ))
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_sprite_viewport(
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    mut viewport: ResMut<SpriteViewport>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    display: Res<DisplaySettings>,
+    palette: Res<DisplayPalette>,
+    mut clear_color: ResMut<ClearColor>,
+    mut background: Query<
+        (&Handle<ColorMaterial>, &mut Transform),
+        (With<ContentBackground>, Without<BorderOverlay>),
+    >,
+    mut overlays: Query<
+        (&BorderOverlay, &Handle<ColorMaterial>, &mut Transform),
+        Without<ContentBackground>,
+    >,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    if let Ok(window) = window_query.get_single() {
+        viewport.update_window(window.width(), window.height());
+
+        let (scale_x, scale_y, computed_border_x, computed_border_y) = compute_viewport_geometry(
+            viewport.window_width(),
+            viewport.window_height(),
+            &virtual_resolution,
+            &display,
+        );
+
+        viewport.set_content(scale_x, scale_y, computed_border_x, computed_border_y);
+
+        clear_color.0 = palette.border;
+        if let Ok((material_handle, mut transform)) = background.get_single_mut() {
+            transform.scale = Vec3::new(
+                viewport.content_width().max(1.0),
+                viewport.content_height().max(1.0),
+                1.0,
+            );
+            if let Some(material) = materials.get_mut(material_handle) {
+                material.color = palette.background;
+            }
+        }
+
+        let half_width = viewport.window_width() * 0.5;
+        let half_height = viewport.window_height() * 0.5;
+        let border_x = viewport.border_x().max(0.0);
+        let border_y = viewport.border_y().max(0.0);
+
+        for (overlay, material_handle, mut transform) in overlays.iter_mut() {
+            if let Some(material) = materials.get_mut(material_handle) {
+                material.color = palette.border;
+            }
+
+            match overlay.side {
+                BorderSide::Left => {
+                    transform.translation.x = -half_width + border_x * 0.5;
+                    transform.translation.y = 0.0;
+                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
+                }
+                BorderSide::Right => {
+                    transform.translation.x = half_width - border_x * 0.5;
+                    transform.translation.y = 0.0;
+                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
+                }
+                BorderSide::Top => {
+                    transform.translation.x = 0.0;
+                    transform.translation.y = half_height - border_y * 0.5;
+                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
+                }
+                BorderSide::Bottom => {
+                    transform.translation.x = 0.0;
+                    transform.translation.y = -half_height + border_y * 0.5;
+                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
+                }
+            }
+        }
+    }
+}
+
+/// Positions the optional raster overlay element so it tracks the guest raster.
+fn update_video_overlay_line(
+    emulator: NonSend<EmulatorState>,
+    viewport: Res<SpriteViewport>,
+    virtual_resolution: Res<SpriteVirtualResolution>,
+    overlay_config: Res<VideoOverlayConfig>,
+    mut query: Query<(&mut Transform, &mut Visibility), With<RasterLine>>,
+) {
+    let Ok((mut transform, mut visibility)) = query.get_single_mut() else {
+        return;
+    };
+
+    if !overlay_config.enabled() {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    let snapshot = emulator.video_overlay().snapshot();
+    let content_height = viewport.content_height();
+    let content_width = viewport.content_width();
+    if content_height <= 0.0 || content_width <= 0.0 {
+        *visibility = Visibility::Hidden;
+        return;
+    }
+
+    let virtual_height = virtual_resolution.height().max(1.0);
+    let raster = snapshot.raster.min(255) as f32;
+    let y_virtual = (raster / 255.0) * virtual_height;
+    let scale_y = viewport.scale_y();
+    let content_top = viewport.window_height() * 0.5 - viewport.border_y();
+    let host_y = content_top - y_virtual * scale_y;
+
+    transform.translation.x = 0.0;
+    transform.translation.y = host_y;
+    transform.translation.z = 4.5;
+    transform.scale.x = content_width.max(1.0);
+    transform.scale.y = 2.0;
+    *visibility = Visibility::Visible;
+}
+
+fn compute_viewport_geometry(
+    window_width: f32,
+    window_height: f32,
+    virtual_resolution: &SpriteVirtualResolution,
+    display: &DisplaySettings,
+) -> (f32, f32, f32, f32) {
+    let min_border_x = display.min_border_x.max(0.0);
+    let min_border_y = display.min_border_y.max(0.0);
+
+    if display.enforce_aspect_ratio {
+        let inner_width = (window_width - 2.0 * min_border_x).max(1.0);
+        let inner_height = (window_height - 2.0 * min_border_y).max(1.0);
+        let uniform_scale = (inner_width / virtual_resolution.width())
+            .min(inner_height / virtual_resolution.height());
+        let mut content_width = virtual_resolution.width() * uniform_scale;
+        let mut content_height = virtual_resolution.height() * uniform_scale;
+        let mut border_x = (window_width - content_width) * 0.5;
+        let mut border_y = (window_height - content_height) * 0.5;
+
+        if border_x < min_border_x || border_y < min_border_y {
+            border_x = min_border_x;
+            border_y = min_border_y;
+            let adjusted_width = (window_width - 2.0 * border_x).max(1.0);
+            let adjusted_height = (window_height - 2.0 * border_y).max(1.0);
+            let uniform_scale = (adjusted_width / virtual_resolution.width())
+                .min(adjusted_height / virtual_resolution.height());
+            content_width = virtual_resolution.width() * uniform_scale;
+            content_height = virtual_resolution.height() * uniform_scale;
+            border_x = (window_width - content_width) * 0.5;
+            border_y = (window_height - content_height) * 0.5;
+        }
+
+        (
+            (window_width - 2.0 * border_x).max(1.0) / virtual_resolution.width(),
+            (window_height - 2.0 * border_y).max(1.0) / virtual_resolution.height(),
+            border_x,
+            border_y,
+        )
+    } else {
+        (
+            window_width / virtual_resolution.width(),
+            window_height / virtual_resolution.height(),
+            0.0,
+            0.0,
+        )
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -2460,171 +2650,5 @@ mod tests {
         assert_eq!(snapshot.nmi_pending, 0);
         assert!(!snapshot.irq_line);
         assert!(!snapshot.nmi_line);
-    }
-}
-
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn update_sprite_viewport(
-    window_query: Query<&Window, With<PrimaryWindow>>,
-    mut viewport: ResMut<SpriteViewport>,
-    virtual_resolution: Res<SpriteVirtualResolution>,
-    display: Res<DisplaySettings>,
-    palette: Res<DisplayPalette>,
-    mut clear_color: ResMut<ClearColor>,
-    mut background: Query<
-        (&Handle<ColorMaterial>, &mut Transform),
-        (With<ContentBackground>, Without<BorderOverlay>),
-    >,
-    mut overlays: Query<
-        (&BorderOverlay, &Handle<ColorMaterial>, &mut Transform),
-        Without<ContentBackground>,
-    >,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    if let Ok(window) = window_query.get_single() {
-        viewport.update_window(window.width(), window.height());
-
-        let (scale_x, scale_y, computed_border_x, computed_border_y) = compute_viewport_geometry(
-            viewport.window_width(),
-            viewport.window_height(),
-            &virtual_resolution,
-            &display,
-        );
-
-        viewport.set_content(scale_x, scale_y, computed_border_x, computed_border_y);
-
-        clear_color.0 = palette.border;
-        if let Ok((material_handle, mut transform)) = background.get_single_mut() {
-            transform.scale = Vec3::new(
-                viewport.content_width().max(1.0),
-                viewport.content_height().max(1.0),
-                1.0,
-            );
-            if let Some(material) = materials.get_mut(material_handle) {
-                material.color = palette.background;
-            }
-        }
-
-        let half_width = viewport.window_width() * 0.5;
-        let half_height = viewport.window_height() * 0.5;
-        let border_x = viewport.border_x().max(0.0);
-        let border_y = viewport.border_y().max(0.0);
-
-        for (overlay, material_handle, mut transform) in overlays.iter_mut() {
-            if let Some(material) = materials.get_mut(material_handle) {
-                material.color = palette.border;
-            }
-
-            match overlay.side {
-                BorderSide::Left => {
-                    transform.translation.x = -half_width + border_x * 0.5;
-                    transform.translation.y = 0.0;
-                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
-                }
-                BorderSide::Right => {
-                    transform.translation.x = half_width - border_x * 0.5;
-                    transform.translation.y = 0.0;
-                    transform.scale = Vec3::new(border_x.max(0.0), viewport.window_height(), 1.0);
-                }
-                BorderSide::Top => {
-                    transform.translation.x = 0.0;
-                    transform.translation.y = half_height - border_y * 0.5;
-                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
-                }
-                BorderSide::Bottom => {
-                    transform.translation.x = 0.0;
-                    transform.translation.y = -half_height + border_y * 0.5;
-                    transform.scale = Vec3::new(viewport.window_width(), border_y.max(0.0), 1.0);
-                }
-            }
-        }
-    }
-}
-
-/// Positions the optional raster overlay element so it tracks the guest raster.
-fn update_video_overlay_line(
-    emulator: NonSend<EmulatorState>,
-    viewport: Res<SpriteViewport>,
-    virtual_resolution: Res<SpriteVirtualResolution>,
-    overlay_config: Res<VideoOverlayConfig>,
-    mut query: Query<(&mut Transform, &mut Visibility), With<RasterLine>>,
-) {
-    let Ok((mut transform, mut visibility)) = query.get_single_mut() else {
-        return;
-    };
-
-    if !overlay_config.enabled() {
-        *visibility = Visibility::Hidden;
-        return;
-    }
-
-    let snapshot = emulator.video_overlay().snapshot();
-    let content_height = viewport.content_height();
-    let content_width = viewport.content_width();
-    if content_height <= 0.0 || content_width <= 0.0 {
-        *visibility = Visibility::Hidden;
-        return;
-    }
-
-    let virtual_height = virtual_resolution.height().max(1.0);
-    let raster = snapshot.raster.min(255) as f32;
-    let y_virtual = (raster / 255.0) * virtual_height;
-    let scale_y = viewport.scale_y();
-    let content_top = viewport.window_height() * 0.5 - viewport.border_y();
-    let host_y = content_top - y_virtual * scale_y;
-
-    transform.translation.x = 0.0;
-    transform.translation.y = host_y;
-    transform.translation.z = 4.5;
-    transform.scale.x = content_width.max(1.0);
-    transform.scale.y = 2.0;
-    *visibility = Visibility::Visible;
-}
-
-fn compute_viewport_geometry(
-    window_width: f32,
-    window_height: f32,
-    virtual_resolution: &SpriteVirtualResolution,
-    display: &DisplaySettings,
-) -> (f32, f32, f32, f32) {
-    let min_border_x = display.min_border_x.max(0.0);
-    let min_border_y = display.min_border_y.max(0.0);
-
-    if display.enforce_aspect_ratio {
-        let inner_width = (window_width - 2.0 * min_border_x).max(1.0);
-        let inner_height = (window_height - 2.0 * min_border_y).max(1.0);
-        let uniform_scale = (inner_width / virtual_resolution.width())
-            .min(inner_height / virtual_resolution.height());
-        let mut content_width = virtual_resolution.width() * uniform_scale;
-        let mut content_height = virtual_resolution.height() * uniform_scale;
-        let mut border_x = (window_width - content_width) * 0.5;
-        let mut border_y = (window_height - content_height) * 0.5;
-
-        if border_x < min_border_x || border_y < min_border_y {
-            border_x = min_border_x;
-            border_y = min_border_y;
-            let adjusted_width = (window_width - 2.0 * border_x).max(1.0);
-            let adjusted_height = (window_height - 2.0 * border_y).max(1.0);
-            let uniform_scale = (adjusted_width / virtual_resolution.width())
-                .min(adjusted_height / virtual_resolution.height());
-            content_width = virtual_resolution.width() * uniform_scale;
-            content_height = virtual_resolution.height() * uniform_scale;
-            border_x = (window_width - content_width) * 0.5;
-            border_y = (window_height - content_height) * 0.5;
-        }
-
-        (
-            (window_width - 2.0 * border_x).max(1.0) / virtual_resolution.width(),
-            (window_height - 2.0 * border_y).max(1.0) / virtual_resolution.height(),
-            border_x,
-            border_y,
-        )
-    } else {
-        (
-            window_width / virtual_resolution.width(),
-            window_height / virtual_resolution.height(),
-            0.0,
-            0.0,
-        )
     }
 }
