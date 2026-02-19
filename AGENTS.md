@@ -27,6 +27,7 @@ OpFoundry is a cross-platform interactive 6502 emulator with a desktop GUI, web 
 
 ```
 OpFoundry/
+├── Makefile                          # Convenience targets (build/run/clean)
 ├── opfoundry-gui/                    # Desktop & WASM GUI (Bevy 0.11 + egui)
 │   ├── src/
 │   │   ├── lib.rs                    # Main UI state, emulator integration
@@ -47,7 +48,8 @@ OpFoundry/
 │   ├── web-dist/                     # Build output (gitignored)
 │   ├── Makefile
 │   └── index.html
-└── Cargo.toml (virtual workspace)
+
+Note: there is no top-level Cargo workspace manifest; build each crate via its own `Cargo.toml` (or use the root `Makefile`).
 ```
 
 ## Architecture & Design
@@ -62,7 +64,7 @@ OpFoundry/
 - **Display viewport:** Renders MMIO video output (VIC-II) with sprite borders and collision indicators
 
 **Features:**
-- Native desktop: Full parallelism via Tokio + crossbeam channels
+- Native desktop: Background worker thread and service listener (crossbeam channels; enabled via `native-service`)
 - WASM: Single-threaded with main loop integration
 - Dual feature flags: `native-service` (desktop builds), `wasm-support` (WASM builds)
 
@@ -71,9 +73,9 @@ OpFoundry/
 **Purpose:** TCP/WebSocket bridge for remote emulator control and telemetry.
 
 **Protocol:**
-- Listen on TCP (default: 6502; overridable via CLI)
+- Listen on TCP newline-delimited JSON (default: 7465; overridable via CLI)
 - Upgrade select connections to WebSocket for real-time updates
-- JSON message format for commands (RunProgram, ReadMemory, Pause, SetThrottle, etc.)
+- JSON message format mirrors the GUI service API (request/response IDs, program load/run, memory reads, etc.)
 
 ### opfoundry-wasm
 
