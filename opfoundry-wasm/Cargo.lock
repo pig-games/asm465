@@ -244,40 +244,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "asm465"
-version = "0.1.0"
-dependencies = [
- "base64 0.21.7",
- "bevy",
- "bevy_egui",
- "bus",
- "console_error_panic_hook",
- "core6502",
- "futures",
- "getrandom 0.3.3",
- "gloo-net",
- "instant",
- "js-sys",
- "log",
- "rfd",
- "runtime_sdk",
- "serde",
- "serde_json",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "asm465-wasm"
-version = "0.1.0"
-dependencies = [
- "asm465",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3465,6 +3431,40 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "opfoundry-gui"
+version = "0.1.0"
+dependencies = [
+ "base64 0.21.7",
+ "bevy",
+ "bevy_egui",
+ "bus",
+ "console_error_panic_hook",
+ "core6502",
+ "futures",
+ "getrandom 0.3.3",
+ "gloo-net",
+ "instant",
+ "js-sys",
+ "log",
+ "rfd",
+ "runtime_sdk",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "opfoundry-wasm"
+version = "0.1.0"
+dependencies = [
+ "opfoundry-gui",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "orbclient"
