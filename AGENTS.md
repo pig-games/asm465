@@ -135,6 +135,12 @@ Before submitting changes:
 5. **Tests:** `cargo test --manifest-path <crate>/Cargo.toml`
 6. **WASM build (if GUI changed):** `make -C opfoundry-wasm build`
 
+### Fixture/reference regeneration policy
+- Regenerate fixtures/references only when behavior is intentionally changed and the new output is expected by design.
+- Allowed examples: deliberate protocol/response changes, intentional UI/serialization output changes, intentionally revised diagnostics.
+- Never update fixtures/references only because a new failure appeared; that is a regression signal and must be fixed in code.
+- Never hide regressions by redefining unexpected errors as expected outputs.
+
 Use VS Code tasks for convenience:
 - `OpFoundry: Quality Gate` — Runs all validation across GUI, Server, WASM
 
@@ -170,7 +176,7 @@ cargo run --manifest-path opfoundry-server/Cargo.toml -- --port 6503
 
 - **Workspace AGENTS:** [../workspaces/AGENTS.md](../workspaces/AGENTS.md)
 - **opFoundryCore AGENTS:** [../opFoundryCore/AGENTS.md](../opFoundryCore/AGENTS.md)
-- **opForge AGENTS:** [../opForge/worktrees/opthread-vm-family-impl/AGENTS.md](../opForge/worktrees/opthread-vm-family-impl/AGENTS.md)
+- **opForge AGENTS:** [../opForge/AGENTS.md](../opForge/AGENTS.md)
 
 ---
 
