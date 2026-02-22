@@ -1,3 +1,12 @@
+#![cfg_attr(
+    not(any(
+        feature = "native-service",
+        feature = "native-file-dialog",
+        target_arch = "wasm32"
+    )),
+    allow(dead_code)
+)]
+
 use std::sync::{Arc, Mutex};
 
 use bus::console_mmio::ConsoleSnapshot;
@@ -17,24 +26,8 @@ use crate::{
 };
 
 pub(crate) struct EmulatorState {
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     cpu: CpuWorker,
     outputs: CpuWorkerOutputs,
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     default_max_cycles: u64,
     status_message: Option<String>,
     last_outcome: Option<RunOutcome>,
@@ -75,14 +68,6 @@ impl EmulatorState {
         self.status_message = Some(message);
     }
 
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub(crate) fn log_console(&self, line: &str) {
         if let Some(handle) = self.outputs.console.as_ref() {
             if let Ok(mut console) = handle.lock() {
@@ -109,14 +94,6 @@ impl EmulatorState {
         self.raster_irq.clone()
     }
 
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub(crate) fn run_program(
         &mut self,
         source: ProgramSource,
@@ -199,14 +176,6 @@ impl EmulatorState {
         self.outputs.video_overlay.clone()
     }
 
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub(crate) fn handle_service_command(
         &mut self,
         command: ServiceCommand,
