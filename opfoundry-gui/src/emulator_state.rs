@@ -25,6 +25,11 @@ use crate::{
     StartupConfig,
 };
 
+/// Runtime emulator facade inserted into Bevy as a NonSend resource.
+///
+/// `CpuWorker` encapsulates platform-specific runtime handles that are not
+/// universally `Send` (native worker channels vs wasm single-thread state), so
+/// this resource intentionally remains on the main thread.
 pub(crate) struct EmulatorState {
     cpu: CpuWorker,
     outputs: CpuWorkerOutputs,
