@@ -153,3 +153,30 @@ pub fn parse_rtst_config(
 fn validate_rtst(base: Option<u32>, span: Option<u32>) -> Result<(), String> {
     parse_rtst_config(base, span).map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rtst_accepts_valid_range() {
+        let parsed = parse_rtst_config(Some(0x200), Some(0x40)).expect("valid range should pass");
+        assert_eq!(parsed.map(|cfg| (cfg.base, cfg.span)), Some((0x200, 0x40)));
+    }
+
+    #[test]
+    fn parse_rtst_rejects_partial_config() {
+        let err = parse_rtst_config(Some(0x200), None).expect_err("partial config should fail");
+        assert!(err.contains("provided together"));
+    }
+
+    #[test]
+    fn read_mem_validation_rejects_zero_length() {
+        let payload = ServiceRequestPayload::ReadMem {
+            address: 0,
+            length: 0,
+        };
+        let err = payload.validate().expect_err("zero length should fail");
+        assert!(err.contains("between 1 and 65536"));
+    }
+}

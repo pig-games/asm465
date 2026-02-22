@@ -37,26 +37,26 @@ pub(crate) fn mmio_color(value: u8, fallback: Color) -> Color {
 pub(crate) fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let mut buffer = [0u8; 4];
-    let font_id = egui::FontId::monospace(CONSOLE_FONT_SIZE);
+    let base_font = egui::FontId::monospace(CONSOLE_FONT_SIZE);
+    let newline_format = egui::text::TextFormat {
+        font_id: base_font.clone(),
+        color: palette_color(7),
+        ..Default::default()
+    };
 
     for y in 0..snapshot.height {
         for x in 0..snapshot.width {
             let cell = snapshot.cell(x, y);
             let glyph = cell.ch.encode_utf8(&mut buffer);
             let format = egui::text::TextFormat {
-                font_id: font_id.clone(),
+                font_id: base_font.clone(),
                 color: palette_color(cell.fg),
                 ..Default::default()
             };
             job.append(glyph, 0.0, format);
         }
         if y + 1 < snapshot.height {
-            let format = egui::text::TextFormat {
-                font_id: font_id.clone(),
-                color: palette_color(7),
-                ..Default::default()
-            };
-            job.append("\n", 0.0, format);
+            job.append("\n", 0.0, newline_format.clone());
         }
     }
 

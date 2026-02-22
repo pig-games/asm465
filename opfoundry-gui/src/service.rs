@@ -130,3 +130,80 @@ pub fn into_service_command(payload: ServiceRequestPayload) -> Result<ServiceCom
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_run_prg_payload_with_rtst() {
+        let payload = ServiceRequestPayload::RunPrg {
+            path: "demo.prg".to_string(),
+            max_cycles: Some(1234),
+            start: Some(0x1000),
+            rtst_base: Some(0x0200),
+            rtst_span: Some(64),
+            progress_timeout_ms: Some(250),
+        };
+
+        let command = into_service_command(payload).expect("payload should convert");
+        match command {
+            ServiceCommand::RunProgram {
+                source,
+                max_cycles,
+                start,
+                rtst,
+                progress_timeout_ms,
+            } => {
+                assert!(matches!(source, ProgramSource::File(_)));
+                assert_eq!(max_cycles, Some(1234));
+                assert_eq!(start, Some(0x1000));
+                assert_eq!(rtst.map(|cfg| (cfg.base, cfg.span)), Some((0x0200, 64)));
+                assert_eq!(progress_timeout_ms, Some(250));
+            }
+            _ => panic!("expected RunProgram command"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_rtst_combo() {
+        let payload = ServiceRequestPayload::RunPrg {
+            path: "demo.prg".to_string(),
+            max_cycles: None,
+            start: None,
+            rtst_base: Some(0x0100),
+            rtst_span: None,
+            progress_timeout_ms: None,
+        };
+
+        let err = into_service_command(payload).expect_err("rtst pair should be rejected");
+        assert!(err.contains("rtst_base and rtst_span"));
+    }
+
+    #[test]
+    fn rejects_invalid_base64_payload() {
+        let payload = ServiceRequestPayload::RunPrgData {
+            data: "%%%".to_string(),
+            name: Some("inline".to_string()),
+            max_cycles: None,
+            start: None,
+            rtst_base: None,
+            rtst_span: None,
+            progress_timeout_ms: None,
+        };
+
+        let err = into_service_command(payload).expect_err("invalid base64 should fail");
+        assert!(err.contains("invalid base64 payload"));
+    }
+
+    #[test]
+    fn rejects_invalid_read_mem_length() {
+        let payload = ServiceRequestPayload::ReadMem {
+            address: 0,
+            length: 0,
+        };
+
+        let err = into_service_command(payload).expect_err("zero-length read should fail");
+        assert!(err.contains("between 1 and 65536"));
+    }
+}

@@ -238,6 +238,44 @@ impl Default for CpuThrottle {
     }
 }
 
+fn initialize_bus_state(
+    personality: &PersonalitySelection,
+    startup: Option<StartupConfig>,
+) -> Result<(Bus, AdapterHandles, Option<String>, Option<RunOutcome>), String> {
+    match startup {
+        Some(config) => {
+            let (bus, adapters) = personality.build_bus()?;
+            match run_program_with_config(bus, &config) {
+                Ok((bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
+                    Ok((bus, adapters, Some(message), outcome))
+                }
+                Err((mut bus, report)) => {
+                    let ProgramRunReport { outcome, message } = report;
+                    write_console_line(&mut bus, &message);
+                    Ok((bus, adapters, Some(message), outcome))
+                }
+            }
+        }
+        None => {
+            let (mut bus, adapters) = personality.build_bus()?;
+            write_console_line(&mut bus, WELCOME_MESSAGE);
+            Ok((bus, adapters, Some(WELCOME_MESSAGE.to_string()), None))
+        }
+    }
+}
+
+fn run_program_once(
+    personality: &PersonalitySelection,
+    config: &StartupConfig,
+) -> Result<(Bus, AdapterHandles, ProgramRunReport, CpuRunStatus), String> {
+    let (bus, adapters) = personality.build_bus()?;
+    match run_program_with_config(bus, config) {
+        Ok((bus, report)) => Ok((bus, adapters, report, CpuRunStatus::Success)),
+        Err((bus, report)) => Ok((bus, adapters, report, CpuRunStatus::Failure)),
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
@@ -409,15 +447,8 @@ mod native {
 
         /// Execute a program request and keep the worker state coherent.
         fn perform_run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            let (bus, adapters) = self.personality.build_bus()?;
-            match run_program_with_config(bus, &config) {
-                Ok((bus, report)) => {
-                    Ok(self.finish_program(bus, report, CpuRunStatus::Success, adapters.clone()))
-                }
-                Err((bus, report)) => {
-                    Ok(self.finish_program(bus, report, CpuRunStatus::Failure, adapters))
-                }
-            }
+            let (bus, adapters, report, status) = run_program_once(&self.personality, &config)?;
+            Ok(self.finish_program(bus, report, status, adapters))
         }
 
         /// Reset the CPU core back to the worker loop and provide refreshed outputs.
@@ -466,36 +497,11 @@ mod native {
         personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
     ) -> Result<(Cpu, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
-        match startup {
-            Some(config) => {
-                let (bus, adapters) = personality.build_bus()?;
-                match run_program_with_config(bus, &config) {
-                    Ok((bus, report)) => {
-                        let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                        let mut cpu = Cpu::new(bus);
-                        cpu.reset();
-                        Ok((cpu, outputs, Some(message), outcome))
-                    }
-                    Err((mut bus, report)) => {
-                        let ProgramRunReport { outcome, message } = report;
-                        write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                        let mut cpu = Cpu::new(bus);
-                        cpu.reset();
-                        Ok((cpu, outputs, Some(message), outcome))
-                    }
-                }
-            }
-            None => {
-                let (mut bus, adapters) = personality.build_bus()?;
-                write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                let mut cpu = Cpu::new(bus);
-                cpu.reset();
-                Ok((cpu, outputs, Some(WELCOME_MESSAGE.to_string()), None))
-            }
-        }
+        let (bus, adapters, status, outcome) = initialize_bus_state(personality, startup)?;
+        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+        let mut cpu = Cpu::new(bus);
+        cpu.reset();
+        Ok((cpu, outputs, status, outcome))
     }
 
     impl CpuWorker {
@@ -651,38 +657,22 @@ mod wasm {
 
         /// Run the supplied program immediately on the single-threaded executor.
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
-            let (bus, adapters) = self.personality.build_bus()?;
-            match run_program_with_config(bus, &config) {
-                Ok((bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                    self.bus = bus;
-                    self.video_state = adapters.video_state.clone();
-                    self.video_overlay = adapters.video_overlay.clone();
-                    self.raster_irq = adapters.raster_irq.clone();
-                    Ok(CpuRunReply {
-                        summary: message,
-                        status: CpuRunStatus::Success,
-                        outputs,
-                        outcome,
-                    })
-                }
-                Err((mut bus, report)) => {
-                    let ProgramRunReport { outcome, message } = report;
-                    write_console_line(&mut bus, &message);
-                    let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                    self.bus = bus;
-                    self.video_state = adapters.video_state.clone();
-                    self.video_overlay = adapters.video_overlay.clone();
-                    self.raster_irq = adapters.raster_irq.clone();
-                    Ok(CpuRunReply {
-                        summary: message,
-                        status: CpuRunStatus::Failure,
-                        outputs,
-                        outcome,
-                    })
-                }
+            let (mut bus, adapters, report, status) = run_program_once(&self.personality, &config)?;
+            let ProgramRunReport { outcome, message } = report;
+            if status == CpuRunStatus::Failure {
+                write_console_line(&mut bus, &message);
             }
+            let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+            self.bus = bus;
+            self.video_state = adapters.video_state.clone();
+            self.video_overlay = adapters.video_overlay.clone();
+            self.raster_irq = adapters.raster_irq.clone();
+            Ok(CpuRunReply {
+                summary: message,
+                status,
+                outputs,
+                outcome,
+            })
         }
 
         /// Snapshot a region of RAM for host tooling.
@@ -733,30 +723,9 @@ mod wasm {
         personality: &PersonalitySelection,
         startup: Option<StartupConfig>,
     ) -> Result<(Bus, CpuWorkerOutputs, Option<String>, Option<RunOutcome>), String> {
-        match startup {
-            Some(config) => {
-                let (bus, adapters) = personality.build_bus()?;
-                match run_program_with_config(bus, &config) {
-                    Ok((bus, report)) => {
-                        let ProgramRunReport { outcome, message } = report;
-                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                        Ok((bus, outputs, Some(message), outcome))
-                    }
-                    Err((mut bus, report)) => {
-                        let ProgramRunReport { outcome, message } = report;
-                        write_console_line(&mut bus, &message);
-                        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                        Ok((bus, outputs, Some(message), outcome))
-                    }
-                }
-            }
-            None => {
-                let (mut bus, adapters) = personality.build_bus()?;
-                write_console_line(&mut bus, WELCOME_MESSAGE);
-                let outputs = CpuWorkerOutputs::new(&bus, &adapters);
-                Ok((bus, outputs, Some(WELCOME_MESSAGE.to_string()), None))
-            }
-        }
+        let (bus, adapters, status, outcome) = initialize_bus_state(personality, startup)?;
+        let outputs = CpuWorkerOutputs::new(&bus, &adapters);
+        Ok((bus, outputs, status, outcome))
     }
 }
 
