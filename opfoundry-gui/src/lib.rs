@@ -10,25 +10,24 @@
 
 #[cfg(feature = "native-service")]
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::sync::Arc;
 use std::time::Duration;
 
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::WindowResolution;
 use bevy_egui::EguiPlugin;
-use bus::console_mmio::ConsoleSnapshot;
+#[cfg(test)]
 use bus::display_mmio::DisplaySnapshot;
 use bus::input_mmio::InputSnapshot;
+#[cfg(test)]
 use bus::interrupts::InterruptController;
-use bus::sprite_mmio::SpriteSnapshot;
-use bus::{adapters::input::InputBackend, RasterIrqState, VideoState};
-use core6502::RunOutcome;
-use video_backend::VideoOverlaySignals;
 
 mod console_ui;
 mod cpu_worker;
 mod display;
+mod emulator_state;
 mod input;
 mod interrupts;
 #[cfg(feature = "native-service")]
@@ -53,6 +52,7 @@ use self::display::{
     SpriteViewport, SpriteVirtualResolution, VideoOverlayConfig, SPRITE_DEFAULT_MARGIN_X,
     SPRITE_DEFAULT_MARGIN_Y, SPRITE_VIRTUAL_HEIGHT, SPRITE_VIRTUAL_WIDTH,
 };
+use self::emulator_state::EmulatorState;
 use self::input::{
     controller_input_system, sync_controller_backend, update_keyboard_tracker, ControllerState,
     KeyboardTracker,
@@ -66,9 +66,7 @@ use self::ui::{ui_system, UiState};
 use self::web::WebSocketBridgeManager;
 #[cfg(test)]
 use bus::sprite_mmio::SpriteState;
-use cpu_worker::{
-    CpuRunReply, CpuRunStatus, CpuWorker, CpuWorkerInit, CpuWorkerOutputs, PersonalitySelection,
-};
+use cpu_worker::PersonalitySelection;
 
 #[cfg(feature = "native-service")]
 use self::personality_cli::{
@@ -416,7 +414,7 @@ pub fn run_app(config: AppConfig) -> Result<(), String> {
                     "Failed to start service listener on {}:{}: {err}",
                     service_cfg.host, service_cfg.port
                 );
-                emulator.status_message = Some(msg.clone());
+                emulator.set_status_message(msg.clone());
                 emulator.log_console(&msg);
             }
         }
@@ -539,228 +537,6 @@ pub fn run_app(config: AppConfig) -> Result<(), String> {
     .run();
 
     Ok(())
-}
-
-/// Viewer state that proxies CPU execution to the background worker.
-struct EmulatorState {
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
-    cpu: CpuWorker,
-    outputs: CpuWorkerOutputs,
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
-    default_max_cycles: u64,
-    status_message: Option<String>,
-    last_outcome: Option<RunOutcome>,
-    interrupts: Arc<InterruptController>,
-    raster_irq: Arc<RasterIrqState>,
-}
-
-impl EmulatorState {
-    fn new(
-        startup: Option<StartupConfig>,
-        default_max_cycles: u64,
-        personality: PersonalitySelection,
-    ) -> Result<Self, String> {
-        let (
-            cpu,
-            CpuWorkerInit {
-                outputs,
-                status,
-                outcome,
-            },
-        ) = CpuWorker::spawn(personality, startup)?;
-
-        let interrupts = outputs.interrupts.clone();
-        let raster_irq = outputs.raster.clone();
-
-        Ok(Self {
-            cpu,
-            outputs,
-            default_max_cycles,
-            status_message: status,
-            last_outcome: outcome,
-            interrupts,
-            raster_irq,
-        })
-    }
-
-    /// Append a host message to the shared console surface (best-effort).
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
-    fn log_console(&self, line: &str) {
-        if let Some(handle) = self.outputs.console.as_ref() {
-            if let Ok(mut console) = handle.lock() {
-                console.write_str(line, 1, 0);
-                console.newline();
-            }
-        }
-    }
-
-    fn status_message(&self) -> Option<String> {
-        self.status_message.clone()
-    }
-
-    #[allow(dead_code)]
-    fn last_outcome(&self) -> Option<RunOutcome> {
-        self.last_outcome
-    }
-
-    fn interrupts(&self) -> Arc<InterruptController> {
-        self.interrupts.clone()
-    }
-
-    fn raster_state(&self) -> Arc<RasterIrqState> {
-        self.raster_irq.clone()
-    }
-
-    /// Ask the worker to load and execute a program, returning the status text.
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
-    fn run_program(
-        &mut self,
-        source: ProgramSource,
-        max_cycles: Option<u64>,
-        start: Option<u16>,
-        rtst: Option<RtstMonitorConfig>,
-        progress_timeout_ms: Option<u64>,
-    ) -> Result<String, String> {
-        let configured_cycles = max_cycles.unwrap_or(self.default_max_cycles);
-        let config = StartupConfig {
-            source,
-            max_cycles: configured_cycles,
-            start,
-            rtst,
-            progress_timeout_ms,
-        };
-        match self.cpu.run_program(config) {
-            Ok(CpuRunReply {
-                summary,
-                status,
-                outputs,
-                outcome,
-            }) => {
-                self.outputs = outputs;
-                self.interrupts = self.outputs.interrupts.clone();
-                self.raster_irq = self.outputs.raster.clone();
-                self.status_message = Some(summary.clone());
-                self.last_outcome = outcome;
-                match status {
-                    CpuRunStatus::Success => Ok(summary),
-                    CpuRunStatus::Failure => Err(summary),
-                }
-            }
-            Err(err) => {
-                self.log_console(&err);
-                self.status_message = Some(err.clone());
-                self.last_outcome = None;
-                Err(err)
-            }
-        }
-    }
-
-    fn input_backend(&self) -> Option<Arc<dyn InputBackend>> {
-        self.outputs.input_backend.clone()
-    }
-
-    fn input_snapshot(&self) -> Option<InputSnapshot> {
-        self.outputs
-            .input
-            .as_ref()
-            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
-    }
-
-    fn snapshot(&self) -> Option<ConsoleSnapshot> {
-        self.outputs
-            .console
-            .as_ref()
-            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
-    }
-
-    fn display_snapshot(&self) -> Option<DisplaySnapshot> {
-        self.outputs
-            .display
-            .as_ref()
-            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
-    }
-
-    fn sprite_snapshot(&self) -> Option<SpriteSnapshot> {
-        self.outputs
-            .sprite
-            .as_ref()
-            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
-    }
-
-    fn video_state(&self) -> Arc<Mutex<VideoState>> {
-        self.outputs.video.clone()
-    }
-
-    fn video_overlay(&self) -> Arc<VideoOverlaySignals> {
-        self.outputs.video_overlay.clone()
-    }
-
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
-    fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
-        match command {
-            ServiceCommand::RunProgram {
-                source,
-                max_cycles,
-                start,
-                rtst,
-                progress_timeout_ms,
-            } => {
-                let timeout = progress_timeout_ms.filter(|ms| *ms > 0);
-                match self.run_program(source, max_cycles, start, rtst, timeout) {
-                    Ok(msg) => {
-                        let mut resp = ServiceResponseMessage::ok(msg);
-                        resp.cycles = self.last_outcome.map(|outcome| outcome.cycles);
-                        resp
-                    }
-                    Err(err) => ServiceResponseMessage::error(err),
-                }
-            }
-            ServiceCommand::ReadMemory { address, length } => {
-                match self.cpu.read_memory(address, length as usize) {
-                    Ok(bytes) => ServiceResponseMessage::ok_with_data(
-                        format!("read {length} bytes from {address:#06X}"),
-                        &bytes,
-                    ),
-                    Err(err) => ServiceResponseMessage::error(err),
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
