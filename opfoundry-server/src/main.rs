@@ -326,7 +326,8 @@ fn path_within_allowed_dir(path: &str, allowed_dir: &Path) -> anyhow::Result<boo
 
 #[cfg(test)]
 mod tests {
-    use super::path_within_allowed_dir;
+    use super::*;
+    use opfoundry_api::ServiceStatus;
     use std::fs;
 
     #[test]
@@ -380,6 +381,52 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&outside_root);
+    }
+
+    #[test]
+    fn pending_responses_match_bridge_id_before_fifo() {
+        let mut pending = PendingResponses::default();
+        let _fifo_rx = pending.register(None);
+        let _id_rx = pending.register(Some("abc123".to_string()));
+
+        let matched = pending.fulfill(ServiceResponseMessage {
+            status: ServiceStatus::Ok,
+            message: "ok".to_string(),
+            data: None,
+            bridge_id: Some("abc123".to_string()),
+            cycles: None,
+        });
+        assert!(matched);
+        assert!(!pending.by_id.contains_key("abc123"));
+
+        let fifo_matched = pending.fulfill(ServiceResponseMessage {
+            status: ServiceStatus::Ok,
+            message: "fallback".to_string(),
+            data: None,
+            bridge_id: None,
+            cycles: None,
+        });
+        assert!(fifo_matched);
+    }
+
+    #[test]
+    fn broadcast_prunes_disconnected_clients() {
+        let state = ServerState::default();
+        let (live_tx, mut live_rx) = mpsc::unbounded_channel::<String>();
+        let (dead_tx, dead_rx) = mpsc::unbounded_channel::<String>();
+        drop(dead_rx);
+
+        state.add_client(live_tx);
+        state.add_client(dead_tx);
+
+        let delivered = state.broadcast("hello");
+        assert_eq!(delivered, 1);
+
+        let msg = live_rx
+            .try_recv()
+            .expect("live receiver should get message");
+        assert_eq!(msg, "hello");
+        assert_eq!(ServerState::lock_or_recover(&state.clients).len(), 1);
     }
 }
 
