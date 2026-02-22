@@ -459,10 +459,9 @@ mod native {
             if length == 0 {
                 return bytes;
             }
-            let mem = self.cpu.bus().mem_mut();
             for (idx, byte) in bytes.iter_mut().enumerate() {
                 let addr = address.wrapping_add(idx as u32) as u16;
-                *byte = mem.read(addr);
+                *byte = self.cpu.bus_mut().read(addr);
             }
             bytes
         }
@@ -649,10 +648,9 @@ mod wasm {
             if length == 0 {
                 return Ok(bytes);
             }
-            let mem = self.bus.mem_mut();
             for (idx, byte) in bytes.iter_mut().enumerate() {
                 let addr = address.wrapping_add(idx as u32) as u16;
-                *byte = mem.read(addr);
+                *byte = self.bus.read(addr);
             }
             Ok(bytes)
         }
