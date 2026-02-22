@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -17,7 +18,7 @@ use anyhow::Context;
 use clap::Parser;
 use futures::{SinkExt, StreamExt as FuturesStreamExt};
 use log::{error, info, warn};
-use opfoundry_gui::{ServiceRequestPayload, ServiceResponseMessage};
+use opfoundry_api::{ServiceRequestPayload, ServiceResponseMessage};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
@@ -42,6 +43,9 @@ struct Opts {
     /// WebSocket port for browser clients.
     #[arg(long, default_value_t = 8800)]
     ws_port: u16,
+    /// Optional directory restriction for `run_prg` file paths.
+    #[arg(long)]
+    allowed_dir: Option<PathBuf>,
 }
 
 const RESPONSE_TIMEOUT_SECS: u64 = 30;
@@ -142,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let opts = Opts::parse();
     let state = Arc::new(ServerState::default());
+    let allowed_dir = opts.allowed_dir;
 
     let tcp_addr = format!("{}:{}", opts.tcp_host, opts.tcp_port);
     let ws_addr = format!("{}:{}", opts.ws_host, opts.ws_port);
@@ -151,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
 
     let tcp_state = state.clone();
     let tcp_task = tokio::spawn(async move {
-        if let Err(err) = run_tcp_listener(&tcp_addr, tcp_state).await {
+        if let Err(err) = run_tcp_listener(&tcp_addr, tcp_state, allowed_dir).await {
             error!("TCP listener terminated: {err:?}");
         }
     });
@@ -173,13 +178,18 @@ async fn main() -> anyhow::Result<()> {
 
 /// Accept newline-delimited JSON commands over TCP, pushing them into the
 /// websocket fan-out and replying with a short status payload.
-async fn run_tcp_listener(addr: &str, state: Arc<ServerState>) -> anyhow::Result<()> {
+async fn run_tcp_listener(
+    addr: &str,
+    state: Arc<ServerState>,
+    allowed_dir: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     loop {
         let (stream, peer) = listener.accept().await?;
         let st = state.clone();
+        let allowed_dir = allowed_dir.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_tcp_connection(stream, peer, st).await {
+            if let Err(err) = handle_tcp_connection(stream, peer, st, allowed_dir).await {
                 error!("TCP connection {peer} closed with error: {err:?}");
             }
         });
@@ -191,6 +201,7 @@ async fn handle_tcp_connection(
     stream: TcpStream,
     peer: SocketAddr,
     state: Arc<ServerState>,
+    allowed_dir: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     info!("TCP client connected: {peer}");
     let framed = Framed::new(stream, LinesCodec::new());
@@ -203,9 +214,24 @@ async fn handle_tcp_connection(
         }
         match serde_json::from_str::<ServiceRequestPayload>(&line) {
             Ok(payload) => {
-                let _command = payload
-                    .into_command()
+                payload
+                    .validate()
                     .map_err(|err| anyhow::anyhow!("invalid command: {err}"))?;
+
+                if let Some(base) = allowed_dir.as_ref() {
+                    if let ServiceRequestPayload::RunPrg { path, .. } = &payload {
+                        if !path_within_allowed_dir(path, base)? {
+                            let resp = ServiceResponseMessage::error(format!(
+                                "run_prg path is outside allowed directory: {}",
+                                base.display()
+                            ));
+                            let resp_line = serde_json::to_string(&resp)?;
+                            writer.send(resp_line).await?;
+                            continue;
+                        }
+                    }
+                }
+
                 let mut payload_value: serde_json::Value = match serde_json::from_str(&line) {
                     Ok(val) => val,
                     Err(err) => {
@@ -275,6 +301,25 @@ async fn handle_tcp_connection(
 
     info!("TCP client disconnected: {peer}");
     Ok(())
+}
+
+fn path_within_allowed_dir(path: &str, allowed_dir: &Path) -> anyhow::Result<bool> {
+    let requested = Path::new(path);
+    let resolved = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(requested)
+    };
+    let resolved = resolved.canonicalize().with_context(|| {
+        format!(
+            "unable to resolve requested run_prg path `{}`",
+            requested.display()
+        )
+    })?;
+    let allowed = allowed_dir
+        .canonicalize()
+        .with_context(|| format!("unable to resolve allowed_dir `{}`", allowed_dir.display()))?;
+    Ok(resolved.starts_with(allowed))
 }
 
 /// Accept websocket clients and register them with the shared [`ServerState`].

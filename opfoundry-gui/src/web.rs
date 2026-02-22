@@ -28,8 +28,8 @@ use web_time::Instant;
 
 use crate::web_url::derive_ws_url;
 use crate::{
-    run_app, AppConfig, DisplaySettings, PersonalitySelection, ServiceCommand,
-    ServiceRequestPayload, ServiceResponseMessage, VirtualResolution,
+    into_service_command, run_app, AppConfig, DisplaySettings, PersonalitySelection,
+    ServiceCommand, ServiceRequestPayload, ServiceResponseMessage, VirtualResolution,
 };
 use bus::personality;
 
@@ -84,7 +84,7 @@ impl WebSocketBridge {
                 match message {
                     Ok(Message::Text(text)) => {
                         match serde_json::from_str::<BridgeCommandPayload>(&text) {
-                            Ok(payload) => match payload.payload.into_command() {
+                            Ok(payload) => match into_service_command(payload.payload) {
                                 Ok(command) => pending_reader.borrow_mut().push(QueuedCommand {
                                     command,
                                     bridge_id: payload.bridge_id,

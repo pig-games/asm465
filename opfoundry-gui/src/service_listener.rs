@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
-use crate::{ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
+use crate::{into_service_command, ServiceCommand, ServiceRequestPayload, ServiceResponseMessage};
 
 #[derive(Resource)]
 pub(crate) struct ServiceListener {
@@ -76,7 +76,7 @@ fn handle_service_connection(
                 continue;
             }
         };
-        let command = match payload.into_command() {
+        let command = match into_service_command(payload) {
             Ok(command) => command,
             Err(err) => {
                 write_service_response(&mut writer, ServiceResponseMessage::error(err))?;

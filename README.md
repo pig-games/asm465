@@ -34,7 +34,12 @@ cargo run --manifest-path opfoundry-gui/Cargo.toml -- --service-port 7465
 
 # Bridge server (for WASM clients)
 cargo run --manifest-path opfoundry-server/Cargo.toml -- --tcp-port 7465 --ws-port 8800
+
+# Bridge server with filesystem restriction for run_prg
+cargo run --manifest-path opfoundry-server/Cargo.toml -- --tcp-port 7465 --ws-port 8800 --allowed-dir ./programs
 ```
+
+By default, the server binds to `127.0.0.1` for both TCP and WebSocket listeners.
 
 ## Related Projects
 
