@@ -11,5 +11,5 @@ default = []
 dev-loopback = ["opfoundry-gui/dev-loopback"]
 
 [dependencies]
-opfoundry-gui = { path = "../opfoundry-gui", default-features = false }
+opfoundry-gui = { path = "../opfoundry-gui", default-features = false, features = ["wasm-support"] }
 wasm-bindgen = "0.2"

@@ -23,6 +23,7 @@ web-time = "1.1"
 default = ["native-service", "native-file-dialog"]
 native-service = ["clap", "crossbeam-channel"]
 native-file-dialog = ["dep:rfd"]
+wasm-support = ["dep:rfd"]
 dev-loopback = []
 
 [lib]
