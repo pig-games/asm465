@@ -37,7 +37,7 @@ const DEFAULT_MAX_CYCLES: u64 = 5_000_000;
 const DEFAULT_WS_PORT: u16 = 8_800;
 #[cfg(feature = "dev-loopback")]
 const DEV_LOOPBACK_WS_URL: &str = "ws://127.0.0.1:8800";
-const CANVAS_ID: &str = "#asm465-canvas";
+const CANVAS_ID: &str = "#opfoundry-canvas";
 const DEFAULT_LOOPBACK_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 
 thread_local! {
