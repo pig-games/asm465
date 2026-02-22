@@ -5,6 +5,8 @@ use core6502::{Cpu, RunLimit, RunOutcome};
 use runtime_sdk::rtst::{Header, State, HEADER_LEN};
 use web_time::Instant;
 
+#[cfg(test)]
+use crate::ProgramSource;
 use crate::{ProgramRunReport, RtstMonitorConfig, StartupConfig};
 
 #[allow(clippy::result_large_err)]
@@ -172,4 +174,56 @@ pub(crate) fn write_console_line(bus: &mut Bus, line: &str) {
         }
     }
     bus.write(CONSOLE_COMMIT_ADDR, 0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bus::personality::MODERN_RETRO;
+
+    #[test]
+    fn rejects_program_without_load_address() {
+        let bus = Bus::with_personality(&MODERN_RETRO);
+        let config = StartupConfig {
+            source: ProgramSource::Inline {
+                name: Some("too-small".to_string()),
+                data: vec![0x42],
+            },
+            max_cycles: 1_000,
+            start: None,
+            rtst: None,
+            progress_timeout_ms: None,
+        };
+
+        let (_, report) = match run_program_with_config(bus, &config) {
+            Ok(_) => panic!("program missing load address should fail"),
+            Err(err) => err,
+        };
+        assert!(report.message.contains("too small"));
+        assert!(report.outcome.is_none());
+    }
+
+    #[test]
+    fn runs_minimal_inline_program() {
+        let bus = Bus::with_personality(&MODERN_RETRO);
+        let config = StartupConfig {
+            source: ProgramSource::Inline {
+                name: Some("tiny".to_string()),
+                data: vec![0x00, 0x20, 0x00],
+            },
+            max_cycles: 5_000,
+            start: None,
+            rtst: None,
+            progress_timeout_ms: None,
+        };
+
+        let (_bus, report) = match run_program_with_config(bus, &config) {
+            Ok(ok) => ok,
+            Err(_) => panic!("minimal inline program should run"),
+        };
+        let outcome = report.outcome.expect("run should return an outcome");
+
+        assert_eq!(outcome.limit, RunLimit::Brk);
+        assert!(report.message.contains("Loaded tiny at $2000"));
+    }
 }
