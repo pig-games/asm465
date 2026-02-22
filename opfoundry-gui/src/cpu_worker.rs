@@ -167,41 +167,9 @@ pub enum CpuRunStatus {
     allow(dead_code)
 )]
 pub struct CpuRunReply {
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub summary: String,
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub status: CpuRunStatus,
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub outputs: CpuWorkerOutputs,
-    #[cfg_attr(
-        not(any(
-            feature = "native-service",
-            feature = "native-file-dialog",
-            target_arch = "wasm32"
-        )),
-        allow(dead_code)
-    )]
     pub outcome: Option<RunOutcome>,
 }
 
@@ -276,6 +244,14 @@ fn run_program_once(
     }
 }
 
+#[cfg_attr(
+    not(any(
+        feature = "native-service",
+        feature = "native-file-dialog",
+        target_arch = "wasm32"
+    )),
+    allow(dead_code)
+)]
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
@@ -529,14 +505,6 @@ mod native {
         }
 
         /// Request the worker to load a program and return once it finishes.
-        #[cfg_attr(
-            not(any(
-                feature = "native-service",
-                feature = "native-file-dialog",
-                target_arch = "wasm32"
-            )),
-            allow(dead_code)
-        )]
         pub fn run_program(&mut self, config: StartupConfig) -> Result<CpuRunReply, String> {
             let (tx, rx) = mpsc::channel();
             self.command_tx
@@ -549,14 +517,6 @@ mod native {
         }
 
         /// Snapshot a region of the current RAM contents.
-        #[cfg_attr(
-            not(any(
-                feature = "native-service",
-                feature = "native-file-dialog",
-                target_arch = "wasm32"
-            )),
-            allow(dead_code)
-        )]
         pub fn read_memory(&mut self, address: u32, length: usize) -> Result<Vec<u8>, String> {
             let (tx, rx) = mpsc::channel();
             self.command_tx
@@ -614,6 +574,14 @@ mod native {
     }
 }
 
+#[cfg_attr(
+    not(any(
+        feature = "native-service",
+        feature = "native-file-dialog",
+        target_arch = "wasm32"
+    )),
+    allow(dead_code)
+)]
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::*;
