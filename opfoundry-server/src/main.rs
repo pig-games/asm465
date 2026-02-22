@@ -61,15 +61,19 @@ struct PendingResponses {
 }
 
 impl ServerState {
+    fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        mutex.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
     /// Register a freshly connected client.
     fn add_client(&self, tx: mpsc::UnboundedSender<String>) {
-        self.clients.lock().unwrap().push(tx);
+        Self::lock_or_recover(&self.clients).push(tx);
     }
 
     /// Broadcast a message to every client, pruning dropped connections and
     /// returning the number of recipients that successfully consumed the text.
     fn broadcast(&self, msg: &str) -> usize {
-        let mut clients = self.clients.lock().unwrap();
+        let mut clients = Self::lock_or_recover(&self.clients);
         let mut alive = Vec::with_capacity(clients.len());
         for tx in clients.drain(..) {
             if tx.send(msg.to_owned()).is_ok() {
@@ -87,15 +91,15 @@ impl ServerState {
     }
 
     fn register_pending(&self, id: Option<String>) -> oneshot::Receiver<ServiceResponseMessage> {
-        self.pending.lock().unwrap().register(id)
+        Self::lock_or_recover(&self.pending).register(id)
     }
 
     fn fulfill_pending(&self, response: ServiceResponseMessage) -> bool {
-        self.pending.lock().unwrap().fulfill(response)
+        Self::lock_or_recover(&self.pending).fulfill(response)
     }
 
     fn cancel_pending(&self, id: Option<&str>) -> bool {
-        self.pending.lock().unwrap().cancel(id)
+        Self::lock_or_recover(&self.pending).cancel(id)
     }
 }
 

@@ -92,6 +92,7 @@ fn run_until_rtst_done(
     progress_timeout: Option<Duration>,
 ) -> Result<RunOutcome, String> {
     let poll_interval = 1024u64;
+    let mut next_poll = poll_interval;
     let mut header_buf = [0u8; HEADER_LEN];
     let mut cycles: u64 = 0;
     let mut initialized = false;
@@ -112,9 +113,10 @@ fn run_until_rtst_done(
                 last_state
             ));
         }
-        if cycles % poll_interval != 0 {
+        if cycles < next_poll {
             continue;
         }
+        next_poll = next_poll.saturating_add(poll_interval);
         for (i, slot) in header_buf.iter_mut().enumerate().take(HEADER_LEN) {
             *slot = cpu.bus_mut().read(base.wrapping_add(i as u16));
         }

@@ -54,6 +54,7 @@ mod service;
 #[cfg(feature = "native-service")]
 mod service_listener;
 mod video_backend;
+mod web_url;
 
 pub(crate) use program_runner::{run_program_with_config, write_console_line};
 pub use service::*;
@@ -427,13 +428,13 @@ pub fn run_native() -> Result<(), String> {
         video_overlay: args.enable_video_overlay,
         #[cfg(feature = "native-service")]
         service,
-    });
+    })?;
 
     Ok(())
 }
 
 /// Launches the Bevy runtime using the supplied configuration.
-pub fn run_app(config: AppConfig) {
+pub fn run_app(config: AppConfig) -> Result<(), String> {
     let AppConfig {
         startup,
         default_max_cycles,
@@ -447,7 +448,7 @@ pub fn run_app(config: AppConfig) {
 
     let legacy_persona = personality.legacy_personality();
     #[allow(unused_mut)]
-    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality.clone());
+    let mut emulator = EmulatorState::new(startup, default_max_cycles, personality.clone())?;
     let interrupt_bindings = legacy_persona
         .and_then(|legacy| InterruptBindings::from_personality(emulator.interrupts(), legacy));
 
@@ -586,6 +587,8 @@ pub fn run_app(config: AppConfig) {
     )
     .add_systems(PostUpdate, emit_frame_end_interrupt)
     .run();
+
+    Ok(())
 }
 
 /// Viewer state that proxies CPU execution to the background worker.
@@ -620,7 +623,7 @@ impl EmulatorState {
         startup: Option<StartupConfig>,
         default_max_cycles: u64,
         personality: PersonalitySelection,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (
             cpu,
             CpuWorkerInit {
@@ -628,13 +631,12 @@ impl EmulatorState {
                 status,
                 outcome,
             },
-        ) = CpuWorker::spawn(personality, startup)
-            .unwrap_or_else(|err| panic!("Failed to start CPU worker: {err}"));
+        ) = CpuWorker::spawn(personality, startup)?;
 
         let interrupts = outputs.interrupts.clone();
         let raster_irq = outputs.raster.clone();
 
-        Self {
+        Ok(Self {
             cpu,
             outputs,
             default_max_cycles,
@@ -642,7 +644,7 @@ impl EmulatorState {
             last_outcome: outcome,
             interrupts,
             raster_irq,
-        }
+        })
     }
 
     /// Append a host message to the shared console surface (best-effort).
@@ -655,9 +657,11 @@ impl EmulatorState {
         allow(dead_code)
     )]
     fn log_console(&self, line: &str) {
-        if let Ok(mut console) = self.outputs.console.lock() {
-            console.write_str(line, 1, 0);
-            console.newline();
+        if let Some(handle) = self.outputs.console.as_ref() {
+            if let Ok(mut console) = handle.lock() {
+                console.write_str(line, 1, 0);
+                console.newline();
+            }
         }
     }
 
@@ -743,25 +747,22 @@ impl EmulatorState {
     fn snapshot(&self) -> Option<ConsoleSnapshot> {
         self.outputs
             .console
-            .lock()
-            .map(|output| output.snapshot())
-            .ok()
+            .as_ref()
+            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
     }
 
     fn display_snapshot(&self) -> Option<DisplaySnapshot> {
         self.outputs
             .display
-            .lock()
-            .map(|output| output.snapshot())
-            .ok()
+            .as_ref()
+            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
     }
 
     fn sprite_snapshot(&self) -> Option<SpriteSnapshot> {
         self.outputs
             .sprite
-            .lock()
-            .map(|output| output.snapshot())
-            .ok()
+            .as_ref()
+            .and_then(|handle| handle.lock().ok().map(|output| output.snapshot()))
     }
 
     fn video_state(&self) -> Arc<Mutex<VideoState>> {
@@ -2235,8 +2236,9 @@ fn update_video_overlay_line(
     }
 
     let virtual_height = virtual_resolution.height().max(1.0);
-    let raster = snapshot.raster.min(255) as f32;
-    let y_virtual = (raster / 255.0) * virtual_height;
+    let raster = snapshot.raster as f32;
+    let max_raster = virtual_height.max(1.0);
+    let y_virtual = (raster / max_raster).clamp(0.0, 1.0) * virtual_height;
     let scale_y = viewport.scale_y();
     let content_top = viewport.window_height() * 0.5 - viewport.border_y();
     let host_y = content_top - y_virtual * scale_y;

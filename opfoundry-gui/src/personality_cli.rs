@@ -14,7 +14,8 @@ const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
 ];
 
 fn builtin_personality_entry(id: &str) -> Option<(PathBuf, Option<&'static Personality>)> {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../cross465/personality_defs");
+    let base =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opFoundryCore/personality_defs");
     match id {
         "modern-retro-range" => Some((
             base.join("modern-retro-range.toml"),

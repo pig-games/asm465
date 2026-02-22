@@ -117,9 +117,9 @@ fn attach_default_adapters(bus: &mut Bus) -> AdapterHandles {
 /// Handles to the shared MMIO output buffers that the viewer reads from.
 #[derive(Clone)]
 pub struct CpuWorkerOutputs {
-    pub console: Arc<Mutex<ConsoleOutput>>,
-    pub display: Arc<Mutex<DisplayOutput>>,
-    pub sprite: Arc<Mutex<SpriteOutput>>,
+    pub console: Option<Arc<Mutex<ConsoleOutput>>>,
+    pub display: Option<Arc<Mutex<DisplayOutput>>>,
+    pub sprite: Option<Arc<Mutex<SpriteOutput>>>,
     pub input: Option<Arc<Mutex<InputOutput>>>,
     pub input_backend: Option<Arc<dyn InputBackend>>,
     pub interrupts: Arc<InterruptController>,
@@ -131,15 +131,9 @@ pub struct CpuWorkerOutputs {
 impl CpuWorkerOutputs {
     /// Snapshot the console/display/sprite handles from the supplied bus.
     fn new(bus: &Bus, adapters: &AdapterHandles) -> Self {
-        let console = bus
-            .console_output_handle()
-            .expect("console MMIO output handle");
-        let display = bus
-            .display_output_handle()
-            .expect("display MMIO output handle");
-        let sprite = bus
-            .sprite_output_handle()
-            .expect("sprite MMIO output handle");
+        let console = bus.console_output_handle();
+        let display = bus.display_output_handle();
+        let sprite = bus.sprite_output_handle();
         let input = bus.input_output_handle();
         let interrupts = bus.interrupt_controller();
         Self {

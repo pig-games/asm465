@@ -26,6 +26,7 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::UrlSearchParams;
 use web_time::Instant;
 
+use crate::web_url::derive_ws_url;
 use crate::{
     run_app, AppConfig, DisplaySettings, PersonalitySelection, ServiceCommand,
     ServiceRequestPayload, ServiceResponseMessage, VirtualResolution,
@@ -293,7 +294,8 @@ pub fn start_web_app() -> Result<(), JsValue> {
         video_overlay: false,
         #[cfg(feature = "native-service")]
         service: None,
-    });
+    })
+    .map_err(|err| JsValue::from_str(&err))?;
 
     Ok(())
 }
@@ -499,26 +501,6 @@ fn parse_ws_override(search: &str) -> Option<String> {
     }
 }
 
-fn derive_ws_url(protocol: &str, host: &str) -> Option<String> {
-    let scheme = match protocol {
-        "https:" | "wss:" => "wss",
-        "http:" | "ws:" => "ws",
-        other => {
-            if let Some(stripped) = other.strip_suffix(':') {
-                return derive_ws_url(stripped, host);
-            }
-            return None;
-        }
-    };
-
-    let host = host.trim();
-    if host.is_empty() {
-        return None;
-    }
-
-    Some(format!("{scheme}://{host}"))
-}
-
 fn combine_host_port(host: &str, port: Option<&str>) -> Option<String> {
     let host = host.trim();
     if host.is_empty() {
@@ -534,39 +516,5 @@ fn combine_host_port(host: &str, port: Option<&str>) -> Option<String> {
     match port {
         Some(port) if !port.is_empty() => Some(format!("{formatted_host}:{port}")),
         _ => Some(formatted_host),
-    }
-}
-
-#[cfg(all(test, target_arch = "wasm32"))]
-mod tests {
-    use super::derive_ws_url;
-
-    #[test]
-    fn maps_http_locations_to_ws() {
-        assert_eq!(
-            derive_ws_url("http:", "example.com"),
-            Some("ws://example.com".to_string())
-        );
-    }
-
-    #[test]
-    fn maps_https_locations_to_wss() {
-        assert_eq!(
-            derive_ws_url("https:", "example.com:443"),
-            Some("wss://example.com:443".to_string())
-        );
-    }
-
-    #[test]
-    fn returns_none_for_unknown_protocol() {
-        assert_eq!(derive_ws_url("file:", ""), None);
-    }
-
-    #[test]
-    fn trims_trailing_colon_variants() {
-        assert_eq!(
-            derive_ws_url("https", "example.com"),
-            Some("wss://example.com".to_string())
-        );
     }
 }
