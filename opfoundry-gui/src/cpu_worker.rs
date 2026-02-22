@@ -701,6 +701,44 @@ mod wasm {
 pub use native::CpuWorker;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::CpuWorker;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ProgramSource;
+    use bus::personality::MODERN_RETRO;
+
+    #[test]
+    fn initialize_bus_state_writes_welcome_message_without_startup_program() {
+        let personality = PersonalitySelection::Legacy(&MODERN_RETRO);
+        let (_bus, _adapters, status, outcome) =
+            initialize_bus_state(&personality, None).expect("bus initialization should succeed");
+
+        assert_eq!(status.as_deref(), Some(WELCOME_MESSAGE));
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn run_program_once_marks_invalid_payload_as_failure() {
+        let personality = PersonalitySelection::Legacy(&MODERN_RETRO);
+        let config = StartupConfig {
+            source: ProgramSource::Inline {
+                name: Some("invalid".to_string()),
+                data: vec![0x01],
+            },
+            max_cycles: 1_000,
+            start: None,
+            rtst: None,
+            progress_timeout_ms: None,
+        };
+
+        let (_bus, _adapters, report, status) =
+            run_program_once(&personality, &config).expect("run should classify failure");
+        assert_eq!(status, CpuRunStatus::Failure);
+        assert!(report.message.contains("too small"));
+        assert!(report.outcome.is_none());
+    }
+}
 #[derive(Clone)]
 pub enum PersonalitySelection {
     Legacy(&'static Personality),
