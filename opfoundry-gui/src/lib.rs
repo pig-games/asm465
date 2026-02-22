@@ -17,8 +17,6 @@ use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use bevy_egui::EguiPlugin;
 use bus::input_mmio::InputSnapshot;
-#[cfg(test)]
-use bus::interrupts::InterruptController;
 
 mod console_ui;
 mod cpu_worker;
@@ -529,60 +527,4 @@ pub fn run_app(config: AppConfig) -> Result<(), String> {
     .run();
 
     Ok(())
-}
-
-#[cfg(test)]
-#[allow(clippy::items_after_test_module)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn modern_retro_interrupts_fire_from_host_events() {
-        use bus::personality::MODERN_RETRO;
-
-        let controller = std::sync::Arc::new(InterruptController::new());
-        controller.set_irq_enable((1 << 1) | (1 << 2) | (1 << 3) | (1 << 4));
-
-        let bindings = InterruptBindings::from_personality(controller.clone(), &MODERN_RETRO)
-            .expect("modern-retro bindings");
-
-        // frame_start -> NMI edge
-        bindings.raise_frame_start();
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.nmi_pending & (1 << 0), 1 << 0);
-        assert!(snapshot.nmi_line);
-        assert!(controller.take_nmi_edge());
-        controller.clear_nmi(1 << 0);
-
-        // frame_end -> IRQ level
-        bindings.raise_frame_end();
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending & (1 << 1), 1 << 1);
-        assert!(snapshot.irq_line);
-        controller.clear_irq(1 << 1);
-
-        // timer0
-        bindings.raise_timer0();
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending & (1 << 2), 1 << 2);
-        controller.clear_irq(1 << 2);
-
-        // keyboard
-        bindings.raise_keyboard();
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending & (1 << 3), 1 << 3);
-        controller.clear_irq(1 << 3);
-
-        // gamepad
-        bindings.raise_gamepad();
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending & (1 << 4), 1 << 4);
-        controller.clear_irq(1 << 4);
-
-        let snapshot = controller.snapshot();
-        assert_eq!(snapshot.irq_pending, 0);
-        assert_eq!(snapshot.nmi_pending, 0);
-        assert!(!snapshot.irq_line);
-        assert!(!snapshot.nmi_line);
-    }
 }

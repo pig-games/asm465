@@ -189,3 +189,52 @@ pub(super) fn gamepad_interrupt_system(
         bindings.raise_gamepad();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bus::personality::MODERN_RETRO;
+
+    #[test]
+    fn modern_retro_interrupts_fire_from_host_events() {
+        let controller = Arc::new(InterruptController::new());
+        controller.set_irq_enable((1 << 1) | (1 << 2) | (1 << 3) | (1 << 4));
+
+        let bindings = InterruptBindings::from_personality(controller.clone(), &MODERN_RETRO)
+            .expect("modern-retro bindings");
+
+        bindings.raise_frame_start();
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.nmi_pending & (1 << 0), 1 << 0);
+        assert!(snapshot.nmi_line);
+        assert!(controller.take_nmi_edge());
+        controller.clear_nmi(1 << 0);
+
+        bindings.raise_frame_end();
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending & (1 << 1), 1 << 1);
+        assert!(snapshot.irq_line);
+        controller.clear_irq(1 << 1);
+
+        bindings.raise_timer0();
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending & (1 << 2), 1 << 2);
+        controller.clear_irq(1 << 2);
+
+        bindings.raise_keyboard();
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending & (1 << 3), 1 << 3);
+        controller.clear_irq(1 << 3);
+
+        bindings.raise_gamepad();
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending & (1 << 4), 1 << 4);
+        controller.clear_irq(1 << 4);
+
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.irq_pending, 0);
+        assert_eq!(snapshot.nmi_pending, 0);
+        assert!(!snapshot.irq_line);
+        assert!(!snapshot.nmi_line);
+    }
+}
