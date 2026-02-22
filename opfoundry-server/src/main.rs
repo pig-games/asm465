@@ -6,6 +6,8 @@
 //! originator. This mirrors the behaviour implemented in the original opFoundry
 //! desktop UI which exposed a JSON service API.
 
+#![allow(clippy::items_after_test_module)]
+
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -320,6 +322,65 @@ fn path_within_allowed_dir(path: &str, allowed_dir: &Path) -> anyhow::Result<boo
         .canonicalize()
         .with_context(|| format!("unable to resolve allowed_dir `{}`", allowed_dir.display()))?;
     Ok(resolved.starts_with(allowed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_within_allowed_dir;
+    use std::fs;
+
+    #[test]
+    fn allows_paths_under_allowed_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "opfoundry_server_test_allow_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ));
+        let nested = root.join("programs");
+        fs::create_dir_all(&nested).expect("should create test directory");
+        let file = nested.join("demo.prg");
+        fs::write(&file, [0u8, 1, 2]).expect("should create file");
+
+        let allowed = path_within_allowed_dir(file.to_str().expect("utf8 path"), &root)
+            .expect("path check should succeed");
+        assert!(allowed);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_paths_outside_allowed_dir() {
+        let root = std::env::temp_dir().join(format!(
+            "opfoundry_server_test_reject_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ));
+        let outside_root = std::env::temp_dir().join(format!(
+            "opfoundry_server_test_outside_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("should create allowed root");
+        fs::create_dir_all(&outside_root).expect("should create outside root");
+        let file = outside_root.join("demo.prg");
+        fs::write(&file, [0u8, 1, 2]).expect("should create outside file");
+
+        let allowed = path_within_allowed_dir(file.to_str().expect("utf8 path"), &root)
+            .expect("path check should succeed");
+        assert!(!allowed);
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside_root);
+    }
 }
 
 /// Accept websocket clients and register them with the shared [`ServerState`].

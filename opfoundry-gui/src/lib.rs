@@ -8,6 +8,7 @@
 
 #![allow(clippy::items_after_test_module)]
 
+use std::collections::HashSet;
 use std::convert::TryFrom;
 #[cfg(feature = "native-service")]
 use std::path::PathBuf;
@@ -1124,15 +1125,14 @@ fn emit_frame_end_interrupt(bindings: Option<Res<InterruptBindings>>) {
 
 #[derive(Resource, Default)]
 struct KeyboardTracker {
-    current: Vec<String>,
-    last: Vec<String>,
-    previous: Vec<String>,
+    current: HashSet<KeyCode>,
+    last: HashSet<KeyCode>,
+    previous: Vec<KeyCode>,
 }
 
 impl KeyboardTracker {
     fn update_from_input(&mut self, input: &Input<KeyCode>) {
-        let mut pressed: Vec<String> = input.get_pressed().map(|key| format!("{key:?}")).collect();
-        pressed.sort();
+        let pressed: HashSet<KeyCode> = input.get_pressed().copied().collect();
 
         if pressed.is_empty() {
             self.last.clear();
@@ -1145,11 +1145,7 @@ impl KeyboardTracker {
         }
 
         // find newly pressed keys
-        let new_keys: Vec<_> = pressed
-            .iter()
-            .filter(|k| !self.current.contains(k))
-            .cloned()
-            .collect();
+        let new_keys: Vec<_> = pressed.difference(&self.current).copied().collect();
 
         self.last = self.current.clone();
         self.current = pressed;
@@ -1163,12 +1159,18 @@ impl KeyboardTracker {
         }
     }
 
-    fn current(&self) -> &[String] {
-        &self.current
+    fn current(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.current.iter().map(|key| format!("{key:?}")).collect();
+        keys.sort();
+        keys
     }
 
     fn previous(&self) -> String {
-        self.previous.concat()
+        self.previous
+            .iter()
+            .map(|key| format!("{key:?}"))
+            .collect::<Vec<_>>()
+            .join("")
     }
 }
 
@@ -1965,12 +1967,7 @@ fn ui_system(
                         interrupt_row(ui, "timer0", bindings.timer0, &snapshot, false);
                         interrupt_row(ui, "keyboard_event", bindings.keyboard, &snapshot, false);
                         interrupt_row(ui, "gamepad_event", bindings.gamepad, &snapshot, false);
-                        if let Some(video_state) = emulator
-                            .video_state()
-                            .lock()
-                            .ok()
-                            .map(|guard| guard.clone())
-                        {
+                        if let Ok(video_state) = emulator.video_state().lock() {
                             if let Some(raster) = video_state.register_value(SystemReg::RasterLo) {
                                 ui.label(format!("Raster (lo): 0x{raster:02X}"));
                             }
