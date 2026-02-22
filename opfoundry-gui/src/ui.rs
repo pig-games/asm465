@@ -250,14 +250,13 @@ fn render_input_tab(
     ui.separator();
 
     if controller_state.has_backend() {
-        if let Some((snapshot, previous_snapshot)) = controller_state.snapshot_pair() {
+        if let Some((snapshot, _)) = controller_state.snapshot_pair() {
             if snapshot.pads.is_empty() {
                 ui.label("No controller data available.");
             } else {
                 let labels: Vec<String> = (0..snapshot.pads.len())
                     .map(|pad| controller_state.pad_gamepad_label(pad))
                     .collect();
-                let _ = previous_snapshot;
                 ui.columns(snapshot.pads.len(), |columns| {
                     for (offset, column) in columns.iter_mut().enumerate() {
                         let pad_index = offset;
