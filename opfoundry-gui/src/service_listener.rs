@@ -121,3 +121,71 @@ fn write_service_response<W: Write>(
     writer.write_all(b"\n")?;
     writer.flush()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ServiceStatus;
+    use std::io::Read;
+    use std::net::SocketAddr;
+
+    fn start_one_shot_server(tx: Sender<ServiceEnvelope>) -> (SocketAddr, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let addr = listener.local_addr().expect("listener address");
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept connection");
+            handle_service_connection(stream, tx).expect("handle connection");
+        });
+        (addr, handle)
+    }
+
+    fn read_single_line(mut stream: TcpStream) -> String {
+        let mut out = String::new();
+        let mut buf = [0u8; 4096];
+        let read = stream.read(&mut buf).expect("read response");
+        out.push_str(&String::from_utf8_lossy(&buf[..read]));
+        out
+    }
+
+    #[test]
+    fn responds_with_error_on_invalid_json() {
+        let (tx, _rx) = crossbeam_channel::unbounded::<ServiceEnvelope>();
+        let (addr, handle) = start_one_shot_server(tx);
+
+        let mut client = TcpStream::connect(addr).expect("connect client");
+        client
+            .write_all(b"{not json}\n")
+            .expect("write invalid json");
+        client.flush().expect("flush invalid json");
+        let raw = read_single_line(client);
+
+        let response: ServiceResponseMessage =
+            serde_json::from_str(raw.trim()).expect("parse response json");
+        assert!(matches!(response.status, ServiceStatus::Error));
+        assert!(response.message.contains("invalid json"));
+
+        handle.join().expect("server thread join");
+    }
+
+    #[test]
+    fn responds_service_unavailable_when_receiver_is_dropped() {
+        let (tx, rx) = crossbeam_channel::unbounded::<ServiceEnvelope>();
+        drop(rx);
+        let (addr, handle) = start_one_shot_server(tx);
+
+        let mut client = TcpStream::connect(addr).expect("connect client");
+        client
+            .write_all(br#"{"cmd":"read_mem","address":0,"length":1}"#)
+            .expect("write payload");
+        client.write_all(b"\n").expect("write newline");
+        client.flush().expect("flush payload");
+        let raw = read_single_line(client);
+
+        let response: ServiceResponseMessage =
+            serde_json::from_str(raw.trim()).expect("parse response json");
+        assert!(matches!(response.status, ServiceStatus::Error));
+        assert!(response.message.contains("service unavailable"));
+
+        handle.join().expect("server thread join");
+    }
+}
