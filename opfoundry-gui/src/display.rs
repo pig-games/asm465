@@ -289,6 +289,41 @@ mod tests {
     }
 
     #[test]
+    fn viewport_geometry_with_tiny_window_stays_finite() {
+        let settings = DisplaySettings {
+            enforce_aspect_ratio: true,
+            min_border_x: 8.0,
+            min_border_y: 8.0,
+            ..DisplaySettings::default()
+        };
+        let virtual_res = SpriteVirtualResolution::new(VirtualResolution::new(320, 200));
+        let (scale_x, scale_y, border_x, border_y) =
+            compute_viewport_geometry(0.0, 0.0, &virtual_res, &settings);
+
+        assert!(scale_x.is_finite() && scale_x > 0.0);
+        assert!(scale_y.is_finite() && scale_y > 0.0);
+        assert!(border_x.is_finite());
+        assert!(border_y.is_finite());
+    }
+
+    #[test]
+    fn viewport_geometry_extreme_wide_window_preserves_uniform_scale() {
+        let settings = DisplaySettings {
+            enforce_aspect_ratio: true,
+            min_border_x: 10.0,
+            min_border_y: 10.0,
+            ..DisplaySettings::default()
+        };
+        let virtual_res = SpriteVirtualResolution::new(VirtualResolution::new(320, 200));
+        let (scale_x, scale_y, border_x, border_y) =
+            compute_viewport_geometry(4000.0, 300.0, &virtual_res, &settings);
+
+        approx_equal(scale_x, scale_y, 1e-6);
+        assert!(border_x >= settings.min_border_x - 1e-6);
+        assert!(border_y >= settings.min_border_y - 1e-6);
+    }
+
+    #[test]
     fn mmio_palette_translation_uses_c64_colours() {
         let defaults = DisplaySettings::default();
         let mut palette = DisplayPalette::from_settings(&defaults);

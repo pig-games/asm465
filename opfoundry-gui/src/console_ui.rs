@@ -38,25 +38,21 @@ pub(crate) fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::Layo
     let mut job = egui::text::LayoutJob::default();
     let mut buffer = [0u8; 4];
     let base_font = egui::FontId::monospace(CONSOLE_FONT_SIZE);
-    let newline_format = egui::text::TextFormat {
+    let formats: [egui::text::TextFormat; 16] = std::array::from_fn(|idx| egui::text::TextFormat {
         font_id: base_font.clone(),
-        color: palette_color(7),
+        color: palette_color(idx as u8),
         ..Default::default()
-    };
+    });
 
     for y in 0..snapshot.height {
         for x in 0..snapshot.width {
             let cell = snapshot.cell(x, y);
             let glyph = cell.ch.encode_utf8(&mut buffer);
-            let format = egui::text::TextFormat {
-                font_id: base_font.clone(),
-                color: palette_color(cell.fg),
-                ..Default::default()
-            };
+            let format = formats[(cell.fg & 0x0F) as usize].clone();
             job.append(glyph, 0.0, format);
         }
         if y + 1 < snapshot.height {
-            job.append("\n", 0.0, newline_format.clone());
+            job.append("\n", 0.0, formats[7].clone());
         }
     }
 
