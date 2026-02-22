@@ -1,7 +1,7 @@
-//! Service API types used by asm465's JSON protocol.
+//! Service API types used by opFoundry's JSON protocol.
 //!
 //! These types model the external service API shared between the native TCP
-//! listener, the WebSocket bridge, and the asm465-server crate.
+//! listener, the WebSocket bridge, and the opfoundry-server crate.
 
 use std::path::PathBuf;
 

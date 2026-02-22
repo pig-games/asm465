@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use bus::{unicode_to_screen, Bus, CONSOLE_CHAR_ADDR, CONSOLE_COMMIT_ADDR};
 use core6502::{Cpu, RunLimit, RunOutcome};
-use instant::Instant;
 use runtime_sdk::rtst::{Header, State, HEADER_LEN};
+use web_time::Instant;
 
 use crate::{ProgramRunReport, RtstMonitorConfig, StartupConfig};
 

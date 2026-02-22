@@ -17,7 +17,6 @@ use bevy::prelude::App;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gloo_net::websocket::futures::WebSocket;
 use gloo_net::websocket::Message;
-use instant::Instant;
 use js_sys::{Array, Function, Promise, Reflect, Uint8Array};
 use rfd::AsyncFileDialog;
 use serde::Deserialize;
@@ -25,6 +24,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::UrlSearchParams;
+use web_time::Instant;
 
 use crate::{
     run_app, AppConfig, DisplaySettings, PersonalitySelection, ServiceCommand,

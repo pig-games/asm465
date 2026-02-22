@@ -1,4 +1,4 @@
-//! Bevy/egui front-end for the asm465 cross-development tooling.
+//! Bevy/egui front-end for the opFoundry cross-development tooling.
 //!
 //! This crate hosts the “desktop” viewer: it embeds the 6502 core, connects to
 //! the cross465 [bus] crate, renders the screen/console, and exposes file &
@@ -34,7 +34,7 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use bus::console_mmio::ConsoleSnapshot;
 use bus::display_mmio::DisplaySnapshot;
 use bus::input_mmio::{
-    button_bit, AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
+    AxisSample, ButtonSample, ControllerAxis, ControllerButton, InputSnapshot,
     ModernControllerPadSnapshot, CONTROLLER_PAD_COUNT,
 };
 use bus::interrupts::{InterruptController, InterruptSnapshot};
@@ -78,7 +78,7 @@ use self::service_listener::{start_service_listener, ServiceListener};
 #[cfg(feature = "native-service")]
 use clap::{ArgAction, Parser};
 
-pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the asm465 console viewer!";
+pub(crate) const WELCOME_MESSAGE: &str = "Welcome to the opFoundry console viewer!";
 const SPRITE_TEXTURE_WIDTH: f32 = 96.0;
 const SPRITE_TEXTURE_HEIGHT: f32 = 128.0;
 const SPRITE_VIRTUAL_WIDTH: f32 = 40.0;
@@ -100,7 +100,7 @@ pub use web::start_web_app;
 
 #[cfg(feature = "native-service")]
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Asm465 console viewer", long_about = None)]
+#[command(author, version, about = "opFoundry console viewer", long_about = None)]
 pub struct Args {
     /// Optional 6502 PRG to execute before the window opens.
     #[arg(long)]
@@ -535,7 +535,7 @@ pub fn run_app(config: AppConfig) {
 
     #[allow(unused_mut)]
     let mut window = Window {
-        title: "asm465 Console".to_string(),
+        title: "opFoundry Console".to_string(),
         ..Default::default()
     };
 
@@ -591,13 +591,21 @@ pub fn run_app(config: AppConfig) {
 /// Viewer state that proxies CPU execution to the background worker.
 struct EmulatorState {
     #[cfg_attr(
-        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        not(any(
+            feature = "native-service",
+            feature = "native-file-dialog",
+            target_arch = "wasm32"
+        )),
         allow(dead_code)
     )]
     cpu: CpuWorker,
     outputs: CpuWorkerOutputs,
     #[cfg_attr(
-        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        not(any(
+            feature = "native-service",
+            feature = "native-file-dialog",
+            target_arch = "wasm32"
+        )),
         allow(dead_code)
     )]
     default_max_cycles: u64,
@@ -639,7 +647,11 @@ impl EmulatorState {
 
     /// Append a host message to the shared console surface (best-effort).
     #[cfg_attr(
-        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        not(any(
+            feature = "native-service",
+            feature = "native-file-dialog",
+            target_arch = "wasm32"
+        )),
         allow(dead_code)
     )]
     fn log_console(&self, line: &str) {
@@ -668,7 +680,11 @@ impl EmulatorState {
 
     /// Ask the worker to load and execute a program, returning the status text.
     #[cfg_attr(
-        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        not(any(
+            feature = "native-service",
+            feature = "native-file-dialog",
+            target_arch = "wasm32"
+        )),
         allow(dead_code)
     )]
     fn run_program(
@@ -757,7 +773,11 @@ impl EmulatorState {
     }
 
     #[cfg_attr(
-        not(any(feature = "native-service", feature = "native-file-dialog", target_arch = "wasm32")),
+        not(any(
+            feature = "native-service",
+            feature = "native-file-dialog",
+            target_arch = "wasm32"
+        )),
         allow(dead_code)
     )]
     fn handle_service_command(&mut self, command: ServiceCommand) -> ServiceResponseMessage {
@@ -903,25 +923,6 @@ impl InterruptBindings {
 }
 
 const CONTROLLER_PADS: usize = CONTROLLER_PAD_COUNT;
-#[allow(dead_code)]
-const CONTROLLER_BUTTON_ORDER: [ControllerButton; 16] = [
-    ControllerButton::DPadUp,
-    ControllerButton::DPadDown,
-    ControllerButton::DPadLeft,
-    ControllerButton::DPadRight,
-    ControllerButton::South,
-    ControllerButton::East,
-    ControllerButton::West,
-    ControllerButton::North,
-    ControllerButton::Start,
-    ControllerButton::Select,
-    ControllerButton::LeftShoulder,
-    ControllerButton::RightShoulder,
-    ControllerButton::LeftTrigger,
-    ControllerButton::RightTrigger,
-    ControllerButton::LeftThumb,
-    ControllerButton::RightThumb,
-];
 
 #[derive(Clone, Copy, Default)]
 struct PadAssignment {
@@ -1373,21 +1374,6 @@ fn controller_button_label(button: ControllerButton) -> &'static str {
         ControllerButton::RightThumb => "Right Thumb",
         ControllerButton::LeftTrigger => "Left Trigger",
         ControllerButton::RightTrigger => "Right Trigger",
-    }
-}
-
-#[allow(dead_code)]
-fn button_list(mask: u16) -> String {
-    let mut labels: Vec<&'static str> = Vec::new();
-    for button in CONTROLLER_BUTTON_ORDER {
-        if mask & button_bit(button) != 0 {
-            labels.push(controller_button_label(button));
-        }
-    }
-    if labels.is_empty() {
-        "None".to_string()
-    } else {
-        labels.join(", ")
     }
 }
 
@@ -2025,21 +2011,18 @@ fn ui_system(
                                 let labels: Vec<String> = (0..snapshot.pads.len())
                                     .map(|pad| controller_state.pad_gamepad_label(pad))
                                     .collect();
-                                let prev_ref = previous_snapshot.as_ref();
-                                if snapshot.pads.len().min(2) > 0 {
-                                    ui.columns(snapshot.pads.len(), |columns| {
-                                        for (offset, column) in columns.iter_mut().enumerate() {
-                                            let pad_index = offset;
-                                            let label = labels
-                                                .get(pad_index)
-                                                .map(|s| s.as_str())
-                                                .unwrap_or("None");
-                                            prev_ref.and_then(|prev| prev.pads.get(pad_index));
-                                            let modern = snapshot.modern.pads.get(pad_index);
-                                            render_controller_pad(column, pad_index, label, modern);
-                                        }
-                                    });
-                                }
+                                let _ = previous_snapshot;
+                                ui.columns(snapshot.pads.len(), |columns| {
+                                    for (offset, column) in columns.iter_mut().enumerate() {
+                                        let pad_index = offset;
+                                        let label = labels
+                                            .get(pad_index)
+                                            .map(|s| s.as_str())
+                                            .unwrap_or("None");
+                                        let modern = snapshot.modern.pads.get(pad_index);
+                                        render_controller_pad(column, pad_index, label, modern);
+                                    }
+                                });
                             }
                         } else {
                             ui.label("Controller snapshot unavailable.");

@@ -14,10 +14,10 @@ use std::sync::{
 };
 
 use anyhow::Context;
-use opfoundry_gui::{ServiceRequestPayload, ServiceResponseMessage};
 use clap::Parser;
 use futures::{SinkExt, StreamExt as FuturesStreamExt};
 use log::{error, info, warn};
+use opfoundry_gui::{ServiceRequestPayload, ServiceResponseMessage};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
@@ -31,13 +31,13 @@ use tokio_util::codec::{Framed, LinesCodec};
 #[command(author, version, about = "opFoundry bridge server", long_about = None)]
 struct Opts {
     /// Host/interface for the TCP command listener (JSON over newline).
-    #[arg(long, default_value = "0.0.0.0")]
+    #[arg(long, default_value = "127.0.0.1")]
     tcp_host: String,
     /// TCP port for inbound commands from tooling (defaults to opFoundry native).
     #[arg(long, default_value_t = 7465)]
     tcp_port: u16,
     /// Host/interface for the WebSocket broadcast endpoint.
-    #[arg(long, default_value = "0.0.0.0")]
+    #[arg(long, default_value = "127.0.0.1")]
     ws_host: String,
     /// WebSocket port for browser clients.
     #[arg(long, default_value_t = 8800)]
