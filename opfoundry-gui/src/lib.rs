@@ -528,3 +528,36 @@ pub fn run_app(config: AppConfig) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_color_eq(a: Color, b: Color) {
+        let a = a.as_linear_rgba_f32();
+        let b = b.as_linear_rgba_f32();
+        for i in 0..4 {
+            assert!((a[i] - b[i]).abs() <= 1e-3, "component {i}: {a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn parse_color_accepts_hex_formats() {
+        let hash = parse_color("#FFCC00").expect("#RRGGBB should parse");
+        let prefixed = parse_color("0x00AAFF").expect("0xRRGGBB should parse");
+        let plain = parse_color("112233").expect("plain RRGGBB should parse");
+
+        assert_color_eq(hash, Color::rgb_u8(0xFF, 0xCC, 0x00));
+        assert_color_eq(prefixed, Color::rgb_u8(0x00, 0xAA, 0xFF));
+        assert_color_eq(plain, Color::rgb_u8(0x11, 0x22, 0x33));
+    }
+
+    #[test]
+    fn parse_color_rejects_invalid_values() {
+        let len_err = parse_color("FFFF").expect_err("short value should fail");
+        assert!(len_err.contains("6 hex digits"));
+
+        let radix_err = parse_color("GG0000").expect_err("non-hex value should fail");
+        assert!(!radix_err.is_empty());
+    }
+}

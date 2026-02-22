@@ -402,3 +402,93 @@ pub(super) fn render_keyboard_section(ui: &mut egui::Ui, tracker: &KeyboardTrack
         ui.monospace(last_text.as_str());
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct TestBackend {
+        gamepad_updates: Mutex<Vec<(usize, Option<u32>)>>,
+    }
+
+    impl TestBackend {
+        fn new() -> Self {
+            Self {
+                gamepad_updates: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn updates(&self) -> Vec<(usize, Option<u32>)> {
+            self.gamepad_updates
+                .lock()
+                .expect("test backend updates lock")
+                .clone()
+        }
+    }
+
+    impl InputBackend for TestBackend {
+        fn update_gamepad(&self, pad: usize, gamepad_id: Option<u32>) {
+            self.gamepad_updates
+                .lock()
+                .expect("test backend update lock")
+                .push((pad, gamepad_id));
+        }
+
+        fn update_button(&self, _pad: usize, _button: ControllerButton, _value: f32) {}
+
+        fn update_axis(&self, _pad: usize, _axis: ControllerAxis, _value: f32) {}
+
+        fn write_buttons_lo(&self, _pad: usize, _value: u8) {}
+
+        fn write_buttons_hi(&self, _pad: usize, _value: u8) {}
+
+        fn write_pot_x(&self, _pad: usize, _value: u8) {}
+
+        fn write_pot_y(&self, _pad: usize, _value: u8) {}
+
+        fn snapshot(&self) -> InputSnapshot {
+            InputSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn sync_backend_replays_pad_assignments() {
+        let mut state = ControllerState::new(None, None);
+        let backend = Arc::new(TestBackend::new());
+
+        state.sync_backend(Some(backend.clone()), None);
+
+        let updates = backend.updates();
+        assert_eq!(updates.len(), CONTROLLER_PADS);
+        assert!(updates.iter().all(|(_, id)| id.is_none()));
+    }
+
+    #[test]
+    fn sync_backend_clears_previous_snapshot_when_detached() {
+        let mut state = ControllerState::new(None, Some(InputSnapshot::default()));
+
+        state.sync_backend(None, None);
+
+        assert!(state.previous_snapshot.is_none());
+    }
+
+    #[test]
+    fn keyboard_tracker_tracks_and_deduplicates_pressed_keys() {
+        let mut tracker = KeyboardTracker::default();
+        let mut input = Input::<KeyCode>::default();
+
+        input.press(KeyCode::A);
+        tracker.update_from_input(&input);
+
+        assert_eq!(tracker.current(), vec!["A".to_string()]);
+        assert_eq!(tracker.previous(), "A");
+
+        tracker.update_from_input(&input);
+        assert_eq!(tracker.previous(), "A");
+
+        input.release(KeyCode::A);
+        tracker.update_from_input(&input);
+        assert!(tracker.current().is_empty());
+    }
+}
