@@ -141,6 +141,12 @@ Before submitting changes:
 - Never update fixtures/references only because a new failure appeared; that is a regression signal and must be fixed in code.
 - Never hide regressions by redefining unexpected errors as expected outputs.
 
+### Release notes policy
+- Create a new release notes file only when creating a new release tag.
+- Keep one release-notes file per tagged release version.
+- Never modify release notes for already-tagged versions.
+- If a correction is needed after a release, record it in the next release notes file.
+
 Use VS Code tasks for convenience:
 - `OpFoundry: Quality Gate` — Runs all validation across GUI, Server, WASM
 
