@@ -172,6 +172,8 @@ fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
         GamepadButtonType::North => Some(ControllerButton::North),
         GamepadButtonType::Start => Some(ControllerButton::Start),
         GamepadButtonType::Select => Some(ControllerButton::Select),
+        // Map guide/home to Select for retro-controller parity where only
+        // Start/Select equivalents are exposed by the target personality.
         GamepadButtonType::Mode => Some(ControllerButton::Select),
         GamepadButtonType::LeftThumb => Some(ControllerButton::LeftThumb),
         GamepadButtonType::RightThumb => Some(ControllerButton::RightThumb),
@@ -189,6 +191,7 @@ fn map_button(button: GamepadButtonType) -> Option<ControllerButton> {
 
 fn map_axis(axis: GamepadAxisType) -> Option<ControllerAxis> {
     match axis {
+        // Current MMIO contract consumes only primary (left-stick) movement.
         GamepadAxisType::LeftStickX => Some(ControllerAxis::LeftStickX),
         GamepadAxisType::LeftStickY => Some(ControllerAxis::LeftStickY),
         _ => None,

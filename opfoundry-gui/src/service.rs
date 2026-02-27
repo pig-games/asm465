@@ -74,6 +74,8 @@ pub enum ServiceCommand {
 }
 
 pub fn into_service_command(payload: ServiceRequestPayload) -> Result<ServiceCommand, String> {
+    payload.validate()?;
+
     match payload {
         ServiceRequestPayload::RunPrg {
             path,
@@ -83,9 +85,6 @@ pub fn into_service_command(payload: ServiceRequestPayload) -> Result<ServiceCom
             rtst_span,
             progress_timeout_ms,
         } => {
-            if path.is_empty() {
-                return Err("run_prg requires a non-empty path".into());
-            }
             let rtst = parse_rtst_config(rtst_base, rtst_span)?;
             Ok(ServiceCommand::RunProgram {
                 source: ProgramSource::File(PathBuf::from(path)),
@@ -104,9 +103,6 @@ pub fn into_service_command(payload: ServiceRequestPayload) -> Result<ServiceCom
             rtst_span,
             progress_timeout_ms,
         } => {
-            if data.trim().is_empty() {
-                return Err("run_prg_data requires a non-empty base64 payload".into());
-            }
             let decoded = BASE64_STANDARD
                 .decode(data.as_bytes())
                 .map_err(|err| format!("invalid base64 payload for run_prg_data: {err}"))?;
@@ -123,9 +119,6 @@ pub fn into_service_command(payload: ServiceRequestPayload) -> Result<ServiceCom
             })
         }
         ServiceRequestPayload::ReadMem { address, length } => {
-            if length == 0 || length > 0x10000 {
-                return Err("read_mem length must be between 1 and 65536 bytes".into());
-            }
             Ok(ServiceCommand::ReadMemory { address, length })
         }
     }

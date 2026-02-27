@@ -25,9 +25,7 @@ const C64_PALETTE: [(u8, u8, u8); 16] = [
 ];
 
 pub(crate) fn mmio_color(value: u8, fallback: Color) -> Color {
-    let idx = (value & 0x0F) as usize;
-    if idx < C64_PALETTE.len() {
-        let (r, g, b) = C64_PALETTE[idx];
+    if let Some((r, g, b)) = palette_rgb(value) {
         Color::rgb_u8(r, g, b)
     } else {
         fallback
@@ -60,6 +58,10 @@ pub(crate) fn console_layout_job(snapshot: &ConsoleSnapshot) -> egui::text::Layo
 }
 
 fn palette_color(index: u8) -> egui::Color32 {
-    let (r, g, b) = C64_PALETTE[(index & 0x0F) as usize];
+    let (r, g, b) = palette_rgb(index).unwrap_or(C64_PALETTE[7]);
     egui::Color32::from_rgb(r, g, b)
+}
+
+fn palette_rgb(index: u8) -> Option<(u8, u8, u8)> {
+    C64_PALETTE.get((index & 0x0F) as usize).copied()
 }

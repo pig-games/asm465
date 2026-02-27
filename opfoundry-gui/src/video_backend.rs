@@ -88,33 +88,28 @@ impl VideoBackend for ModernVideoBackend {
     fn scatter_write(
         &self,
         reg: SystemReg,
-        cpu_value: u8,
+        _cpu_value: u8,
         module_value: u8,
-        bit_value: bool,
-        source_bit: u8,
-        target_bit: u8,
+        _bit_value: bool,
+        _source_bit: u8,
+        _target_bit: u8,
     ) {
         if let Ok(mut state) = self.state.lock() {
             state.registers.insert(reg, module_value);
         }
-
-        // No additional overlay handling for scatter writes yet; extend as needed.
-        let _ = (cpu_value, bit_value, source_bit, target_bit);
     }
 
     fn fanout_write(
         &self,
         reg: SystemReg,
         value: u8,
-        source_value: u8,
-        source_instance: Option<u8>,
-        target_instance: Option<u8>,
+        _source_value: u8,
+        _source_instance: Option<u8>,
+        _target_instance: Option<u8>,
     ) {
         if let Ok(mut state) = self.state.lock() {
             state.registers.insert(reg, value);
         }
-
-        let _ = (source_value, source_instance, target_instance);
     }
 
     fn handle_hook(&self, hook: &str, action: HookAction) {

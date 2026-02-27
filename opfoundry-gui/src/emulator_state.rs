@@ -86,11 +86,6 @@ impl EmulatorState {
         self.status_message.clone()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn last_outcome(&self) -> Option<RunOutcome> {
-        self.last_outcome
-    }
-
     pub(crate) fn interrupts(&self) -> Arc<InterruptController> {
         self.interrupts.clone()
     }

@@ -13,16 +13,33 @@ const BUILTIN_TOML_PERSONALITIES: &[(&str, &str)] = &[
     ("c64-compat-sparse", "C64-Compatible Sparse Layout"),
 ];
 
-fn builtin_personality_entry(id: &str) -> Option<(PathBuf, Option<&'static Personality>)> {
+fn builtin_personality_defs_base() -> Result<PathBuf, String> {
     let base =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opFoundryCore/personality_defs");
+    if base.is_dir() {
+        Ok(base)
+    } else {
+        Err(format!(
+            "built-in personality_defs directory not found at {}",
+            base.display()
+        ))
+    }
+}
+
+fn builtin_personality_entry(
+    id: &str,
+) -> Result<Option<(PathBuf, Option<&'static Personality>)>, String> {
+    let base = builtin_personality_defs_base()?;
     match id {
-        "modern-retro-range" => Some((
+        "modern-retro-range" => Ok(Some((
             base.join("modern-retro-range.toml"),
             Some(personality::default()),
-        )),
-        "c64-compat-sparse" => Some((base.join("c64-compat-sparse.toml"), Some(&C64_COMPAT))),
-        _ => None,
+        ))),
+        "c64-compat-sparse" => Ok(Some((
+            base.join("c64-compat-sparse.toml"),
+            Some(&C64_COMPAT),
+        ))),
+        _ => Ok(None),
     }
 }
 
@@ -62,8 +79,10 @@ pub(crate) fn dump_personality_maps(name: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let (path, maybe_legacy) =
-        builtin_personality_entry(name).unwrap_or((PathBuf::from(name), None));
+    let (path, maybe_legacy) = match builtin_personality_entry(name)? {
+        Some(entry) => entry,
+        None => (PathBuf::from(name), None),
+    };
 
     let toml = fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -203,8 +222,10 @@ pub(crate) fn dump_personality_registers(name: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let (path, maybe_legacy) =
-        builtin_personality_entry(name).unwrap_or((PathBuf::from(name), None));
+    let (path, maybe_legacy) = match builtin_personality_entry(name)? {
+        Some(entry) => entry,
+        None => (PathBuf::from(name), None),
+    };
 
     let toml = fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -370,7 +391,7 @@ pub(crate) fn resolve_personality_selection(name: &str) -> Result<PersonalitySel
         return Ok(PersonalitySelection::Legacy(persona));
     }
 
-    if let Some((path, maybe_legacy)) = builtin_personality_entry(name) {
+    if let Some((path, maybe_legacy)) = builtin_personality_entry(name)? {
         return Ok(PersonalitySelection::Toml {
             path,
             legacy: maybe_legacy,
