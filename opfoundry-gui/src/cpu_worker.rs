@@ -33,6 +33,66 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Clone)]
+pub enum PersonalitySelection {
+    Legacy(&'static Personality),
+    Toml {
+        path: PathBuf,
+        legacy: Option<&'static Personality>,
+    },
+}
+
+impl PersonalitySelection {
+    pub fn legacy_default() -> Self {
+        PersonalitySelection::Legacy(personality::default())
+    }
+
+    pub fn from_path(path: PathBuf) -> Self {
+        PersonalitySelection::Toml { path, legacy: None }
+    }
+
+    pub fn with_legacy(path: PathBuf, legacy: &'static Personality) -> Self {
+        PersonalitySelection::Toml {
+            path,
+            legacy: Some(legacy),
+        }
+    }
+
+    pub fn legacy_personality(&self) -> Option<&'static Personality> {
+        match self {
+            PersonalitySelection::Legacy(p) => Some(*p),
+            PersonalitySelection::Toml { legacy, .. } => *legacy,
+        }
+    }
+
+    fn build_bus(&self) -> Result<(Bus, AdapterHandles), String> {
+        match self {
+            PersonalitySelection::Legacy(p) => {
+                let mut bus = Bus::with_personality(p);
+                let adapters = attach_default_adapters(&mut bus);
+                Ok((bus, adapters))
+            }
+            PersonalitySelection::Toml { path, .. } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    return Err("TOML personalities are not supported on wasm builds".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let toml = fs::read_to_string(path)
+                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
+                    let registry = bus::builtin_module_registry();
+                    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
+                        .map_err(|err| err.to_string())?;
+                    let mut bus = Bus::from_personality_def(def).map_err(|err| err.to_string())?;
+                    let adapters = attach_default_adapters(&mut bus);
+                    Ok((bus, adapters))
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 struct AdapterHandles {
     video_state: Arc<Mutex<VideoState>>,
     video_overlay: Arc<VideoOverlaySignals>,
@@ -366,6 +426,7 @@ mod native {
                         Err(TryRecvError::Empty) => {}
                         Err(TryRecvError::Disconnected) => {
                             self.running = false;
+                            break;
                         }
                     }
                 }
@@ -584,7 +645,6 @@ mod native {
 #[cfg(target_arch = "wasm32")]
 mod wasm {
     use super::*;
-    use std::thread;
 
     /// Synchronous worker used in wasm builds (threads are unavailable).
     pub struct CpuWorker {
@@ -656,9 +716,7 @@ mod wasm {
         }
 
         /// Hint to the scheduler (no-op placeholder for API parity).
-        pub fn pause(&mut self) {
-            let _ = thread::yield_now();
-        }
+        pub fn pause(&mut self) {}
 
         /// Resume execution (no-op in wasm).
         pub fn resume(&mut self) {}
@@ -735,64 +793,5 @@ mod tests {
         assert_eq!(status, CpuRunStatus::Failure);
         assert!(report.message.contains("too small"));
         assert!(report.outcome.is_none());
-    }
-}
-#[derive(Clone)]
-pub enum PersonalitySelection {
-    Legacy(&'static Personality),
-    Toml {
-        path: PathBuf,
-        legacy: Option<&'static Personality>,
-    },
-}
-
-impl PersonalitySelection {
-    pub fn legacy_default() -> Self {
-        PersonalitySelection::Legacy(personality::default())
-    }
-
-    pub fn from_path(path: PathBuf) -> Self {
-        PersonalitySelection::Toml { path, legacy: None }
-    }
-
-    pub fn with_legacy(path: PathBuf, legacy: &'static Personality) -> Self {
-        PersonalitySelection::Toml {
-            path,
-            legacy: Some(legacy),
-        }
-    }
-
-    pub fn legacy_personality(&self) -> Option<&'static Personality> {
-        match self {
-            PersonalitySelection::Legacy(p) => Some(*p),
-            PersonalitySelection::Toml { legacy, .. } => *legacy,
-        }
-    }
-
-    fn build_bus(&self) -> Result<(Bus, AdapterHandles), String> {
-        match self {
-            PersonalitySelection::Legacy(p) => {
-                let mut bus = Bus::with_personality(p);
-                let adapters = attach_default_adapters(&mut bus);
-                Ok((bus, adapters))
-            }
-            PersonalitySelection::Toml { path, .. } => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    return Err("TOML personalities are not supported on wasm builds".into());
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let toml = fs::read_to_string(path)
-                        .map_err(|err| format!("Failed to read {}: {err}", path.display()))?;
-                    let registry = bus::builtin_module_registry();
-                    let def = personality_v2::PersonalityDef::from_toml_str(&toml, &registry)
-                        .map_err(|err| err.to_string())?;
-                    let mut bus = Bus::from_personality_def(def).map_err(|err| err.to_string())?;
-                    let adapters = attach_default_adapters(&mut bus);
-                    Ok((bus, adapters))
-                }
-            }
-        }
     }
 }

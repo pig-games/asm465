@@ -9,6 +9,7 @@
 //! - maintain a list of pending service commands gathered from the websocket
 //!   bridge so the main Bevy systems can drain them each frame.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -69,6 +70,7 @@ pub struct QueuedCommand {
 pub struct WebSocketBridge {
     pending: Rc<RefCell<Vec<QueuedCommand>>>,
     response_tx: mpsc::UnboundedSender<ServiceResponseMessage>,
+    connected: Rc<Cell<bool>>,
 }
 
 impl WebSocketBridge {
@@ -78,6 +80,8 @@ impl WebSocketBridge {
 
         let pending = Rc::new(RefCell::new(Vec::new()));
         let pending_reader = pending.clone();
+        let connected = Rc::new(Cell::new(true));
+        let connected_reader = connected.clone();
 
         spawn_local(async move {
             while let Some(message) = read.next().await {
@@ -103,9 +107,11 @@ impl WebSocketBridge {
                     }
                 }
             }
+            connected_reader.set(false);
         });
 
         let (response_tx, mut response_rx) = mpsc::unbounded::<ServiceResponseMessage>();
+        let connected_writer = connected.clone();
         spawn_local(async move {
             while let Some(response) = response_rx.next().await {
                 match serde_json::to_string(&response) {
@@ -118,11 +124,13 @@ impl WebSocketBridge {
                     Err(err) => log::error!("serialize response error: {err}"),
                 }
             }
+            connected_writer.set(false);
         });
 
         Ok(Self {
             pending,
             response_tx,
+            connected,
         })
     }
 
@@ -134,6 +142,10 @@ impl WebSocketBridge {
         if let Err(err) = self.response_tx.unbounded_send(response) {
             log::error!("failed to send response to bridge: {err}");
         }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.get()
     }
 }
 
@@ -164,9 +176,14 @@ impl WebSocketBridgeManager {
     }
 
     pub fn ensure_connected(&mut self) {
-        if self.bridge.is_some() {
+        if self
+            .bridge
+            .as_ref()
+            .is_some_and(WebSocketBridge::is_connected)
+        {
             return;
         }
+        self.bridge = None;
         if Instant::now() < self.next_retry {
             return;
         }
@@ -194,7 +211,9 @@ impl WebSocketBridgeManager {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.bridge.is_some()
+        self.bridge
+            .as_ref()
+            .is_some_and(WebSocketBridge::is_connected)
     }
 
     pub fn urls(&self) -> &[String] {
