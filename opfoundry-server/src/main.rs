@@ -153,6 +153,10 @@ async fn main() -> anyhow::Result<()> {
     let tcp_addr = format!("{}:{}", opts.tcp_host, opts.tcp_port);
     let ws_addr = format!("{}:{}", opts.ws_host, opts.ws_port);
 
+    if allowed_dir.is_none() {
+        warn!("No --allowed-dir set; run_prg accepts any readable path");
+    }
+
     info!("Starting TCP listener on {tcp_addr}");
     info!("Starting WebSocket listener on {ws_addr}");
 
@@ -214,11 +218,39 @@ async fn handle_tcp_connection(
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<ServiceRequestPayload>(&line) {
+        let mut payload_value: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(val) => val,
+            Err(err) => {
+                let msg = format!("invalid JSON payload: {err}");
+                warn!("{msg}");
+                let resp = ServiceResponseMessage::error(msg);
+                let resp_line = serde_json::to_string(&resp)?;
+                writer.send(resp_line).await?;
+                continue;
+            }
+        };
+
+        let request_id = state.next_request_id();
+        if let serde_json::Value::Object(obj) = &mut payload_value {
+            obj.insert(
+                "bridge_id".to_string(),
+                serde_json::Value::String(request_id.clone()),
+            );
+        } else {
+            let resp = ServiceResponseMessage::error("payload must be a JSON object");
+            let resp_line = serde_json::to_string(&resp)?;
+            writer.send(resp_line).await?;
+            continue;
+        }
+
+        match serde_json::from_value::<ServiceRequestPayload>(payload_value.clone()) {
             Ok(payload) => {
-                payload
-                    .validate()
-                    .map_err(|err| anyhow::anyhow!("invalid command: {err}"))?;
+                if let Err(err) = payload.validate() {
+                    let resp = ServiceResponseMessage::error(format!("invalid command: {err}"));
+                    let resp_line = serde_json::to_string(&resp)?;
+                    writer.send(resp_line).await?;
+                    continue;
+                }
 
                 if let Some(base) = allowed_dir.as_ref() {
                     if let ServiceRequestPayload::RunPrg { path, .. } = &payload {
@@ -234,23 +266,6 @@ async fn handle_tcp_connection(
                     }
                 }
 
-                let mut payload_value: serde_json::Value = match serde_json::from_str(&line) {
-                    Ok(val) => val,
-                    Err(err) => {
-                        let resp =
-                            ServiceResponseMessage::error(format!("invalid json payload: {err}"));
-                        let resp_line = serde_json::to_string(&resp)?;
-                        writer.send(resp_line).await?;
-                        continue;
-                    }
-                };
-                let request_id = state.next_request_id();
-                if let serde_json::Value::Object(obj) = &mut payload_value {
-                    obj.insert(
-                        "bridge_id".to_string(),
-                        serde_json::Value::String(request_id.clone()),
-                    );
-                }
                 let serialized = serde_json::to_string(&payload_value)?;
                 let targets = state.broadcast(&serialized);
                 if targets == 0 {
@@ -292,7 +307,7 @@ async fn handle_tcp_connection(
                 }
             }
             Err(err) => {
-                let msg = format!("invalid JSON payload: {err}");
+                let msg = format!("invalid command payload: {err}");
                 warn!("{msg}");
                 let resp = ServiceResponseMessage::error(msg);
                 let resp_line = serde_json::to_string(&resp)?;
